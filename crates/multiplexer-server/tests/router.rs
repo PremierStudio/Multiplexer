@@ -796,3 +796,45 @@ fn git_worktrees_without_catalog_is_unsupported() {
     assert_eq!(err.code, AppErrorKind::Unsupported.code());
     assert_eq!(app_kind(&err), "unsupported");
 }
+
+#[test]
+fn system_hello_null_params_succeeds() {
+    let server = Server::new();
+    let frames = server.handle_frame(&rpc("h", methods::SYSTEM_HELLO, Value::Null));
+    let (_, result) = first_response(&frames);
+    assert_eq!(result["protocol_version"], PROTOCOL_VERSION);
+    assert_eq!(result["server_info"]["name"], "multiplexer-server");
+}
+
+#[test]
+fn git_worktrees_catalog_error_is_provider_error() {
+    let git = multiplexer_worktree::FakeGit::new();
+    let server = Server::with_git(multiplexer_worktree::WorktreeService::new(git));
+    let frames = server.handle_frame(&rpc(
+        "g1",
+        methods::GIT_WORKTREES,
+        json!({ "cwd": "/repo" }),
+    ));
+    let (_, err) = first_error(&frames);
+    assert_eq!(err.code, AppErrorKind::ProviderError.code());
+    assert_eq!(app_kind(&err), "provider_error");
+}
+
+#[test]
+fn install_git_on_existing_server_enables_worktrees() {
+    let server = Server::new();
+    let git = multiplexer_worktree::FakeGit::new();
+    git.push(Ok(
+        "worktree /repo\nHEAD abc\nbranch refs/heads/main\n".into()
+    ));
+    server.install_git(multiplexer_worktree::WorktreeService::new(git));
+    let frames = server.handle_frame(&rpc(
+        "g1",
+        methods::GIT_WORKTREES,
+        json!({ "cwd": "/repo" }),
+    ));
+    let result = first_response(&frames).1;
+    let trees = result["worktrees"].as_array().expect("worktrees");
+    assert_eq!(trees.len(), 1);
+    assert_eq!(trees[0]["path"], "/repo");
+}

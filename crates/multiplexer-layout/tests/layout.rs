@@ -80,6 +80,7 @@ fn unknown_pane_errors() {
     );
     assert_eq!(f.close(PaneId(99)), Err(LayoutError::UnknownPane(99)));
     assert_eq!(f.set_focus(PaneId(99)), Err(LayoutError::UnknownPane(99)));
+    assert_eq!(f.detach(PaneId(99)), Err(LayoutError::UnknownPane(99)));
 }
 
 #[test]
@@ -129,6 +130,169 @@ fn detach_of_ghost_fails_and_second_live_detach_works() {
 fn redock_without_ghost_fails() {
     let mut f = LayoutForest::default_outlook();
     assert_eq!(f.redock(PaneId(3)), Err(LayoutError::UnknownPane(3)));
+}
+
+#[test]
+fn redock_popout_without_ghost_is_not_ghost() {
+    let mut f = forest_from_json(serde_json::json!({
+        "windows": [
+            {
+                "id": 1,
+                "primary": true,
+                "root": leaf_json(1, false)
+            },
+            {
+                "id": 2,
+                "primary": false,
+                "root": leaf_json(3, false)
+            }
+        ],
+        "focus": 1,
+        "next_pane": 4,
+        "next_window": 3
+    }));
+    assert_eq!(f.redock(PaneId(3)), Err(LayoutError::NotGhost(3)));
+    assert_eq!(f.window_count(), 2);
+}
+
+#[test]
+fn tab_only_pane_is_contained_but_not_a_leaf_slot() {
+    let mut value = serde_json::to_value(LayoutForest::default_outlook()).unwrap();
+    let windows = value.get_mut("windows").unwrap().as_array_mut().unwrap();
+    fn add_tab(node: &mut serde_json::Value, pane: u64, tab: u64) -> bool {
+        if let Some(leaf) = node.get_mut("Leaf") {
+            if leaf.get("pane").and_then(|p| p.as_u64()) == Some(pane) {
+                leaf["tabs"] = serde_json::json!([tab]);
+                return true;
+            }
+            return false;
+        }
+        if let Some(split) = node.get_mut("Split") {
+            return add_tab(&mut split["first"], pane, tab)
+                || add_tab(&mut split["second"], pane, tab);
+        }
+        false
+    }
+    assert!(add_tab(&mut windows[0]["root"], 3, 99));
+    let mut f: LayoutForest = serde_json::from_value(value).unwrap();
+    assert!(f.contains_pane(PaneId(99)));
+    assert_eq!(
+        f.split(PaneId(99), Axis::Vertical, 0.5),
+        Err(LayoutError::UnknownPane(99))
+    );
+    assert_eq!(f.detach(PaneId(99)), Err(LayoutError::UnknownPane(99)));
+}
+
+#[test]
+fn detach_pane_in_later_window_skips_earlier_roots() {
+    let mut f = forest_from_json(serde_json::json!({
+        "windows": [
+            {
+                "id": 1,
+                "primary": true,
+                "root": {
+                    "Split": {
+                        "axis": "Horizontal",
+                        "ratio": 0.5,
+                        "first": leaf_json(1, false),
+                        "second": leaf_json(2, false)
+                    }
+                }
+            },
+            {
+                "id": 2,
+                "primary": false,
+                "root": leaf_json(4, false)
+            }
+        ],
+        "focus": 1,
+        "next_pane": 5,
+        "next_window": 3
+    }));
+    let win = f.detach(PaneId(4)).unwrap();
+    assert_eq!(win, WindowId(3));
+    assert_eq!(f.window_count(), 3);
+    assert!(f.contains_pane(PaneId(4)));
+}
+
+#[test]
+fn set_ratio_on_second_child_updates_that_split() {
+    let mut f = LayoutForest::default_outlook();
+    f.set_ratio(PaneId(3), 0.35).unwrap();
+    let inner = split_holding(&f.primary().root, PaneId(3)).expect("inner split");
+    assert_eq!(inner.ratio, 0.35);
+    let root = match &f.primary().root {
+        LayoutNode::Split(s) => s,
+        other => panic!("expected root split, got {other:?}"),
+    };
+    assert_eq!(root.ratio, 0.2);
+}
+
+#[test]
+fn close_sibling_of_unrelated_ghost_keeps_that_ghost() {
+    let mut f = LayoutForest::default_outlook();
+    f.detach(PaneId(3)).unwrap();
+    f.close(PaneId(2)).unwrap();
+    match &f.primary().root {
+        LayoutNode::Split(s) => {
+            assert!(is_live(&s.first, PaneId(1)));
+            assert!(!is_live(&s.second, PaneId(3)));
+            assert!(f.contains_pane(PaneId(3)));
+        }
+        other => panic!("expected split keeping ghost 3, got {other:?}"),
+    }
+    f.redock(PaneId(3)).unwrap();
+    assert!(is_live(&f.primary().root, PaneId(3)));
+}
+
+#[test]
+fn close_ghost_in_primary_keeps_the_primary_window() {
+    let mut f = forest_from_json(serde_json::json!({
+        "windows": [
+            {
+                "id": 1,
+                "primary": true,
+                "root": leaf_json(1, true)
+            },
+            {
+                "id": 2,
+                "primary": false,
+                "root": leaf_json(5, false)
+            }
+        ],
+        "focus": 5,
+        "next_pane": 6,
+        "next_window": 3
+    }));
+    f.close(PaneId(1)).unwrap();
+    assert_eq!(f.window_count(), 2);
+    assert!(f.windows().iter().any(|w| w.primary && w.id == WindowId(1)));
+    assert!(f.primary().primary);
+}
+
+#[test]
+fn close_last_popout_when_primary_is_all_ghosts_keeps_focus() {
+    let mut f = forest_from_json(serde_json::json!({
+        "windows": [
+            {
+                "id": 1,
+                "primary": true,
+                "root": leaf_json(1, true)
+            },
+            {
+                "id": 2,
+                "primary": false,
+                "root": leaf_json(5, false)
+            }
+        ],
+        "focus": 5,
+        "next_pane": 6,
+        "next_window": 3
+    }));
+    f.close(PaneId(5)).unwrap();
+    assert_eq!(f.focus(), PaneId(5));
+    assert_eq!(f.window_count(), 1);
+    assert!(f.windows()[0].primary);
 }
 
 #[test]

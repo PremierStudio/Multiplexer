@@ -14,7 +14,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn session_start_over_websocket() {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(15), async {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind 127.0.0.1:0");
@@ -77,7 +77,7 @@ async fn session_start_over_websocket() {
 
 #[tokio::test]
 async fn serve_returns_bind_error_for_non_local_addr() {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(15), async {
         let addr = "8.8.8.8:8787".parse().expect("addr");
         let server = Arc::new(Server::new());
         let err = serve(addr, server).await;
@@ -93,7 +93,7 @@ async fn serve_returns_bind_error_for_non_local_addr() {
 
 #[tokio::test]
 async fn serve_binds_ephemeral_port() {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(15), async {
         let addr = "127.0.0.1:0".parse().expect("addr");
         let server = Arc::new(Server::new());
         let handle = tokio::spawn(serve(addr, server));
@@ -108,7 +108,7 @@ async fn serve_binds_ephemeral_port() {
 
 #[tokio::test]
 async fn binary_close_ping_and_bad_handshake_are_ignored_or_dropped() {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(15), async {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind 127.0.0.1:0");

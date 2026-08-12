@@ -97,13 +97,12 @@ mod tests {
     #[test]
     fn exhausted_fake_git_is_provider_error() {
         let catalog = WorktreeService::new(FakeGit::new());
-        match catalog.list_worktrees("/repo") {
-            Err(BackendError::Provider { kind, message }) => {
-                assert_eq!(kind, AppErrorKind::ProviderError);
-                assert!(message.contains("no scripted response"));
-            }
-            other => panic!("expected provider error, got {other:?}"),
-        }
+        let err = catalog.list_worktrees("/repo").unwrap_err();
+        assert!(matches!(
+            err,
+            BackendError::Provider { kind, ref message }
+                if kind == AppErrorKind::ProviderError && message.contains("no scripted response")
+        ));
     }
 
     #[test]

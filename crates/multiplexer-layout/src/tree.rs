@@ -199,14 +199,7 @@ impl LayoutForest {
         let new_win = WindowId(self.next_window);
         self.next_window += 1;
         for w in &mut self.windows {
-            if replace_pane(&mut w.root, pane, |old| match old {
-                LayoutNode::Leaf { pane: p, tabs, .. } => LayoutNode::Leaf {
-                    pane: p,
-                    tabs,
-                    ghost: true,
-                },
-                other => other,
-            }) {
+            if replace_pane(&mut w.root, pane, mark_detached) {
                 self.windows.push(WindowRoot {
                     id: new_win,
                     root: leaf(pane),
@@ -288,6 +281,17 @@ fn leaf(pane: PaneId) -> LayoutNode {
         pane,
         tabs: Vec::new(),
         ghost: false,
+    }
+}
+
+fn mark_detached(old: LayoutNode) -> LayoutNode {
+    match old {
+        LayoutNode::Leaf { pane: p, tabs, .. } => LayoutNode::Leaf {
+            pane: p,
+            tabs,
+            ghost: true,
+        },
+        other => other,
     }
 }
 
@@ -483,5 +487,58 @@ mod unit {
         f.close(PaneId(1)).unwrap();
         f.close(PaneId(3)).unwrap();
         assert_eq!(f.close(PaneId(2)), Err(LayoutError::LastPane));
+    }
+
+    #[test]
+    fn unknown_window_and_missing_live_count() {
+        let mut f = LayoutForest::default_outlook();
+        assert_eq!(f.window(WindowId(99)), Err(LayoutError::UnknownWindow(99)));
+        assert_eq!(
+            f.window_mut(WindowId(99)).err(),
+            Some(LayoutError::UnknownWindow(99))
+        );
+        assert_eq!(f.live_pane_count_in(WindowId(99)), 0);
+        assert_eq!(
+            LayoutError::UnknownWindow(7).to_string(),
+            "unknown window 7"
+        );
+        assert_eq!(LayoutError::UnknownPane(8).to_string(), "unknown pane 8");
+        assert_eq!(
+            LayoutError::InvalidRatio("0".into()).to_string(),
+            "ratio 0 is not in (0, 1)"
+        );
+        assert_eq!(
+            LayoutError::LastPane.to_string(),
+            "cannot close the last pane in the primary window"
+        );
+        assert_eq!(
+            LayoutError::NotGhost(3).to_string(),
+            "pane 3 is not a ghost slot"
+        );
+    }
+
+    #[test]
+    fn mark_detached_ghosts_leaves_and_keeps_splits() {
+        let leaf_in = LayoutNode::Leaf {
+            pane: PaneId(4),
+            tabs: vec![PaneId(9)],
+            ghost: false,
+        };
+        let ghosted = mark_detached(leaf_in);
+        assert!(matches!(
+            ghosted,
+            LayoutNode::Leaf {
+                pane,
+                ref tabs,
+                ghost,
+            } if pane == PaneId(4) && tabs == &vec![PaneId(9)] && ghost
+        ));
+        let split = LayoutNode::Split(SplitNode {
+            axis: Axis::Vertical,
+            ratio: 0.4,
+            first: Box::new(leaf(PaneId(1))),
+            second: Box::new(leaf(PaneId(2))),
+        });
+        assert_eq!(mark_detached(split.clone()), split);
     }
 }

@@ -225,7 +225,10 @@ mod tests {
         assert!(ws.draft.is_empty());
         assert!(ws.select(0));
         assert_eq!(ws.selected, 0);
+        assert!(!ws.select(ws.threads.len()));
+        assert_eq!(ws.selected, 0);
         assert!(!ws.select(9));
+        assert_eq!(ws.selected, 0);
     }
 
     #[test]
@@ -241,6 +244,31 @@ mod tests {
         );
         ws.mark_error("boom");
         assert_eq!(ws.selected_thread().unwrap().status, "error");
+    }
+
+    #[test]
+    fn send_draft_without_thread_still_returns_text() {
+        let mut ws = Workspace::new("p", "m");
+        ws.threads.clear();
+        ws.set_draft("orphan");
+        assert_eq!(ws.send_draft().as_deref(), Some("orphan"));
+        assert!(ws.draft.is_empty());
+        ws.set_draft("later");
+        ws.push_assistant("no thread");
+        ws.mark_error("no thread");
+        assert!(ws.selected_thread().is_none());
+    }
+
+    #[test]
+    fn send_draft_does_not_rename_custom_title() {
+        let mut ws = Workspace::new("p", "m");
+        ws.set_draft("first title that is definitely longer than forty characters");
+        ws.send_draft();
+        assert_eq!(ws.selected_thread().unwrap().title.chars().count(), 40);
+        ws.set_draft("second");
+        ws.send_draft();
+        assert_eq!(ws.selected_thread().unwrap().title.chars().count(), 40);
+        assert_eq!(ws.selected_thread().unwrap().messages.len(), 2);
     }
 
     #[test]

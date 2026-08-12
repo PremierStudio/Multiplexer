@@ -102,6 +102,101 @@ fn turn_send_echoes_chunk() {
 }
 
 #[test]
+fn get_after_start_returns_fake_provider_snapshot() {
+    let server = Server::with_fake_provider();
+    server.handle_frame(&rpc(
+        "1",
+        methods::SESSION_START,
+        json!({
+            "provider": "fake",
+            "model": "grok",
+            "workspace": "/ws",
+        }),
+    ));
+    let snap = result_of(&server.handle_frame(&rpc(
+        "2",
+        methods::SESSION_GET,
+        json!({ "session_id": "sess-1" }),
+    )));
+    assert_eq!(snap["id"], "sess-1");
+    assert_eq!(snap["provider"], "fake");
+    assert_eq!(snap["model"], "grok");
+    assert_eq!(snap["workspace"], "/ws");
+}
+
+#[test]
+fn send_while_blocked_is_conflict() {
+    let fake = multiplexer_provider::FakeProvider::new();
+    let server = Server::with_backend(multiplexer_server::ProviderBridge::new(fake.clone()));
+    server.handle_frame(&rpc(
+        "1",
+        methods::SESSION_START,
+        json!({
+            "provider": "fake",
+            "model": "grok",
+            "workspace": "/ws",
+        }),
+    ));
+    fake.block_next_turn();
+    server.handle_frame(&rpc(
+        "2",
+        methods::TURN_SEND,
+        json!({ "session_id": "sess-1", "text": "first" }),
+    ));
+    let frames = server.handle_frame(&rpc(
+        "3",
+        methods::TURN_SEND,
+        json!({ "session_id": "sess-1", "text": "second" }),
+    ));
+    assert_eq!(error_kind(&frames), "conflict");
+}
+
+#[test]
+fn interrupt_idle_session_is_invalid_state() {
+    let server = Server::with_fake_provider();
+    server.handle_frame(&rpc(
+        "1",
+        methods::SESSION_START,
+        json!({
+            "provider": "fake",
+            "model": "grok",
+            "workspace": "/ws",
+        }),
+    ));
+    let frames = server.handle_frame(&rpc(
+        "2",
+        methods::SESSION_INTERRUPT,
+        json!({ "session_id": "sess-1" }),
+    ));
+    assert_eq!(error_kind(&frames), "invalid_state");
+}
+
+#[test]
+fn approval_request_drains_as_permission_event() {
+    use multiplexer_provider::SessionId;
+
+    let fake = multiplexer_provider::FakeProvider::new();
+    let server = Server::with_backend(multiplexer_server::ProviderBridge::new(fake.clone()));
+    server.handle_frame(&rpc(
+        "1",
+        methods::SESSION_START,
+        json!({
+            "provider": "fake",
+            "model": "grok",
+            "workspace": "/ws",
+        }),
+    ));
+    fake.request_approval(&SessionId::from("sess-1"), "req-1", "shell")
+        .expect("request");
+    let frames = server.handle_frame(&rpc(
+        "2",
+        methods::TURN_SEND,
+        json!({ "session_id": "sess-1", "text": "go" }),
+    ));
+    assert!(events(&frames).contains(&EventKind::PermissionRequest));
+}
+
+#[test]
 fn unknown_session_is_not_found() {
     let server = Server::with_fake_provider();
     let frames = server.handle_frame(&rpc(

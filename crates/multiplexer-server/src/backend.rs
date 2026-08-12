@@ -268,6 +268,12 @@ mod tests {
             session_id: "sess_x".into(),
         };
         assert_eq!(err.to_string(), "session not found: sess_x");
+        let provider = BackendError::Provider {
+            kind: multiplexer_wire::error::AppErrorKind::Conflict,
+            message: "turn already running".into(),
+        };
+        assert_eq!(provider.to_string(), "turn already running");
+        assert_ne!(err, provider);
     }
 
     #[test]
@@ -346,6 +352,22 @@ mod tests {
         backend.stop(&id).unwrap();
         assert!(backend
             .approval_respond(&id, "req-1", ApprovalDecision::Allow)
+            .is_err());
+    }
+
+    #[test]
+    fn stop_one_session_keeps_other_pending_approval() {
+        let mut backend = FakeBackend::new();
+        let a = backend.start(params("m")).unwrap().session_id;
+        let b = backend.start(params("n")).unwrap().session_id;
+        backend.request_approval(&a, "req-a").unwrap();
+        backend.request_approval(&b, "req-b").unwrap();
+        backend.stop(&a).unwrap();
+        backend
+            .approval_respond(&b, "req-b", ApprovalDecision::Allow)
+            .unwrap();
+        assert!(backend
+            .approval_respond(&b, "req-b", ApprovalDecision::Allow)
             .is_err());
     }
 }

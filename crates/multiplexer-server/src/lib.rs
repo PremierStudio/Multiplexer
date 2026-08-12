@@ -1,3 +1,5 @@
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+
 //! JSON-RPC request router and WebSocket listen loop.
 //!
 //! The router is generic over [`SessionBackend`]. [`FakeBackend`] is the
