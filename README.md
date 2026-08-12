@@ -9,9 +9,9 @@
 <p align="center">
   <a href="https://github.com/PremierStudio/Multiplexer/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"/></a>
   <a href="https://github.com/PremierStudio/Multiplexer/actions"><img alt="CI" src="https://img.shields.io/badge/CI-not%20yet%20wired-555555.svg"/></a>
-  <a href="https://github.com/PremierStudio/Multiplexer"><img alt="Coverage" src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg"/></a>
-  <a href="https://github.com/PremierStudio/Multiplexer"><img alt="Mutation score" src="https://img.shields.io/badge/mutation-100%25-success.svg"/></a>
-  <a href="https://www.rust-lang.org"><img alt="Rust" src="https://img.shields.io/badge/Rust-1.94-orange.svg?logo=rust"/></a>
+  <a href="https://github.com/PremierStudio/Multiplexer"><img alt="Coverage" src="https://img.shields.io/badge/coverage-100%25%20(wire)-brightgreen.svg"/></a>
+  <a href="https://github.com/PremierStudio/Multiplexer"><img alt="Mutation score" src="https://img.shields.io/badge/mutation-100%25%20(wire)-success.svg"/></a>
+  <a href="https://www.rust-lang.org"><img alt="Rust" src="https://img.shields.io/badge/Rust-nightly-orange.svg?logo=rust"/></a>
   <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui"><img alt="GPUI" src="https://img.shields.io/badge/GPUI-GPU--rendered-8b5cf6.svg"/></a>
   <a href="https://github.com/xai-org/grok-build"><img alt="Grok Build" src="https://img.shields.io/badge/Grok%20Build-embedded-22d3ee.svg"/></a>
   <a href="https://github.com/PremierStudio/Multiplexer/graphs/contributors"><img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg"/></a>
@@ -30,7 +30,7 @@
 - **Your browsers, not a bundled one.** Detect and import the browsers you already have, drive them over CDP. No bundled Chromium.
 - **Ships with a HAR profiler/replayer.** Capture the network, visualize waterfalls, replay sessions, and feed the insight back to the agent.
 - **Panes that pop out.** Chat, build, and an instrumentation bar that can each float to their own window.
-- **Strict TDD at 100/100.** Every module lands at 100% coverage _and_ 100% mutation score with zero survivors, enforced by CI.
+- **Strict TDD at 100/100.** Every module lands at 100% coverage _and_ 100% mutation score with zero survivors, enforced by CI. Today that gate is proven on `multiplexer-wire`; every future module must clear it too.
 
 ---
 
@@ -104,7 +104,7 @@ flowchart TB
     Provider -.->|fallback| Acp
 ```
 
-The wire contract is the single source of truth — `multiplexer-wire` is codegen'd for Swift, Kotlin, and TypeScript clients, so the desktop, mobile, and web clients can never drift apart.
+The wire contract is the single source of truth — `multiplexer-wire` is *planned* to be codegen'd for Swift, Kotlin, and TypeScript clients, so the desktop, mobile, and web clients can never drift apart.
 
 ---
 
@@ -112,7 +112,7 @@ The wire contract is the single source of truth — `multiplexer-wire` is codege
 
 ## Status
 
-**Phase 0 is complete and green.** The core go/no-go that gated the whole product — *can we embed `xai-grok-shell` as a library and build it on Windows?* — is **proven**: the Phase 0 spike built the vendored runtime on Windows and consumed it from an independent binary, loading the real user config. See [`docs/SPIKE-REPORT.md`](docs/SPIKE-REPORT.md).
+**The Phase-0 spike is complete and green.** The core go/no-go that gated the whole product — *can we embed `xai-grok-shell` as a library and build it on Windows?* — is **proven**: the Phase 0 spike built the vendored runtime on Windows and consumed it from an independent binary, loading the real user config. See [`docs/SPIKE-REPORT.md`](docs/SPIKE-REPORT.md). The rest of Phase 0 (GPUI shell, wire skeleton, test harness, CI gates) is still in progress per [`plan/19-roadmap-and-milestones.md`](plan/19-roadmap-and-milestones.md).
 
 The full implementation plan lives in [`plan/`](plan/) (21 authored docs, adversarially reviewed) with 40 locked decisions in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
@@ -153,14 +153,14 @@ The full testing strategy is in [`plan/15-testing-strategy.md`](plan/15-testing-
 
 ```text
 crates/
-  multiplexer-wire/       shared JSON-RPC contract (single source of truth, codegen for clients)
-  multiplexer-provider/   provider adapter trait + model registry (Grok in-process + ACP)
-  multiplexer-core/       orchestration engine, decider, projector, read model
-  multiplexer-server/     composition root: the single native binary
-  multiplexer-ui/         GPUI desktop UI (editor, panes)
-  multiplexer-terminal/   embedded terminal
-  multiplexer-browser/    system-browser import + CDP
-  multiplexer-har/        HAR profiler / replayer
+  multiplexer-wire/       shared JSON-RPC contract (single source of truth, codegen for clients)  [exists]
+  multiplexer-provider/   provider adapter trait + model registry (Grok in-process + ACP)          [planned]
+  multiplexer-core/       orchestration engine, decider, projector, read model                      [planned]
+  multiplexer-server/     composition root: the single native binary                               [planned]
+  multiplexer-ui/         GPUI desktop UI (editor, panes)                                          [planned]
+  multiplexer-terminal/   embedded terminal                                                        [planned]
+  multiplexer-browser/    system-browser import + CDP                                              [planned]
+  multiplexer-har/        HAR profiler / replayer                                                  [planned]
 third_party/
   grok-build/             vendored fork (SOURCE_REV tracked, Windows build supported)
 spike/                    Phase-0 spike: in-process consumption proof
@@ -204,7 +204,7 @@ gantt
     GA                               :after p5, 3w
 ```
 
-The MVP is **Phases 1–4** (core runtime + editor/panes + browser/HAR + mobile/remote). The paired mobile app is a hard MVP gate. Rough order: ~6–9 months with 3–5 engineers. See [`plan/19-roadmap-and-milestones.md`](plan/19-roadmap-and-milestones.md).
+The MVP is **Phases 1–4** (core runtime + editor/panes + browser/HAR + mobile/remote). The paired mobile app is a hard MVP gate. Matching the full Orca baseline across **Phases 1–5** is roughly **~6–9 months with 3–5 engineers** (≈ 20–40 person-months). See [`plan/19-roadmap-and-milestones.md`](plan/19-roadmap-and-milestones.md).
 
 ---
 

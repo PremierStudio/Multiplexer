@@ -122,11 +122,11 @@
   </g>
 
   <!-- wordmark -->
-  <text x="560" y="172" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="86" font-weight="700" fill="url(#word)" letter-spacing="-1.5">Multiplexer</text>
+  <text x="850" y="172" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="72" font-weight="700" fill="url(#word)" letter-spacing="-1.5">Multiplexer</text>
 
   <!-- tagline -->
-  <text x="564" y="220" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="24" fill="#94a3b8" font-weight="400">The control surface for your AI coding agents</text>
+  <text x="850" y="220" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="20" fill="#94a3b8" font-weight="400">The control surface for your AI coding agents</text>
 
   <!-- accent underline -->
-  <rect x="564" y="240" width="560" height="4" rx="2" fill="url(#accent)"/>
+  <rect x="850" y="240" width="470" height="4" rx="2" fill="url(#accent)"/>
 </svg>
