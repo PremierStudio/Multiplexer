@@ -257,3 +257,15 @@ fn remove_command_error_propagates() {
     );
     assert_eq!(svc.runner().calls().len(), 2);
 }
+
+#[test]
+fn worktree_error_display() {
+    let dirty = WorktreeError::Dirty(link());
+    assert!(dirty.to_string().contains("worktree is dirty"));
+    assert!(dirty.to_string().contains("feat"));
+    assert_eq!(WorktreeError::Git("boom".into()).to_string(), "boom");
+    assert_eq!(
+        WorktreeError::Porcelain(PorcelainError::MissingPath).to_string(),
+        "worktree entry missing path"
+    );
+}

@@ -55,6 +55,12 @@ impl ServerHandle {
     pub fn hash(&self) -> ConfigHash {
         self.hash
     }
+
+    /// Construct a handle with an explicit token (unknown-token release tests).
+    #[doc(hidden)]
+    pub fn from_raw(id: ServerId, hash: ConfigHash, token: u64) -> Self {
+        Self { id, hash, token }
+    }
 }
 
 /// Errors from supervisor operations.
@@ -170,7 +176,7 @@ impl Supervisor {
             }
             LifecycleState::Spawned | LifecycleState::Ready | LifecycleState::Crashed { .. } => {}
         }
-        inst.restarts = inst.restarts.saturating_add(1);
+        inst.restarts += 1;
         if inst.restarts >= MAX_CONSECUTIVE_FAILURES {
             inst.last_backoff_ms = None;
             inst.state = LifecycleState::Failed;
@@ -214,6 +220,38 @@ impl Supervisor {
         self.instances.len()
     }
 
+    /// How many hashes are indexed under `id` (test seam).
+    #[doc(hidden)]
+    pub fn name_hash_count(&self, id: &ServerId) -> usize {
+        self.names.get(id).map(|v| v.len()).unwrap_or(0)
+    }
+
+    /// Drop the instance row while leaving any name index (test seam).
+    #[doc(hidden)]
+    pub fn evict_instance(&mut self, hash: &ConfigHash) {
+        self.instances.remove(hash);
+    }
+
+    /// Drop the name index while leaving instances (test seam).
+    #[doc(hidden)]
+    pub fn evict_name_index(&mut self, id: &ServerId) {
+        self.names.remove(id);
+    }
+
+    /// Prepend a hash that may have no instance row (test seam).
+    #[doc(hidden)]
+    pub fn prepend_name_hash(&mut self, id: &ServerId, hash: ConfigHash) {
+        self.names.entry(id.clone()).or_default().insert(0, hash);
+    }
+
+    /// Force a lifecycle state (test seam).
+    #[doc(hidden)]
+    pub fn set_state(&mut self, hash: &ConfigHash, state: LifecycleState) {
+        if let Some(inst) = self.instances.get_mut(hash) {
+            inst.state = state;
+        }
+    }
+
     fn attach(&mut self, hash: ConfigHash) -> ServerHandle {
         let token = self.alloc_token();
         let inst = self
@@ -231,7 +269,7 @@ impl Supervisor {
     fn spawn_new(&mut self, id: ServerId, hash: ConfigHash) -> ServerHandle {
         let token = self.alloc_token();
         let seq = self.next_seq;
-        self.next_seq = self.next_seq.saturating_add(1);
+        self.next_seq += 1;
         let mut tokens = HashSet::new();
         tokens.insert(token);
         // Instant fake spawn: Spawned is not observable after acquire returns.
@@ -251,7 +289,7 @@ impl Supervisor {
 
     fn alloc_token(&mut self) -> u64 {
         let token = self.next_token;
-        self.next_token = self.next_token.saturating_add(1);
+        self.next_token += 1;
         token
     }
 
@@ -259,13 +297,9 @@ impl Supervisor {
         let hashes = self.names.get(id)?;
         let mut best: Option<&Instance> = None;
         for hash in hashes {
-            let Some(inst) = self.instances.get(hash) else {
-                continue;
-            };
-            best = Some(match best {
-                None => inst,
-                Some(prev) => preferred(prev, inst),
-            });
+            if let Some(inst) = self.instances.get(hash) {
+                best = Some(best.map_or(inst, |prev| preferred(prev, inst)));
+            }
         }
         best
     }
@@ -290,3 +324,7 @@ fn rank(inst: &Instance) -> (u8, u64) {
     };
     (reusable, inst.seq)
 }
+
+#[cfg(test)]
+#[path = "supervisor_tests.rs"]
+mod supervisor_tests;

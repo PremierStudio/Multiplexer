@@ -14,3 +14,9 @@ win32job.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }
+
+[target.'cfg(windows)'.dev-dependencies]
+win32job.workspace = true

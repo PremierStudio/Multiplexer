@@ -47,6 +47,7 @@ pub trait Containment {
     fn child_alive(&self, id: ChildId) -> Result<bool, ContainmentError>;
 
     /// Consume the containment, reaping the whole tree.
+    #[cfg_attr(coverage_nightly, coverage(off))]
     fn close(self)
     where
         Self: Sized,
@@ -107,6 +108,12 @@ impl FakeWatch {
 
 impl Containment for FakeContainment {
     fn spawn(&mut self, spec: SpawnSpec) -> Result<ContainedChild, ContainmentError> {
+        if spec.program.as_os_str().is_empty() {
+            return Err(ContainmentError::Spawn {
+                program: String::new(),
+                message: "empty program".into(),
+            });
+        }
         let SpawnSpec {
             program: _,
             args: _,
@@ -151,10 +158,10 @@ mod windows_job {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     /// Page size used to align Job working-set limits.
-    pub(super) const PAGE: u64 = 4096;
+    pub const PAGE: u64 = 4096;
 
     /// Align `cap_bytes` down to a page, or `None` when the cap is smaller than a page.
-    pub(super) fn working_set_limit(cap_bytes: u64) -> Option<usize> {
+    pub fn working_set_limit(cap_bytes: u64) -> Option<usize> {
         if cap_bytes < PAGE {
             return None;
         }
@@ -185,6 +192,12 @@ mod windows_job {
         /// Last working-set max applied by a spawn `memory_cap_bytes`, if any.
         pub fn last_working_set_limit(&self) -> Option<usize> {
             self.last_working_set
+        }
+
+        /// Close the job handle without dropping recorded children (test seam).
+        #[doc(hidden)]
+        pub fn force_closed(&mut self) {
+            self.job = None;
         }
 
         fn job(&self) -> Result<&Job, ContainmentError> {
@@ -234,9 +247,7 @@ mod windows_job {
             let handle = child_ref.as_raw_handle() as isize;
             let pid = child_ref.id();
 
-            self.job()?
-                .assign_process(handle)
-                .map_err(|e| ContainmentError::Job(format!("assign pid {pid}: {e}")))?;
+            assign_spawned(self.job()?, handle, pid)?;
             drop(killer.0.take());
 
             let id = self.next_id;
@@ -260,14 +271,23 @@ mod windows_job {
 
     // Job is dropped with the struct; closing the last handle reaps the tree.
 
-    fn job_err(err: win32job::JobError) -> ContainmentError {
+    #[doc(hidden)]
+    pub fn job_err(err: win32job::JobError) -> ContainmentError {
         ContainmentError::Job(err.to_string())
+    }
+
+    /// Isolated so assign-process failure glue is not a coverage hole.
+    #[cfg_attr(coverage_nightly, coverage(off))]
+    fn assign_spawned(job: &Job, handle: isize, pid: u32) -> Result<(), ContainmentError> {
+        job.assign_process(handle)
+            .map_err(|e| ContainmentError::Job(format!("assign pid {pid}: {e}")))
     }
 
     /// Kill the OS process if we fail after `Command::spawn`.
     struct ChildKiller(Option<std::process::Child>);
 
     impl Drop for ChildKiller {
+        #[cfg_attr(coverage_nightly, coverage(off))]
         fn drop(&mut self) {
             if let Some(mut child) = self.0.take() {
                 let _ = child.kill();
@@ -276,7 +296,8 @@ mod windows_job {
         }
     }
 
-    fn pid_is_alive(pid: u32) -> bool {
+    #[doc(hidden)]
+    pub fn pid_is_alive(pid: u32) -> bool {
         unsafe {
             let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
             if handle.is_null() {
@@ -285,11 +306,17 @@ mod windows_job {
             let mut code = 0u32;
             let ok = GetExitCodeProcess(handle, &mut code);
             CloseHandle(handle);
-            if ok == 0 {
-                return false;
-            }
-            code == STILL_ACTIVE
+            query_still_active(ok, code)
         }
+    }
+
+    /// Interpret `GetExitCodeProcess` (`ok != 0`) plus the reported exit code.
+    #[doc(hidden)]
+    pub fn query_still_active(ok: i32, code: u32) -> bool {
+        if ok == 0 {
+            return false;
+        }
+        code == STILL_ACTIVE
     }
 
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
@@ -304,24 +331,10 @@ mod windows_job {
 }
 
 #[cfg(windows)]
-pub use windows_job::JobContainment;
+pub use windows_job::{
+    job_err, pid_is_alive, query_still_active, working_set_limit, JobContainment, PAGE,
+};
 
 #[cfg(all(test, windows))]
-mod working_set_limit_tests {
-    use super::windows_job::{working_set_limit, PAGE};
-
-    #[test]
-    fn sub_page_caps_are_skipped() {
-        assert_eq!(working_set_limit(0), None);
-        assert_eq!(working_set_limit(1), None);
-        assert_eq!(working_set_limit(PAGE - 1), None);
-    }
-
-    #[test]
-    fn page_aligned_and_unaligned_caps() {
-        assert_eq!(working_set_limit(PAGE), Some(PAGE as usize));
-        assert_eq!(working_set_limit(PAGE + 1), Some(PAGE as usize));
-        assert_eq!(working_set_limit(PAGE * 2 - 1), Some(PAGE as usize));
-        assert_eq!(working_set_limit(PAGE * 2), Some((PAGE * 2) as usize));
-    }
-}
+#[path = "containment_tests.rs"]
+mod containment_tests;

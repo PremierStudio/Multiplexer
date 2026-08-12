@@ -1,8 +1,8 @@
 //! Unit and property tests for the MCP lifecycle supervisor.
 
 use multiplexer_mcp::{
-    backoff_ms_for, config_hash, ConfigHash, LifecycleState, ServerConfig, ServerId, Supervisor,
-    SupervisorError, BACKOFF_BASE_MS, BACKOFF_CAP_MS, MAX_CONSECUTIVE_FAILURES,
+    backoff_ms_for, config_hash, ConfigHash, LifecycleState, ServerConfig, ServerHandle, ServerId,
+    Supervisor, SupervisorError, BACKOFF_BASE_MS, BACKOFF_CAP_MS, MAX_CONSECUTIVE_FAILURES,
 };
 use proptest::prelude::*;
 
@@ -386,6 +386,117 @@ fn server_id_display_and_from() {
     assert_eq!(id.as_ref(), "linear");
     assert_eq!(id.to_string(), "linear");
     assert_eq!(ServerId::from(String::from("linear")), id);
+}
+
+#[test]
+fn supervisor_error_display() {
+    assert_eq!(
+        SupervisorError::UnknownServer("missing".into()).to_string(),
+        "unknown server 'missing'"
+    );
+    assert_eq!(
+        SupervisorError::UnknownHandle("gone".into()).to_string(),
+        "unknown handle for server 'gone'"
+    );
+    assert_eq!(
+        SupervisorError::IllegalTransition {
+            from: LifecycleState::Failed
+        }
+        .to_string(),
+        "illegal transition from Failed"
+    );
+}
+
+#[test]
+fn server_config_new_and_id() {
+    let cfg = ServerConfig::new("linear", "npx", vec!["-y".into()], vec!["K".into()]);
+    assert_eq!(cfg.name, "linear");
+    assert_eq!(cfg.command, "npx");
+    assert_eq!(cfg.args, vec!["-y"]);
+    assert_eq!(cfg.env_keys, vec!["K"]);
+    assert_eq!(cfg.server_id(), ServerId::new("linear"));
+}
+
+#[test]
+fn release_forged_token_errors() {
+    let mut sup = Supervisor::new();
+    let handle = sup.acquire(&cfg("x", "npx"));
+    let forged = ServerHandle::from_raw(handle.id().clone(), handle.hash(), 999);
+    assert_eq!(
+        sup.release(forged),
+        Err(SupervisorError::UnknownHandle("x".into()))
+    );
+    assert_eq!(sup.refcount(handle.id()), Some(1));
+    sup.release(handle).unwrap();
+}
+
+#[test]
+fn release_after_evict_instance_errors() {
+    let mut sup = Supervisor::new();
+    let handle = sup.acquire(&cfg("x", "npx"));
+    sup.evict_instance(&handle.hash());
+    assert_eq!(
+        sup.release(handle),
+        Err(SupervisorError::UnknownHandle("x".into()))
+    );
+}
+
+#[test]
+fn release_after_evict_name_index_ok() {
+    let mut sup = Supervisor::new();
+    let handle = sup.acquire(&cfg("x", "npx"));
+    let id = handle.id().clone();
+    let hash = handle.hash();
+    assert_eq!(sup.name_hash_count(&id), 1);
+    assert_eq!(sup.state(&id), Some(LifecycleState::Ready));
+    sup.evict_name_index(&id);
+    assert_eq!(sup.name_hash_count(&id), 0);
+    assert_eq!(sup.state(&id), None);
+    assert_eq!(sup.refcount_hash(&hash), Some(1));
+    assert!(sup.release(handle).is_ok());
+    assert_eq!(sup.instance_count(), 0);
+}
+
+#[test]
+fn lookup_skips_stale_name_hash() {
+    let mut sup = Supervisor::new();
+    let handle = sup.acquire(&cfg("x", "npx"));
+    let id = handle.id().clone();
+    let before = sup.name_hash_count(&id);
+    assert_eq!(before, 1);
+    sup.prepend_name_hash(&id, config_hash(&cfg("x", "other")));
+    assert_eq!(sup.name_hash_count(&id), before + 1);
+    assert_eq!(sup.state(&id), Some(LifecycleState::Ready));
+    assert_eq!(sup.refcount(&id), Some(1));
+}
+
+#[test]
+fn set_state_stopped_is_illegal_to_crash() {
+    let mut sup = Supervisor::new();
+    let handle = sup.acquire(&cfg("x", "npx"));
+    sup.set_state(&handle.hash(), LifecycleState::Stopped);
+    assert_eq!(
+        sup.mark_crashed_hash(&handle.hash()),
+        Err(SupervisorError::IllegalTransition {
+            from: LifecycleState::Stopped
+        })
+    );
+}
+
+#[test]
+fn public_types_debug_all_variants() {
+    for state in [
+        LifecycleState::Spawned,
+        LifecycleState::Ready,
+        LifecycleState::Crashed { restarts: 2 },
+        LifecycleState::Stopped,
+        LifecycleState::Failed,
+    ] {
+        assert!(!format!("{state:?}").is_empty());
+    }
+    assert!(format!("{:?}", SupervisorError::UnknownServer("x".into())).contains("UnknownServer"));
+    let handle = Supervisor::new().acquire(&cfg("dbg", "npx"));
+    assert!(format!("{handle:?}").contains("dbg"));
 }
 
 fn arb_config() -> impl Strategy<Value = ServerConfig> {

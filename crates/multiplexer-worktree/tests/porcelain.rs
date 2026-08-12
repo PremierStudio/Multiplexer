@@ -76,6 +76,26 @@ fn missing_path_line_errors() {
     );
 }
 
+#[test]
+fn worktree_without_path_is_missing_path() {
+    assert_eq!(
+        parse_porcelain("worktree\n").unwrap_err(),
+        PorcelainError::MissingPath
+    );
+}
+
+#[test]
+fn porcelain_error_display() {
+    assert_eq!(
+        PorcelainError::UnexpectedLine("x".into()).to_string(),
+        "expected worktree line, got: x"
+    );
+    assert_eq!(
+        PorcelainError::MissingPath.to_string(),
+        "worktree entry missing path"
+    );
+}
+
 proptest! {
     #[test]
     fn roundtrip_porcelain(

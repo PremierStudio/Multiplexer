@@ -2,6 +2,8 @@
 //!
 //! Parsing is pure. Spawning git is injected via [`GitRunner`] (`FakeGit` for tests).
 
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
+
 pub mod git;
 pub mod porcelain;
 

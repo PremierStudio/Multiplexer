@@ -147,6 +147,65 @@ fn small_bitmap_reserves_nothing() {
     assert_eq!(alloc.cores, vec![0, 1]);
 }
 
+#[test]
+fn single_core_bitmap_reserves_nothing() {
+    let mut bitmap = CoreBitmap::new(1).expect("valid core count");
+    assert_eq!(bitmap.enabled_non_reserved_count(), 1);
+    let alloc = alloc_cores(&mut bitmap, SessionId(1), 1);
+    assert_eq!(alloc.cores, vec![0]);
+}
+
+#[test]
+fn reserve_twice_errors_and_failed_call_is_atomic() {
+    let mut bitmap = CoreBitmap::new(8).expect("valid core count");
+    bitmap.reserve(&[5]).expect("first reserve");
+    assert_eq!(
+        bitmap.reserve(&[5]).err(),
+        Some(ResmanError::CoreReserved(5))
+    );
+    assert_eq!(
+        bitmap.reserve(&[4, 99]).err(),
+        Some(ResmanError::CoreOutOfRange(99))
+    );
+    bitmap
+        .reserve(&[4])
+        .expect("4 must still be free after atomic fail");
+    let alloc = alloc_cores(&mut bitmap, SessionId(1), 3);
+    assert_eq!(alloc.cores, vec![2, 3, 6]);
+}
+
+#[test]
+fn resman_error_display() {
+    assert_eq!(
+        ResmanError::InvalidCoreCount.to_string(),
+        "core count must be at least 1"
+    );
+    assert_eq!(
+        ResmanError::CoreOutOfRange(9).to_string(),
+        "core 9 out of range"
+    );
+    assert_eq!(
+        ResmanError::CoreReserved(1).to_string(),
+        "core 1 is reserved"
+    );
+    assert_eq!(
+        ResmanError::InsufficientCores {
+            needed: 3,
+            available: 1
+        }
+        .to_string(),
+        "not enough free cores: need 3, have 1"
+    );
+    assert_eq!(
+        ResmanError::SessionAlreadyAllocated(2).to_string(),
+        "session 2 already allocated"
+    );
+    assert_eq!(
+        ResmanError::UnknownSession(7).to_string(),
+        "unknown session 7"
+    );
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 

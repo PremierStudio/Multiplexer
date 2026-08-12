@@ -42,7 +42,8 @@ pub fn parse_porcelain(input: &str) -> Result<Vec<Worktree>, PorcelainError> {
             flush(&mut trees, &mut current);
             continue;
         }
-        if let Some(path) = line.strip_prefix("worktree ") {
+        if line == "worktree" || line.starts_with("worktree ") {
+            let path = line.strip_prefix("worktree ").unwrap_or("");
             let tree = Worktree {
                 path: path.to_string(),
                 head: None,
@@ -95,6 +96,7 @@ pub fn find_by_branch<'a>(trees: &'a [Worktree], name: &str) -> Vec<&'a Worktree
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 
@@ -176,6 +178,37 @@ detached
         assert_eq!(
             err,
             PorcelainError::UnexpectedLine("garbage line".to_string())
+        );
+    }
+
+    #[test]
+    fn unexpected_attribute_after_worktree_errors() {
+        let err = parse_porcelain("worktree /repo\nunknown-attr\n").unwrap_err();
+        assert_eq!(
+            err,
+            PorcelainError::UnexpectedLine("unknown-attr".to_string())
+        );
+    }
+
+    #[test]
+    fn bare_marker_is_accepted() {
+        let trees = parse_porcelain("worktree /repo.git\nbare\nHEAD abc\n").unwrap();
+        assert_eq!(trees.len(), 1);
+        assert_eq!(trees[0].path, "/repo.git");
+        assert_eq!(trees[0].head.as_deref(), Some("abc"));
+        assert_eq!(trees[0].branch, None);
+        assert!(!trees[0].detached);
+    }
+
+    #[test]
+    fn worktree_line_without_path_is_missing_path() {
+        assert_eq!(
+            parse_porcelain("worktree").unwrap_err(),
+            PorcelainError::MissingPath
+        );
+        assert_eq!(
+            parse_porcelain("worktree\nHEAD abc\n").unwrap_err(),
+            PorcelainError::MissingPath
         );
     }
 

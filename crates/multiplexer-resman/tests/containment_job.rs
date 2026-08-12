@@ -176,6 +176,76 @@ fn job_child_alive_unknown_id_errors() {
 }
 
 #[test]
+fn missing_pid_is_not_alive() {
+    assert!(!multiplexer_resman::pid_is_alive(0xFFFF_FFFE));
+}
+
+#[test]
+fn job_err_and_query_helpers() {
+    let err = multiplexer_resman::job_err(win32job::JobError::CreateFailed(
+        std::io::Error::from_raw_os_error(5),
+    ));
+    match err {
+        ContainmentError::Job(msg) => assert!(msg.contains("Failed to create job"), "{msg}"),
+        other => panic!("expected Job, got {other:?}"),
+    }
+    assert!(!multiplexer_resman::query_still_active(0, 259));
+    assert!(multiplexer_resman::query_still_active(1, 259));
+    assert!(!multiplexer_resman::query_still_active(1, 0));
+    assert_eq!(multiplexer_resman::working_set_limit(0), None);
+    assert_eq!(
+        multiplexer_resman::working_set_limit(multiplexer_resman::PAGE),
+        Some(multiplexer_resman::PAGE as usize)
+    );
+}
+
+#[test]
+fn spawn_missing_program_is_spawn_error() {
+    let mut job = JobContainment::new().expect("create job object");
+    match job.spawn(SpawnSpec {
+        program: PathBuf::from("no-such-multiplexer-child.exe"),
+        args: vec![],
+        memory_cap_bytes: None,
+    }) {
+        Err(ContainmentError::Spawn { program, message }) => {
+            assert!(program.contains("no-such-multiplexer-child"), "{program}");
+            assert!(!message.is_empty());
+        }
+        other => panic!("expected Spawn, got {other:?}"),
+    }
+}
+
+#[test]
+fn child_alive_true_after_spawn_for_coverage() {
+    let mut job = JobContainment::new().expect("create job object");
+    let child = job.spawn(long_ping_spec()).expect("spawn ping");
+    let mut guard = OrphanGuard::new(child.pid);
+    assert!(job.child_alive(child.id).expect("known child"));
+    drop(job);
+    guard.disarm();
+}
+
+#[test]
+fn spawn_after_force_closed_is_closed() {
+    let mut job = JobContainment::new().expect("create job object");
+    job.force_closed();
+    assert_eq!(
+        job.spawn(long_ping_spec()).err(),
+        Some(ContainmentError::Closed)
+    );
+}
+
+#[test]
+fn memory_cap_after_force_closed_is_closed() {
+    let mut job = JobContainment::new().expect("create job object");
+    job.force_closed();
+    let mut spec = long_ping_spec();
+    spec.memory_cap_bytes = Some(8 * 1024 * 1024);
+    assert_eq!(job.spawn(spec).err(), Some(ContainmentError::Closed));
+    assert_eq!(job.last_working_set_limit(), Some(8 * 1024 * 1024));
+}
+
+#[test]
 fn job_close_reaps_ping() {
     let mut job = JobContainment::new().expect("create job object");
     let child = job.spawn(long_ping_spec()).expect("spawn ping in job");

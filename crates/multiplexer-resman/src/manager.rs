@@ -33,8 +33,9 @@ pub struct ResourceManager<C: Containment, F> {
 impl ResourceManager<FakeContainment, fn() -> FakeContainment> {
     /// Manager that uses in-memory containment (tests and default local stub).
     pub fn fake(n_cores: usize) -> Result<Self, ManagerError> {
+        let bitmap = CoreBitmap::new(n_cores)?;
         Ok(Self {
-            bitmap: CoreBitmap::new(n_cores)?,
+            bitmap,
             factory: FakeContainment::new,
             sessions: HashMap::new(),
         })
@@ -47,8 +48,9 @@ where
     F: Fn() -> C,
 {
     pub fn new(n_cores: usize, factory: F) -> Result<Self, ManagerError> {
+        let bitmap = CoreBitmap::new(n_cores)?;
         Ok(Self {
-            bitmap: CoreBitmap::new(n_cores)?,
+            bitmap,
             factory,
             sessions: HashMap::new(),
         })
@@ -110,3 +112,7 @@ where
         self.bitmap.free_enabled_count()
     }
 }
+
+#[cfg(test)]
+#[path = "manager_tests.rs"]
+mod manager_tests;

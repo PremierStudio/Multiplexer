@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc d1bfec4508a13579f7621745ca23621bb2ddf7219fc2290f3be38fda0bbcb95b # shrinks to a = ServerConfig { name: "a", command: "a", args: [], env_keys: [] }, b = "b"
+cc 669eb9258d04db6fb7f213ffd20da25cf668bb96287e73f3cf9ac32d5ae0e690 # shrinks to a = ServerConfig { name: "j", command: "a", args: [], env_keys: [] }, b = "k"

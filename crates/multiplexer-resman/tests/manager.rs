@@ -82,6 +82,48 @@ fn stop_unknown_session_errors() {
 }
 
 #[test]
+fn fake_and_new_reject_zero_cores() {
+    assert!(matches!(
+        ResourceManager::fake(0),
+        Err(multiplexer_resman::ManagerError::Bitmap(
+            multiplexer_resman::ResmanError::InvalidCoreCount
+        ))
+    ));
+    assert!(matches!(
+        ResourceManager::new(0, FakeContainment::new),
+        Err(multiplexer_resman::ManagerError::Bitmap(
+            multiplexer_resman::ResmanError::InvalidCoreCount
+        ))
+    ));
+    let mut mgr = ResourceManager::new(8, FakeContainment::new).unwrap();
+    mgr.start_session(SessionId(1), 1, dummy_spec()).unwrap();
+    assert_eq!(mgr.session_count(), 1);
+}
+
+#[test]
+fn child_id_unknown_session_errors() {
+    let mgr = ResourceManager::fake(8).unwrap();
+    assert!(matches!(
+        mgr.child_id(SessionId(9)),
+        Err(multiplexer_resman::ManagerError::UnknownSession(9))
+    ));
+}
+
+#[test]
+fn manager_error_display() {
+    use multiplexer_resman::{ManagerError, ResmanError};
+    assert!(ManagerError::UnknownSession(1)
+        .to_string()
+        .contains("unknown session 1"));
+    assert!(ManagerError::from(ResmanError::InvalidCoreCount)
+        .to_string()
+        .contains("at least 1"));
+    assert!(ManagerError::from(ContainmentError::Closed)
+        .to_string()
+        .contains("already closed"));
+}
+
+#[test]
 fn double_start_same_session_errors() {
     let mut mgr = ResourceManager::fake(8).unwrap();
     mgr.start_session(SessionId(1), 1, dummy_spec()).unwrap();
@@ -110,6 +152,25 @@ impl multiplexer_resman::Containment for FailOnce {
 }
 
 #[test]
+fn fake_empty_program_does_not_consume_cores() {
+    let mut mgr = ResourceManager::fake(8).unwrap();
+    let before = mgr.free_enabled_count();
+    assert!(mgr
+        .start_session(
+            SessionId(1),
+            1,
+            SpawnSpec {
+                program: PathBuf::new(),
+                args: vec![],
+                memory_cap_bytes: None,
+            },
+        )
+        .is_err());
+    assert_eq!(mgr.free_enabled_count(), before);
+    assert_eq!(mgr.session_count(), 0);
+}
+
+#[test]
 fn failed_spawn_does_not_consume_cores() {
     let mut mgr = ResourceManager::new(8, || FailOnce {
         inner: FakeContainment::new(),
@@ -119,6 +180,34 @@ fn failed_spawn_does_not_consume_cores() {
     assert!(mgr.start_session(SessionId(1), 2, dummy_spec()).is_err());
     assert_eq!(mgr.free_enabled_count(), before);
     assert_eq!(mgr.session_count(), 0);
+}
+
+/// Containment that spawns, then fails `child_alive`.
+struct AliveErr(FakeContainment);
+
+impl multiplexer_resman::Containment for AliveErr {
+    fn spawn(
+        &mut self,
+        spec: SpawnSpec,
+    ) -> Result<multiplexer_resman::ContainedChild, ContainmentError> {
+        self.0.spawn(spec)
+    }
+
+    fn child_alive(&self, _id: multiplexer_resman::ChildId) -> Result<bool, ContainmentError> {
+        Err(ContainmentError::UnknownChild(0))
+    }
+}
+
+#[test]
+fn session_alive_propagates_containment_error() {
+    let mut mgr = ResourceManager::new(8, || AliveErr(FakeContainment::new())).unwrap();
+    mgr.start_session(SessionId(1), 1, dummy_spec()).unwrap();
+    assert!(matches!(
+        mgr.session_alive(SessionId(1)),
+        Err(multiplexer_resman::ManagerError::Containment(
+            ContainmentError::UnknownChild(0)
+        ))
+    ));
 }
 
 proptest::proptest! {
