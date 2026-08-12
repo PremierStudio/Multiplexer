@@ -9,8 +9,12 @@ members = [
     "crates/multiplexer-mcp",
     "crates/multiplexer-layout",
     "crates/multiplexer-shell",
+    "crates/multiplexer-terminal",
+    "crates/multiplexer-auth",
+    "crates/multiplexer-core",
     "crates/multiplexer-server",
     "apps/multiplexer-desktop",
+    "apps/multiplexer-server",
 ]
 
 [workspace.package]
@@ -24,5 +28,8 @@ serde_json = "1"
 thiserror = "2"
 proptest = "1"
 cargo-mutants = { version = "1" }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = "0.27"
+futures-util = "0.3"
 win32job = "2"
 multiplexer-wire = { path = "crates/multiplexer-wire" }

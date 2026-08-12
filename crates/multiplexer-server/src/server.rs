@@ -39,6 +39,13 @@ impl Server<crate::ProviderBridge<multiplexer_provider::FakeProvider>> {
     }
 }
 
+impl Server<crate::RuntimeBackend> {
+    /// Router that composes provider, resource manager, and checkpoints.
+    pub fn with_runtime() -> Self {
+        Self::with_backend(crate::RuntimeBackend::new())
+    }
+}
+
 impl Default for Server<FakeBackend> {
     fn default() -> Self {
         Self::new()

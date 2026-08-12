@@ -1,0 +1,15 @@
+[package]
+name = "multiplexer-server-bin"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Multiplexer JSON-RPC WebSocket server (loopback listen loop)."
+
+[[bin]]
+name = "multiplexer-server"
+path = "src/main.rs"
+
+[dependencies]
+multiplexer-server = { path = "../../crates/multiplexer-server" }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }

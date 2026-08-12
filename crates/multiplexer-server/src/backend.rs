@@ -70,7 +70,7 @@ impl SessionSnapshot {
 }
 
 /// Session store + event drain used by the request router.
-pub trait SessionBackend: Send {
+pub trait SessionBackend {
     fn start(&mut self, params: SessionStartParams) -> Result<StartedSession, BackendError>;
     fn list(&self) -> Vec<SessionSummary>;
     fn get(&self, session_id: &str) -> Result<SessionSnapshot, BackendError>;

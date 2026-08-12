@@ -1,0 +1,13 @@
+[package]
+name = "multiplexer-auth"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Secret references only: AuthStore never holds raw tokens."
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
