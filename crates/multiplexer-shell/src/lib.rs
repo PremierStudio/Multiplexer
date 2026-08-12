@@ -5,7 +5,10 @@
 
 mod workspace;
 
-pub use workspace::{ChatMessage, InspectorTab, Role, Thread, Workspace};
+pub use workspace::{
+    ChatMessage, ChromeLayout, InspectorTab, Role, Thread, Workspace, LEFT_WIDTH_MAX,
+    LEFT_WIDTH_MIN, RAIL_COLLAPSED, RIGHT_WIDTH_MAX, RIGHT_WIDTH_MIN,
+};
 
 use multiplexer_layout::{LayoutForest, LayoutNode, PaneId};
 

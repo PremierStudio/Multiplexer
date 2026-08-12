@@ -43,6 +43,78 @@ impl InspectorTab {
     }
 }
 
+/// Min/max pixel widths for the Outlook rails.
+pub const LEFT_WIDTH_MIN: f32 = 180.0;
+pub const LEFT_WIDTH_MAX: f32 = 420.0;
+pub const RIGHT_WIDTH_MIN: f32 = 220.0;
+pub const RIGHT_WIDTH_MAX: f32 = 480.0;
+pub const RAIL_COLLAPSED: f32 = 36.0;
+
+/// Show/hide and width of the left and right rails.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChromeLayout {
+    pub left_open: bool,
+    pub right_open: bool,
+    pub left_width: f32,
+    pub right_width: f32,
+}
+
+impl Default for ChromeLayout {
+    fn default() -> Self {
+        Self {
+            left_open: true,
+            right_open: true,
+            left_width: 248.0,
+            right_width: 300.0,
+        }
+    }
+}
+
+impl ChromeLayout {
+    pub fn toggle_left(&mut self) {
+        self.left_open = !self.left_open;
+    }
+
+    pub fn toggle_right(&mut self) {
+        self.right_open = !self.right_open;
+    }
+
+    pub fn set_left_width(&mut self, width: f32) {
+        self.left_width = width.clamp(LEFT_WIDTH_MIN, LEFT_WIDTH_MAX);
+        self.left_open = true;
+    }
+
+    pub fn set_right_width(&mut self, width: f32) {
+        self.right_width = width.clamp(RIGHT_WIDTH_MIN, RIGHT_WIDTH_MAX);
+        self.right_open = true;
+    }
+
+    pub fn nudge_left(&mut self, delta: f32) {
+        self.set_left_width(self.left_width + delta);
+    }
+
+    pub fn nudge_right(&mut self, delta: f32) {
+        self.set_right_width(self.right_width + delta);
+    }
+
+    /// Width the left rail occupies, including the collapsed strip.
+    pub fn occupied_left(&self) -> f32 {
+        if self.left_open {
+            self.left_width
+        } else {
+            RAIL_COLLAPSED
+        }
+    }
+
+    pub fn occupied_right(&self) -> f32 {
+        if self.right_open {
+            self.right_width
+        } else {
+            RAIL_COLLAPSED
+        }
+    }
+}
+
 /// Product workspace: chats + composer + inspector. No GPUI types.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Workspace {
@@ -54,6 +126,7 @@ pub struct Workspace {
     pub draft: String,
     pub inspector: InspectorTab,
     pub worktrees: Vec<String>,
+    pub chrome: ChromeLayout,
     next_id: u64,
 }
 
@@ -68,6 +141,7 @@ impl Workspace {
             draft: String::new(),
             inspector: InspectorTab::Session,
             worktrees: Vec::new(),
+            chrome: ChromeLayout::default(),
             next_id: 1,
         };
         ws.new_thread();
@@ -283,5 +357,45 @@ mod tests {
         assert!(ws.connection.is_connected());
         assert_eq!(ws.connection.session_count(), 1);
         assert!(ws.title_bar().contains("connected"));
+    }
+
+    #[test]
+    fn chrome_default_is_open_with_roomy_rails() {
+        let c = ChromeLayout::default();
+        assert!(c.left_open && c.right_open);
+        assert!(c.left_width >= LEFT_WIDTH_MIN);
+        assert!(c.right_width >= RIGHT_WIDTH_MIN);
+        assert_eq!(c.occupied_left(), c.left_width);
+        assert_eq!(c.occupied_right(), c.right_width);
+    }
+
+    #[test]
+    fn chrome_toggle_hides_to_collapsed_strip() {
+        let mut c = ChromeLayout::default();
+        c.toggle_left();
+        c.toggle_right();
+        assert!(!c.left_open && !c.right_open);
+        assert_eq!(c.occupied_left(), RAIL_COLLAPSED);
+        assert_eq!(c.occupied_right(), RAIL_COLLAPSED);
+        c.toggle_left();
+        assert!(c.left_open);
+        assert_eq!(c.occupied_left(), c.left_width);
+    }
+
+    #[test]
+    fn chrome_resize_clamps_and_reopens() {
+        let mut c = ChromeLayout::default();
+        c.left_open = false;
+        c.set_left_width(80.0);
+        assert_eq!(c.left_width, LEFT_WIDTH_MIN);
+        assert!(c.left_open);
+        c.set_left_width(900.0);
+        assert_eq!(c.left_width, LEFT_WIDTH_MAX);
+        c.set_right_width(10.0);
+        assert_eq!(c.right_width, RIGHT_WIDTH_MIN);
+        c.nudge_right(40.0);
+        assert_eq!(c.right_width, RIGHT_WIDTH_MIN + 40.0);
+        c.nudge_left(-20.0);
+        assert_eq!(c.left_width, LEFT_WIDTH_MAX - 20.0);
     }
 }
