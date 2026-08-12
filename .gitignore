@@ -1,0 +1,31 @@
+# Rust build artifacts
+/target/
+**/target/
+
+# cargo-mutants output
+/mutants.out/
+/mutants.out.old/
+**/mutants.out/
+
+# Cargo.lock: ignored for library crates, committed for the spike binary
+# (binary crates should commit their lock for reproducible builds).
+Cargo.lock
+!spike/Cargo.lock
+
+# Vendored grok-build fork: keep the source tree, drop its own .git history
+# (we track SOURCE_REV instead) and its build artifacts.
+third_party/grok-build/.git/
+third_party/grok-build/target/
+
+# Local tooling
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log

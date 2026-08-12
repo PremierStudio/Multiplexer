@@ -1,0 +1,21 @@
+# Normalize line endings: LF in the repo, native on checkout
+* text=auto
+
+# Rust sources: LF
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Lockfiles
+Cargo.lock text eol=lf
+
+# Binaries and archives stay untouched
+*.png binary
+*.jpg binary
+*.zip binary
+*.gz binary
+*.ttf binary
+*.otf binary
