@@ -32,7 +32,7 @@ impl Render for ShellView {
                     .bg(rgb(0x141414))
                     .border_b_1()
                     .border_color(rgb(0x2e2e2e))
-                    .child(self.chrome.hello_frame_label()),
+                    .child(self.chrome.connection_label()),
             )
             .child(
                 div()

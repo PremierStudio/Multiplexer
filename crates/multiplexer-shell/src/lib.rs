@@ -8,11 +8,41 @@ use multiplexer_layout::{LayoutForest, LayoutNode, PaneId};
 /// Title of the primary Multiplexer window.
 pub const DEFAULT_WINDOW_TITLE: &str = "Multiplexer";
 
+/// How the chrome is attached to a Multiplexer server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionState {
+    Disconnected,
+    Connecting,
+    Connected { session_ids: Vec<String> },
+}
+
+impl ConnectionState {
+    pub fn is_connected(&self) -> bool {
+        matches!(self, ConnectionState::Connected { .. })
+    }
+
+    pub fn session_count(&self) -> usize {
+        match self {
+            ConnectionState::Connected { session_ids } => session_ids.len(),
+            _ => 0,
+        }
+    }
+
+    pub fn status_label(&self) -> &'static str {
+        match self {
+            ConnectionState::Disconnected => "disconnected",
+            ConnectionState::Connecting => "connecting",
+            ConnectionState::Connected { .. } => "connected",
+        }
+    }
+}
+
 /// OS-window chrome: title plus the pane forest to project.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DesktopChrome {
     pub title: String,
     pub layout: LayoutForest,
+    pub connection: ConnectionState,
 }
 
 impl DesktopChrome {
@@ -21,6 +51,7 @@ impl DesktopChrome {
         Self {
             title: DEFAULT_WINDOW_TITLE.to_owned(),
             layout: LayoutForest::default_outlook(),
+            connection: ConnectionState::Disconnected,
         }
     }
 
@@ -41,6 +72,23 @@ impl DesktopChrome {
     /// Hello-frame copy projected into the blank center of the shell.
     pub fn hello_frame_label(&self) -> String {
         format!("Hello, {}", self.title)
+    }
+
+    /// Status-bar copy: title plus connection state.
+    pub fn connection_label(&self) -> String {
+        format!("{} · {}", self.title, self.connection.status_label())
+    }
+
+    pub fn mark_connecting(&mut self) {
+        self.connection = ConnectionState::Connecting;
+    }
+
+    pub fn mark_connected(&mut self, session_ids: Vec<String>) {
+        self.connection = ConnectionState::Connected { session_ids };
+    }
+
+    pub fn mark_disconnected(&mut self) {
+        self.connection = ConnectionState::Disconnected;
     }
 }
 
@@ -91,6 +139,7 @@ mod unit {
         let custom = DesktopChrome {
             title: "Other".to_owned(),
             layout: LayoutForest::default_outlook(),
+            connection: ConnectionState::Disconnected,
         };
         assert_eq!(custom.hello_frame_label(), "Hello, Other");
     }
@@ -113,5 +162,28 @@ mod unit {
             chrome.live_pane_ids(),
             vec![PaneId(1), PaneId(2), PaneId(3)]
         );
+    }
+
+    #[test]
+    fn default_connection_is_disconnected() {
+        let chrome = DesktopChrome::default_outlook();
+        assert_eq!(chrome.connection, ConnectionState::Disconnected);
+        assert!(!chrome.connection.is_connected());
+        assert_eq!(chrome.connection.session_count(), 0);
+        assert_eq!(chrome.connection_label(), "Multiplexer · disconnected");
+    }
+
+    #[test]
+    fn connection_lifecycle_updates_label_and_count() {
+        let mut chrome = DesktopChrome::default_outlook();
+        chrome.mark_connecting();
+        assert_eq!(chrome.connection.status_label(), "connecting");
+        chrome.mark_connected(vec!["sess-1".into(), "sess-2".into()]);
+        assert!(chrome.connection.is_connected());
+        assert_eq!(chrome.connection.session_count(), 2);
+        assert_eq!(chrome.connection_label(), "Multiplexer · connected");
+        chrome.mark_disconnected();
+        assert!(!chrome.connection.is_connected());
+        assert_eq!(chrome.connection.session_count(), 0);
     }
 }

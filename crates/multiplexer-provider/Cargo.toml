@@ -1,0 +1,14 @@
+[package]
+name = "multiplexer-provider"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Provider adapter seam: backend-agnostic agent session control with a FakeProvider."
+
+[dependencies]
+thiserror.workspace = true
+multiplexer-wire.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

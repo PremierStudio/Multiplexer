@@ -1,0 +1,17 @@
+[package]
+name = "multiplexer-server"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "In-process JSON-RPC request router for the Multiplexer composition root."
+
+[dependencies]
+multiplexer-wire = { path = "../multiplexer-wire" }
+multiplexer-provider = { path = "../multiplexer-provider" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

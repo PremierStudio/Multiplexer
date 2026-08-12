@@ -2,11 +2,13 @@
 resolver = "2"
 members = [
     "crates/multiplexer-wire",
+    "crates/multiplexer-provider",
     "crates/multiplexer-resman",
     "crates/multiplexer-worktree",
     "crates/multiplexer-mcp",
     "crates/multiplexer-layout",
     "crates/multiplexer-shell",
+    "crates/multiplexer-server",
     "apps/multiplexer-desktop",
 ]
 
@@ -22,3 +24,4 @@ thiserror = "2"
 proptest = "1"
 cargo-mutants = { version = "1" }
 win32job = "2"
+multiplexer-wire = { path = "crates/multiplexer-wire" }
