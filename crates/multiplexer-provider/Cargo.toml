@@ -6,6 +6,11 @@ license.workspace = true
 repository.workspace = true
 description = "Provider adapter seam: backend-agnostic agent session control with a FakeProvider."
 
+[features]
+default = []
+# Reserved for the vendored xai-grok-shell path. Off so CI does not compile grok-build.
+embed-grok = []
+
 [dependencies]
 thiserror.workspace = true
 multiplexer-wire.workspace = true

@@ -6,10 +6,14 @@ mod adapter;
 mod error;
 mod event;
 mod fake;
+mod grok;
 mod ids;
 
 pub use adapter::{ProviderAdapter, SessionSnapshot, SessionStartParams, TurnInput};
 pub use error::ProviderError;
 pub use event::ProviderEvent;
 pub use fake::FakeProvider;
+pub use grok::{
+    GrokAdapter, GrokCall, GrokHandle, GrokShellFactory, RecordingGrokFactory, VendoredGrokFactory,
+};
 pub use ids::{ModelId, ProviderKind, SessionId};
