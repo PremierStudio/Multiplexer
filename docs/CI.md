@@ -22,7 +22,7 @@ The pipeline lives in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) 
 
 `cargo-mutants` introduces small faults ("mutants") into the code and re-runs the suite against each. A mutant the tests fail to catch is a **survived** mutant, and `cargo-mutants` exits non-zero when any survive, so a missed mutant fails the gate. The **70% kill floor is the merge bar** (decision D33); the bar may rise over time. Survivors are a code smell, not just a test gap: fix the test or the dead code, never silence a survivor.
 
-The CI invocation uses `--in-place` to avoid the default copy-tree mode (which copies the whole tree, roughly 30 GB here) while still writing the same `mutants.out/` format. `.cargo/mutants.toml` restricts generation to `crates/**/*.rs` and excludes `third_party/**` and `spike/**`. The mutation step sets `CARGO_INCREMENTAL=0` so in-place rebuilds cannot reuse a stale incremental cache. The version is pinned to **27.1.0**, the version that produced the existing `mutants.out/` report.
+The CI invocation uses `--in-place` to avoid the default copy-tree mode (which copies the whole tree, roughly 30 GB here) while still writing the same `mutants.out/` format. `.cargo/mutants.toml` restricts generation to `crates/**/*.rs` and excludes `third_party/**`, `spike/**`, and `apps/**`. The mutation step sets `CARGO_INCREMENTAL=0` so in-place rebuilds cannot reuse a stale incremental cache. The version is pinned to **27.1.0**, the version that produced the existing `mutants.out/` report.
 
 ### Gate 5: coverage (cargo-llvm-cov)
 
@@ -48,7 +48,7 @@ cargo test --workspace
 
 # 4. mutation (>=70% killed; slow)
 cargo install cargo-mutants --version 27.1.0 --locked
-# .cargo/mutants.toml excludes third_party/** and spike/**
+# .cargo/mutants.toml excludes third_party/**, spike/**, and apps/**
 CARGO_INCREMENTAL=0 cargo mutants --in-place --timeout 30
 
 # 5. coverage (>=85% line, >=80% branch; slow)

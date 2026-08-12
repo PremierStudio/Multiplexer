@@ -1,8 +1,9 @@
-//! Parsing of `git worktree list --porcelain` output.
+//! Git worktree porcelain parsing and a `GitRunner`-backed worktree service.
 //!
-//! This crate is a pure parser: it turns porcelain-formatted text into typed
-//! `Worktree` records. Spawning git lives elsewhere.
+//! Parsing is pure. Spawning git is injected via [`GitRunner`] (`FakeGit` for tests).
 
+pub mod git;
 pub mod porcelain;
 
+pub use git::{FakeGit, GitCall, GitRunner, WorktreeError, WorktreeService};
 pub use porcelain::{find_by_branch, parse_porcelain, PorcelainError, Worktree};

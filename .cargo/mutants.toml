@@ -3,13 +3,14 @@
 #
 # Gate 4 runs `cargo mutants --in-place` so the tree is not copied. The
 # allowlist plus excludes are a second fence: never generate mutants under
-# the vendored grok-build tree or the spike sandbox, even if those
-# directories later become workspace members.
+# the vendored grok-build tree, the spike sandbox, or apps/** (GPUI
+# binaries need a display). Examine only crates/**.
 
 examine_globs = ["crates/**/*.rs"]
 exclude_globs = [
     "third_party/**",
     "spike/**",
+    "apps/**",
 ]
 # close(self) { drop(self) } is equivalent to an empty body: self is always dropped
 # on return. Tests still exercise close() via Drop side effects.

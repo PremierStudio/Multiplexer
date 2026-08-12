@@ -6,6 +6,8 @@ members = [
     "crates/multiplexer-worktree",
     "crates/multiplexer-mcp",
     "crates/multiplexer-layout",
+    "crates/multiplexer-shell",
+    "apps/multiplexer-desktop",
 ]
 
 [workspace.package]
