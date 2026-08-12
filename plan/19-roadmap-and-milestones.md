@@ -36,6 +36,21 @@ Phases 2 and 4 can partially overlap with Phase 3 (they touch different subsyste
 
 Matching the **full Orca baseline** (D7) across **Phases 1–5** is a **multi-quarter, multi-engineer** effort. Rough order: **~6–9 months of calendar time with a team of 3–5 engineers** (≈ **20–40 person-months**), driven by the Windows grok-build build (Phase 0), the full native editor (Phase 2), and the browser/HAR + mobile/remote subsystems (Phases 3–4). Phase 5 (multi-provider + scale) adds provider adapters and subagent orchestration at scale. This is a large commitment and is the primary driver of the timeline risk in §10.
 
+### New differentiators (2026-08-12)
+
+Six additional differentiators are being authored in parallel and slotted into the existing phases below. They do **not** change the MVP scope (Phases 1–4) or the dependency spine; they add deliverables and exit criteria to the phases where they naturally land.
+
+| Plan doc | Differentiator | Lands in |
+|---|---|---|
+| `plan/21-mcp-lifecycle-supervisor.md` | MCP process reuse/teardown (lifecycle supervisor) | Phase 1 (server composition) |
+| `plan/22-remote-delegation.md` | Control on A, execute on B over the existing JSON-RPC/WS contract | Phase 4 |
+| `plan/23-tailscale-integration.md` | MagicDNS, local API discovery, Serve for private relay | Phase 4 |
+| `plan/24-resource-manager.md` | CPU/RAM pin, Job Objects, fleet 1–100, live visual (**KILLER feature**) | Phase 1 (local) + Phase 4 (fleet/distributed) |
+| `plan/25-worktree-hooks.md` | Auto create/remove worktrees, pre-existing reminder, lifecycle hooks | Phase 1 (basics) |
+| `plan/26-mcp-skills-ui.md` | MCP registry + skills/hooks GPUI UI | Phase 2 (UI) |
+
+The local resource manager is pulled into **Phase 1** because it fixes orphaned agent processes **now**; the distributed fleet scheduler stays in **Phase 4** (its natural home with Mobile+Remote) and is **not** pulled forward. Tailscale is an **optional degrade** (see §10 risk note).
+
 ---
 
 ## 2. Phase 0 — Foundation (de-risk everything)
@@ -55,6 +70,8 @@ Matching the **full Orca baseline** (D7) across **Phases 1–5** is a **multi-qu
 | 0.5 | Wire contract skeleton | `multiplexer-wire` types + JSON-RPC codec + schema, with contract tests on both encode and decode sides. |
 | 0.6 | Test harness | Unit + property (proptest) + mutation (cargo-mutants) + integration scaffolding wired into CI. |
 | 0.7 | CI gates | GitHub Actions (or equivalent) pipeline: fmt → clippy (deny warnings) → unit+property → mutation → integration → component → e2e → coverage. Windows runner primary. |
+
+> **Note (2026-08-12):** Phase 0 adds **no** new product features. The 0.6 test harness should, however, include fixtures for the later **affinity / Job Object unit tests** (resource manager, `plan/24`) so those tests are not retrofitted.
 
 ### Exit criteria
 
@@ -92,6 +109,9 @@ PLAN-CONTEXT states Windows builds of grok-build are "best-effort, not currently
 | 1.8 | Checkpointing (basic) | `multiplexer-checkpoint`: hidden git refs per turn, diff query, revert. |
 | 1.9 | Model registry (basic) | `multiplexer-model-registry`: `[model.*]`/`[auth_provider.*]` config; select Grok per thread. |
 | 1.10 | Auth (local) | `multiplexer-auth`: OS keychain for provider secrets; OAuth for Grok provider. |
+| 1.11 | Resource manager (local) | `multiplexer-resource-manager` (per `plan/24`): CPU/RAM pinning, Windows Job Objects, kill-on-close, sysinfo telemetry. Fixes orphaned agent processes **now**. |
+| 1.12 | MCP lifecycle supervisor | `multiplexer-mcp-supervisor` (per `plan/21`): MCP process reuse/teardown, part of the server composition root. |
+| 1.13 | Worktree hooks (basics) | `multiplexer-worktree-hooks` (per `plan/25`): auto create/remove worktrees, pre-existing worktree reminder, lifecycle hooks, where they fit orchestration. |
 
 ### Exit criteria
 
@@ -101,11 +121,15 @@ PLAN-CONTEXT states Windows builds of grok-build are "best-effort, not currently
 - [ ] Two independent threads run concurrently without serializing through one queue.
 - [ ] Cold start to usable editor **< 300 ms**; input latency **< 16 ms** (measured, see `plan/16`).
 - [ ] Desktop and (stub) mobile client both render the same live state from the read model over the wire contract.
+- [ ] Killing a thread closes its agent processes (Job Object kill-on-close); affinity and memory limits are applied and reported via sysinfo telemetry (`plan/24`).
+- [ ] MCP servers are reused across sessions and torn down cleanly on exit (`plan/21`).
+- [ ] Worktrees are auto-created/removed with lifecycle hooks firing; a pre-existing worktree is surfaced as a reminder rather than clobbered (`plan/25`).
 
 ### Test gate
 
 Full CI chain green, **plus**:
 - **Integration:** real core + mock ACP agent (fake `grok agent stdio`); assert on the SQLite read model.
+- **Unit:** affinity / Job Object behavior against the Phase 0 fixtures (`plan/24`); MCP supervisor reuse/teardown (`plan/21`).
 - **Contract:** wire-contract schema-verified on both sides.
 - **Component (GPUI):** pane layout snapshot tests.
 - **E2E:** drive the real app/headless — a full prompt → tool → response cycle.
@@ -131,6 +155,8 @@ Phase 1 is **Windows-only**. macOS/Linux builds are not a Phase 1 deliverable (o
 | 2.5 | Split-anything | Any pane can be split arbitrarily (Orca baseline). |
 | 2.6 | Design system | Shared GPUI theme, typography, spacing, component library; snapshot-tested. |
 | 2.7 | Native search | Fast native search across the workspace (Orca baseline). |
+| 2.8 | MCP/Skills/Hooks Customize UI | `multiplexer-ui` (per `plan/26`): MCP registry + skills/hooks management UI. |
+| 2.9 | Resource visual pane | `multiplexer-ui` (per `plan/24`): live visual of CPU/RAM per agent/thread. |
 
 ### Exit criteria
 
@@ -139,11 +165,13 @@ Phase 1 is **Windows-only**. macOS/Linux builds are not a Phase 1 deliverable (o
 - [ ] All panes render in the layout and each can pop out to its own window and split arbitrarily.
 - [ ] Design system is consistent and snapshot-tested; no ad-hoc styling.
 - [ ] Native search returns results across the workspace in real time.
+- [ ] The MCP registry and skills/hooks management UI work end to end (`plan/26`).
+- [ ] The resource visual pane renders live CPU/RAM per agent/thread from the resource manager telemetry (`plan/24`).
 
 ### Test gate
 
 Full CI chain green, **plus**:
-- **Component:** editor element tests, pane-layout snapshot tests, pop-out window tests.
+- **Component:** editor element tests, pane-layout snapshot tests, pop-out window tests; MCP registry and resource visual pane snapshot tests (`plan/26`, `plan/24`).
 - **Integration:** diff-apply against real checkpoint refs; LSP against a fixture project.
 - **E2E:** drive the editor headlessly — open, edit, diff-apply, comment → agent.
 
@@ -202,6 +230,9 @@ Phase 3 depends on the pane system (Phase 2) for the browser/HAR panes and on th
 | 4.3 | SSH worktrees | SSH remote worktrees (Orca baseline). |
 | 4.4 | Account/usage tracking | Usage metering and account management (Orca baseline). |
 | 4.5 | Remote auth | Passkeys/DPoP for remote; OAuth for providers. |
+| 4.6 | Remote delegation | `multiplexer-remote` (per `plan/22`): control on A, execute on B over the existing JSON-RPC/WS contract. |
+| 4.7 | Tailscale integration | `multiplexer-remote` (per `plan/23`): MagicDNS, local API discovery, Serve for private relay. Optional degrade. |
+| 4.8 | Fleet scheduler (distributed) | `multiplexer-resource-manager` (per `plan/24`): distributed fleet scheduler, fleet 1–100. |
 
 ### Exit criteria
 
@@ -209,6 +240,9 @@ Phase 3 depends on the pane system (Phase 2) for the browser/HAR panes and on th
 - [ ] Remote access works over relay tunnel and SSH; ticket auth (5-min TTL) is enforced.
 - [ ] SSH worktrees run agent sessions on a remote machine.
 - [ ] Account/usage tracking is functional.
+- [ ] A session is controlled on machine A and executed on machine B over the existing wire contract (`plan/22`).
+- [ ] Tailscale MagicDNS discovery and Serve private relay work; the feature degrades gracefully when Tailscale is absent (`plan/23`).
+- [ ] The distributed fleet scheduler runs 1–100 agents across machines with live resource visuals (`plan/24`).
 
 ### Test gate
 
@@ -350,8 +384,12 @@ This feeds the vendored-fork sync cadence (D5) and the subagent-scheduling fork 
 | R8 | **Remote/relay security** | Ticket auth, DPoP, and relay are security-sensitive. | Build against `plan/17`; security review before Phase 4 ships. |
 | R9 | **Vendoring drift** | Upstream grok-build changes break our fork. | Pin the fork; treat it as our own crate; document the upgrade path. |
 | R10 | **Branding ambiguity** | Shipping with dual branding confuses users. | Resolve open question #6 before Phase 6 marketing. |
+| R11 | **Tailscale dependency** | Remote discovery/relay depends on Tailscale being installed. | Treat Tailscale as an **optional degrade**: fall back to the relay tunnel / SSH path when Tailscale is absent (`plan/23`). |
+| R12 | **Fleet scope creep** | Distributed fleet scheduling is large and could bloat the MVP. | Keep the fleet scheduler in **Phase 4**; the local resource manager ships in **Phase 1** because it fixes orphaned processes now (`plan/24`). |
 
 **The single biggest timeline risk is R1.** Everything else is a scoping or quality risk; R1 is a feasibility risk on the core differentiator. That is why Phase 0 exists and why it is the first thing we do.
+
+**New-differentiator risk note (2026-08-12):** Tailscale is an **optional degrade** (R11); the distributed fleet is **Phase 4** (R12); the **local resource manager is Phase 1** because it fixes orphaned agent processes **now**, not later.
 
 ---
 

@@ -84,6 +84,14 @@ Parallel isolated worktrees, Ghostty-class terminal with splits, Design Mode (br
 - `plan/18-build-release-distribution.md`
 - `plan/19-roadmap-and-milestones.md`
 - `plan/20-risks-and-open-questions.md`
+- `plan/21-mcp-lifecycle-supervisor.md`
+- `plan/22-remote-delegation.md`
+- `plan/23-tailscale-integration.md`
+- `plan/24-resource-manager.md`
+- `plan/25-worktree-hooks.md`
+- `plan/26-mcp-skills-ui.md`
+
+> **New differentiators (2026-08-12):** `plan/21`–`plan/26` add six differentiators (MCP lifecycle supervisor, remote delegation, Tailscale integration, resource manager, worktree hooks, MCP/skills UI). They are slotted into the existing phases in `plan/19` without changing MVP scope: local resource manager + MCP supervisor + worktree-hook basics in Phase 1, MCP/skills UI + resource visual pane in Phase 2, and remote delegation + Tailscale + distributed fleet in Phase 4.
 
 ## Key facts about grok-build (verified)
 
