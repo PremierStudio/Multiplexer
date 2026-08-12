@@ -19,7 +19,7 @@ async fn main() {
         std::process::exit(1);
     });
     println!("listening on ws://{addr}");
-    let server = Arc::new(Server::with_fake_provider());
+    let server = Arc::new(Server::with_local());
     if let Err(err) = serve_listener(listener, server).await {
         eprintln!("{err}");
         std::process::exit(1);

@@ -55,6 +55,45 @@ impl FakeGit {
     }
 }
 
+/// Real `git` executable on PATH (or a configured program).
+#[derive(Debug, Clone)]
+pub struct ProcessGit {
+    program: PathBuf,
+}
+
+impl ProcessGit {
+    pub fn new() -> Self {
+        Self {
+            program: PathBuf::from("git"),
+        }
+    }
+
+    pub fn program(&self) -> &Path {
+        &self.program
+    }
+}
+
+impl Default for ProcessGit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GitRunner for ProcessGit {
+    fn run(&self, cwd: &Path, args: &[&str]) -> Result<String, WorktreeError> {
+        let output = std::process::Command::new(&self.program)
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .map_err(|err| WorktreeError::Git(format!("spawn git: {err}")))?;
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            return Err(WorktreeError::Git(err.trim().to_owned()));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+}
+
 impl GitRunner for FakeGit {
     fn run(&self, cwd: &Path, args: &[&str]) -> Result<String, WorktreeError> {
         self.calls.borrow_mut().push(GitCall {

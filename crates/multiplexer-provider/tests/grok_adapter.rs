@@ -3,9 +3,9 @@
 use std::path::PathBuf;
 
 use multiplexer_provider::{
-    GrokAdapter, GrokCall, GrokShellFactory, ModelId, ProviderAdapter, ProviderError,
-    ProviderEvent, ProviderKind, RecordingGrokFactory, SessionStartParams, TurnInput,
-    VendoredGrokFactory,
+    CliGrokFactory, GrokAdapter, GrokCall, GrokShellFactory, ModelId, ProviderAdapter,
+    ProviderError, ProviderEvent, ProviderKind, RecordingGrokFactory, SessionStartParams,
+    TurnInput, VendoredGrokFactory,
 };
 
 fn workspace() -> PathBuf {
@@ -26,6 +26,12 @@ fn turn(text: &str) -> TurnInput {
     TurnInput {
         text: text.to_owned(),
     }
+}
+
+#[test]
+fn cli_grok_factory_defaults_to_grok_on_path() {
+    let factory = CliGrokFactory::new();
+    assert_eq!(factory.program(), std::path::Path::new("grok"));
 }
 
 #[test]
@@ -50,6 +56,12 @@ fn start_session_emits_session_ready_and_records_send_and_stop() {
     assert_eq!(adapter.poll_event(&id), None);
 
     adapter.send_turn(&id, turn("hello-grok")).expect("send");
+    assert_eq!(
+        adapter.poll_event(&id),
+        Some(ProviderEvent::TurnFinished {
+            session: id.clone()
+        })
+    );
     adapter.session_stop(&id).expect("stop");
 
     assert_eq!(

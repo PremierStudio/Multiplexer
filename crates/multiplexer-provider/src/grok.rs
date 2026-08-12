@@ -18,7 +18,7 @@ use crate::ids::{ModelId, ProviderKind, SessionId};
 /// One live in-process grok-build session.
 pub trait GrokHandle: Send + std::fmt::Debug {
     /// Push a user turn into the session.
-    fn send_turn(&mut self, turn: &TurnInput) -> Result<(), ProviderError>;
+    fn send_turn(&mut self, turn: &TurnInput) -> Result<String, ProviderError>;
 
     /// Abort the in-flight turn, if any.
     fn interrupt(&mut self) -> Result<(), ProviderError>;
@@ -94,11 +94,11 @@ impl RecordingGrokHandle {
 }
 
 impl GrokHandle for RecordingGrokHandle {
-    fn send_turn(&mut self, turn: &TurnInput) -> Result<(), ProviderError> {
+    fn send_turn(&mut self, turn: &TurnInput) -> Result<String, ProviderError> {
         self.push(GrokCall::SendTurn {
             text: turn.text.clone(),
         });
-        Ok(())
+        Ok(String::new())
     }
 
     fn interrupt(&mut self) -> Result<(), ProviderError> {
@@ -241,7 +241,7 @@ impl<F: GrokShellFactory> ProviderAdapter for GrokAdapter<F> {
             provider: _,
             model,
             workspace,
-            initial_prompt: _,
+            initial_prompt,
             resume: _,
         } = params;
         let mut inner = self.lock();
@@ -264,13 +264,27 @@ impl<F: GrokShellFactory> ProviderAdapter for GrokAdapter<F> {
             },
         );
         inner.order.push(key);
+        if let Some(prompt) = initial_prompt {
+            drop(inner);
+            self.send_turn(&id, TurnInput { text: prompt })?;
+        }
         Ok(id)
     }
 
     fn send_turn(&self, session: &SessionId, turn: TurnInput) -> Result<(), ProviderError> {
         let mut inner = self.lock();
         let state = session_mut(&mut inner, session)?;
-        state.handle.send_turn(&turn)
+        let text = state.handle.send_turn(&turn)?;
+        if !text.is_empty() {
+            state.events.push_back(ProviderEvent::TextDelta {
+                session: session.clone(),
+                text,
+            });
+        }
+        state.events.push_back(ProviderEvent::TurnFinished {
+            session: session.clone(),
+        });
+        Ok(())
     }
 
     fn interrupt_turn(&self, session: &SessionId) -> Result<(), ProviderError> {
@@ -332,6 +346,75 @@ impl<F: GrokShellFactory> ProviderAdapter for GrokAdapter<F> {
     }
 }
 
+/// Runs the real `grok` CLI (`grok -p`) for a single turn.
+#[derive(Debug, Clone)]
+pub struct CliGrokFactory {
+    program: std::path::PathBuf,
+}
+
+impl CliGrokFactory {
+    /// `grok` on PATH.
+    pub fn new() -> Self {
+        Self {
+            program: std::path::PathBuf::from("grok"),
+        }
+    }
+
+    pub fn program(&self) -> &std::path::Path {
+        &self.program
+    }
+}
+
+impl Default for CliGrokFactory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug)]
+struct CliGrokHandle {
+    program: std::path::PathBuf,
+    cwd: PathBuf,
+}
+
+impl GrokHandle for CliGrokHandle {
+    fn send_turn(&mut self, turn: &TurnInput) -> Result<String, ProviderError> {
+        let output = std::process::Command::new(&self.program)
+            .arg("--always-approve")
+            .arg("--cwd")
+            .arg(&self.cwd)
+            .arg("-p")
+            .arg(&turn.text)
+            .output()
+            .map_err(|err| ProviderError::Provider(format!("spawn grok: {err}")))?;
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            return Err(ProviderError::Provider(format!(
+                "grok -p failed: {}",
+                err.trim()
+            )));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    }
+
+    fn interrupt(&mut self) -> Result<(), ProviderError> {
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Result<(), ProviderError> {
+        Ok(())
+    }
+}
+
+impl GrokShellFactory for CliGrokFactory {
+    fn start(&self, params: &SessionStartParams) -> Result<Box<dyn GrokHandle>, ProviderError> {
+        Ok(Box::new(CliGrokHandle {
+            program: self.program.clone(),
+            cwd: params.workspace.clone(),
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,7 +459,7 @@ mod tests {
     struct BoomHandle;
 
     impl GrokHandle for BoomHandle {
-        fn send_turn(&mut self, _: &TurnInput) -> Result<(), ProviderError> {
+        fn send_turn(&mut self, _: &TurnInput) -> Result<String, ProviderError> {
             Err(ProviderError::Provider("send boom".into()))
         }
 
@@ -447,13 +530,18 @@ mod tests {
         let id = p.start_session(start).expect("start");
         assert_eq!(
             factory.calls(),
-            vec![GrokCall::Start {
-                provider: ProviderKind::GrokInProcess,
-                model: ModelId("other".into()),
-                workspace: PathBuf::from("D:\\ws"),
-                initial_prompt: Some("boot".into()),
-                resume: Some("cursor-1".into()),
-            }]
+            vec![
+                GrokCall::Start {
+                    provider: ProviderKind::GrokInProcess,
+                    model: ModelId("other".into()),
+                    workspace: PathBuf::from("D:\\ws"),
+                    initial_prompt: Some("boot".into()),
+                    resume: Some("cursor-1".into()),
+                },
+                GrokCall::SendTurn {
+                    text: "boot".into(),
+                },
+            ]
         );
         let snap = p.get_session(&id).expect("snap");
         assert_eq!(snap.model.0, "other");

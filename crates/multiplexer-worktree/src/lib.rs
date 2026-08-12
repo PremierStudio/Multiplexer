@@ -7,5 +7,5 @@
 pub mod git;
 pub mod porcelain;
 
-pub use git::{FakeGit, GitCall, GitRunner, WorktreeError, WorktreeService};
+pub use git::{FakeGit, GitCall, GitRunner, ProcessGit, WorktreeError, WorktreeService};
 pub use porcelain::{find_by_branch, parse_porcelain, PorcelainError, Worktree};

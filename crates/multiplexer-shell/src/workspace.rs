@@ -53,6 +53,7 @@ pub struct Workspace {
     pub selected: usize,
     pub draft: String,
     pub inspector: InspectorTab,
+    pub worktrees: Vec<String>,
     next_id: u64,
 }
 
@@ -66,6 +67,7 @@ impl Workspace {
             selected: 0,
             draft: String::new(),
             inspector: InspectorTab::Session,
+            worktrees: Vec::new(),
             next_id: 1,
         };
         ws.new_thread();

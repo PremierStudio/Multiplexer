@@ -1,7 +1,7 @@
 //! Multiplexer desktop: chats, transcript, composer, inspector.
 //!
 //! Product state lives in `multiplexer-shell::Workspace` (tested, headless).
-//! This binary paints that state and talks to an in-process FakeProvider
+//! This binary paints that state and talks to a local `grok -p` session
 //! through `Server::handle_frame`. CI does not launch this window.
 
 use gpui::{
@@ -17,19 +17,38 @@ use serde_json::{json, Value};
 
 struct ShellView {
     workspace: Workspace,
-    server: Server<multiplexer_server::ProviderBridge<multiplexer_provider::FakeProvider>>,
+    server: Server<
+        multiplexer_server::ProviderBridge<
+            multiplexer_provider::GrokAdapter<multiplexer_provider::CliGrokFactory>,
+        >,
+    >,
     session_id: Option<String>,
 }
 
 impl ShellView {
     fn new() -> Self {
-        let mut workspace = Workspace::new("Multiplexer", "fake");
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| ".".into());
+        let mut workspace = Workspace::new(cwd, "grok");
         workspace.connect(Vec::new());
-        Self {
+        let server = Server::with_local();
+        let mut view = Self {
             workspace,
-            server: Server::with_fake_provider(),
+            server,
             session_id: None,
-        }
+        };
+        view.refresh_worktrees();
+        view
+    }
+
+    fn refresh_worktrees(&mut self) {
+        let frames = self.server.handle_frame(&rpc(
+            "wt",
+            methods::GIT_WORKTREES,
+            json!({ "cwd": self.workspace.project }),
+        ));
+        self.workspace.worktrees = worktree_paths(&frames);
     }
 
     fn send(&mut self) {
@@ -47,9 +66,9 @@ impl ShellView {
                 "start",
                 methods::SESSION_START,
                 json!({
-                    "provider": "fake",
+                    "provider": "grok",
                     "model": self.workspace.model,
-                    "workspace": ".",
+                    "workspace": self.workspace.project,
                     "initial_prompt": text,
                 }),
             ));
@@ -59,12 +78,17 @@ impl ShellView {
             }
             frames
         };
-        let reply = assistant_text(&frames);
-        if reply.is_empty() {
-            self.workspace.push_assistant("(no reply)");
+        if let Some(err) = first_error(&frames) {
+            self.workspace.mark_error(err);
         } else {
-            self.workspace.push_assistant(reply);
+            let reply = assistant_text(&frames);
+            if reply.is_empty() {
+                self.workspace.push_assistant("(no text from grok -p)");
+            } else {
+                self.workspace.push_assistant(reply);
+            }
         }
+        self.refresh_worktrees();
     }
 }
 
@@ -292,7 +316,14 @@ impl ShellView {
                             self.workspace.threads.len()
                         ),
                         InspectorTab::Resources => {
-                            "Cores 0,1 reserved for the app.\nAgent sessions pin to the rest.\nJob Object kill-on-close is live in multiplexer-resman.".into()
+                            if self.workspace.worktrees.is_empty() {
+                                "git worktrees: (none listed)".into()
+                            } else {
+                                format!(
+                                    "git worktrees:\n{}",
+                                    self.workspace.worktrees.join("\n")
+                                )
+                            }
                         }
                         InspectorTab::Mcp => {
                             "MCP supervisor reuses servers by config hash.\nTeardown at zero refs.\nRegistry UI is Phase 2.".into()
@@ -371,6 +402,30 @@ fn rpc(id: &str, method: &str, params: Value) -> String {
         params,
     )))
     .expect("encode")
+}
+
+fn first_error(frames: &[String]) -> Option<String> {
+    for f in frames {
+        if let Ok(Message::Error(e)) = decode_frame(f) {
+            return Some(e.error.message);
+        }
+    }
+    None
+}
+
+fn worktree_paths(frames: &[String]) -> Vec<String> {
+    for f in frames {
+        if let Ok(Message::Response(r)) = decode_frame(f) {
+            if let Some(arr) = r.result.get("worktrees").and_then(Value::as_array) {
+                return arr
+                    .iter()
+                    .filter_map(|row| row.get("path").and_then(Value::as_str))
+                    .map(str::to_owned)
+                    .collect();
+            }
+        }
+    }
+    Vec::new()
 }
 
 fn session_id_from(frames: &[String]) -> Option<String> {

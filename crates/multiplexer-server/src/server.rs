@@ -39,6 +39,25 @@ impl Server<crate::ProviderBridge<multiplexer_provider::FakeProvider>> {
     }
 }
 
+impl
+    Server<
+        crate::ProviderBridge<
+            multiplexer_provider::GrokAdapter<multiplexer_provider::CliGrokFactory>,
+        >,
+    >
+{
+    /// Local machine defaults: real `grok -p` plus real `git worktree`.
+    pub fn with_local() -> Self {
+        let adapter =
+            multiplexer_provider::GrokAdapter::new(multiplexer_provider::CliGrokFactory::new());
+        let server = Self::with_backend(crate::ProviderBridge::new(adapter));
+        server.install_git(multiplexer_worktree::WorktreeService::new(
+            multiplexer_worktree::ProcessGit::new(),
+        ));
+        server
+    }
+}
+
 impl Server<crate::RuntimeBackend> {
     /// Router that composes provider, resource manager, and checkpoints.
     pub fn with_runtime() -> Self {
