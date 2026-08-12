@@ -1,0 +1,84 @@
+name: CI
+
+# Ordered gate chain (fail-fast). Each step must be green before the next runs.
+# Order per the task and plan/15: fmt -> clippy (deny warnings) -> unit+property
+# -> mutation -> coverage -> integration/component/e2e (placeholder).
+# The full plan order (integration -> component -> e2e -> coverage) is restored
+# as those suites are built; coverage currently runs before the placeholder
+# because integration/component/e2e do not exist yet.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  gate:
+    name: Gate chain
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned to 1.94.0 to match third_party/grok-build/rust-toolchain.toml and
+      # the toolchain that produced mutants.out/ and target/llvm-cov/html.
+      - name: Install Rust toolchain (1.94.0)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.0
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # Gate 1: formatting.
+      - name: Gate 1 - fmt
+        run: cargo fmt --check
+
+      # Gate 2: clippy with warnings denied.
+      - name: Gate 2 - clippy (deny warnings)
+        run: cargo clippy --workspace -- -D warnings
+
+      # Gate 3: unit + property tests.
+      - name: Gate 3 - unit + property
+        run: cargo test --workspace
+
+      # Gate 4: mutation testing. cargo-mutants exits non-zero when any mutant
+      # survives, so a missed mutant fails the gate. Pinned to 27.1.0, the version
+      # that produced mutants.out/. --in-place avoids the default copy-tree mode
+      # (which copies the whole tree, ~30GB here) and still writes the same
+      # mutants.out/ format. The 70% kill floor is the merge bar (D33).
+      - name: Gate 4 - mutation (cargo-mutants)
+        run: |
+          cargo install cargo-mutants --version 27.1.0 --locked
+          cargo mutants --in-place --timeout 30
+
+      # Gate 5: coverage. Enforces the plan/15 gates: >=85% line, >=80% branch.
+      # HTML report is uploaded as an artifact.
+      - name: Gate 5 - coverage (cargo-llvm-cov)
+        run: |
+          cargo install cargo-llvm-cov --locked
+          cargo llvm-cov --workspace --fail-under-lines 85 --fail-under-branches 80 --html --output-dir target/llvm-cov/html
+
+      # Gate 6: integration / component / e2e placeholder.
+      # These suites do not exist yet. This step runs all targets so any
+      # integration tests (tests/) are exercised. Component (GPUI) and e2e gates
+      # will be added here as those suites are built (see plan/15 section 5).
+      - name: Gate 6 - integration / component / e2e (placeholder)
+        run: cargo test --workspace --all-targets
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-cov-report
+          path: target/llvm-cov/html

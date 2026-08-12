@@ -71,6 +71,8 @@ impl fmt::Display for ApprovalDecision {
 /// Error produced when a wire string is not a valid decision.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ApprovalDecisionParseError {
-    #[error("unknown approval decision '{0}': expected one of allow, deny, allow_once, allow_always")]
+    #[error(
+        "unknown approval decision '{0}': expected one of allow, deny, allow_once, allow_always"
+    )]
     UnknownVariant(String),
 }

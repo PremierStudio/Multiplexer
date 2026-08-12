@@ -52,10 +52,22 @@ fn remembers_only_allow_always() {
 
 #[test]
 fn serializes_to_canonical_wire_names() {
-    assert_eq!(serde_json::to_string(&ApprovalDecision::Allow).unwrap(), "\"allow\"");
-    assert_eq!(serde_json::to_string(&ApprovalDecision::Deny).unwrap(), "\"deny\"");
-    assert_eq!(serde_json::to_string(&ApprovalDecision::AllowOnce).unwrap(), "\"allow_once\"");
-    assert_eq!(serde_json::to_string(&ApprovalDecision::AllowAlways).unwrap(), "\"allow_always\"");
+    assert_eq!(
+        serde_json::to_string(&ApprovalDecision::Allow).unwrap(),
+        "\"allow\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ApprovalDecision::Deny).unwrap(),
+        "\"deny\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ApprovalDecision::AllowOnce).unwrap(),
+        "\"allow_once\""
+    );
+    assert_eq!(
+        serde_json::to_string(&ApprovalDecision::AllowAlways).unwrap(),
+        "\"allow_always\""
+    );
 }
 
 #[test]
@@ -145,14 +157,31 @@ fn from_str_impl_delegates_to_parse() {
     }
     let err = ApprovalDecision::from_str("nope").unwrap_err();
     assert!(matches!(err, ApprovalDecisionParseError::UnknownVariant(_)));
-    assert!(matches!("nope".parse::<ApprovalDecision>(), Err(ApprovalDecisionParseError::UnknownVariant(_))));
+    assert!(matches!(
+        "nope".parse::<ApprovalDecision>(),
+        Err(ApprovalDecisionParseError::UnknownVariant(_))
+    ));
 }
 
 #[test]
 fn rejects_garbage_and_unknown_spellings() {
-    for bad in ["", " ", "Allow", "ALLOW", "allow-once", "approve", "maybe", "1", "true", "allow\nonce"] {
+    for bad in [
+        "",
+        " ",
+        "Allow",
+        "ALLOW",
+        "allow-once",
+        "approve",
+        "maybe",
+        "1",
+        "true",
+        "allow\nonce",
+    ] {
         assert!(
-            matches!(ApprovalDecision::parse(bad), Err(ApprovalDecisionParseError::UnknownVariant(_))),
+            matches!(
+                ApprovalDecision::parse(bad),
+                Err(ApprovalDecisionParseError::UnknownVariant(_))
+            ),
             "parse({bad:?}) should reject with UnknownVariant"
         );
     }
@@ -177,9 +206,15 @@ fn rejects_non_string_json() {
 fn parse_error_display_is_actionable() {
     let e = ApprovalDecision::parse("approve").unwrap_err();
     let msg = e.to_string();
-    assert!(msg.contains("approve"), "message should name the bad input: {msg}");
     assert!(
-        msg.contains("allow") && msg.contains("deny") && msg.contains("allow_once") && msg.contains("allow_always"),
+        msg.contains("approve"),
+        "message should name the bad input: {msg}"
+    );
+    assert!(
+        msg.contains("allow")
+            && msg.contains("deny")
+            && msg.contains("allow_once")
+            && msg.contains("allow_always"),
         "message should list all valid variants: {msg}"
     );
 }
