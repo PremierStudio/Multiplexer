@@ -1,7 +1,7 @@
 //! Multiplexer desktop: glass chrome, hideable/resizable rails, live grok -p.
 
 use gpui::{
-    div, hsla, point, prelude::*, px, rgb, size, App, Application, Bounds, BoxShadow, Context,
+    div, hsla, point, prelude::*, px, size, App, Application, Bounds, BoxShadow, Context,
     CursorStyle, Hsla, KeyDownEvent, MouseButton, MouseMoveEvent, SharedString, TitlebarOptions,
     Window, WindowBackgroundAppearance, WindowBounds, WindowOptions,
 };
@@ -223,7 +223,8 @@ impl ShellView {
             .rounded_none()
             .border_b_1()
             .child(ghost_btn(
-                if left_on { "Hide chats" } else { "Show chats" },
+                "Chats",
+                if left_on { "Hide" } else { "Show" },
                 cx,
                 |this, cx| {
                     this.workspace.chrome.toggle_left();
@@ -231,18 +232,20 @@ impl ShellView {
                 },
             ))
             .child(
-                div().flex_1().flex().justify_center().child(
-                    div()
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .child(self.workspace.title_bar()),
-                ),
+                div()
+                    .flex_1()
+                    .px_3()
+                    .text_color(Theme::muted())
+                    .child(format!(
+                        "{}   ·   {}   ·   {}",
+                        short_path(&self.workspace.project),
+                        self.workspace.model,
+                        self.workspace.connection.status_label()
+                    )),
             )
             .child(ghost_btn(
-                if right_on {
-                    "Hide inspector"
-                } else {
-                    "Show inspector"
-                },
+                "Inspector",
+                if right_on { "Hide" } else { "Show" },
                 cx,
                 |this, cx| {
                     this.workspace.chrome.toggle_right();
@@ -271,7 +274,7 @@ impl ShellView {
                 .justify_between()
                 .items_center()
                 .child(div().text_color(Theme::muted()).child("CHATS"))
-                .child(pill("New", Theme::accent(), cx, |this, cx| {
+                .child(ghost_btn("New", "+", cx, |this, cx| {
                     this.workspace.new_thread();
                     this.session_id = None;
                     cx.notify();
@@ -306,6 +309,11 @@ impl ShellView {
                     }),
                 )
                 .child(div().child(t.title.clone()))
+                .child(
+                    div()
+                        .text_color(Theme::muted())
+                        .child(Workspace::thread_preview(&t)),
+                )
                 .child(
                     div()
                         .text_color(Theme::muted())
@@ -362,23 +370,9 @@ impl ShellView {
             ),
         )
         .child(div().p_3().text_color(Theme::muted()).child(match tab {
-            InspectorTab::Session => format!(
-                "Project\n{}\n\nModel  {}\nSession  {}\nThreads  {}",
-                self.workspace.project,
-                self.workspace.model,
-                session,
-                self.workspace.threads.len()
-            ),
-            InspectorTab::Resources => {
-                if self.workspace.worktrees.is_empty() {
-                    "git worktrees\n(none listed)".into()
-                } else {
-                    format!("git worktrees\n{}", self.workspace.worktrees.join("\n"))
-                }
-            }
-            InspectorTab::Mcp => {
-                "MCP supervisor reuses servers by config hash.\nTeardown at zero refs.".into()
-            }
+            InspectorTab::Session => self.workspace.session_detail(Some(session.as_str())),
+            InspectorTab::Resources => self.workspace.resource_detail(),
+            InspectorTab::Mcp => self.workspace.mcp_detail(),
         }))
     }
 
@@ -477,7 +471,7 @@ impl ShellView {
                                         SharedString::from(draft)
                                     }),
                             )
-                            .child(pill("Send", Theme::good(), cx, |this, cx| {
+                            .child(ghost_btn("Send", "↵", cx, |this, cx| {
                                 this.send();
                                 cx.notify();
                             })),
@@ -557,7 +551,9 @@ fn empty_center() -> gpui::Div {
         .items_center()
         .justify_center()
         .text_color(Theme::muted())
-        .child("Start a chat. Ctrl+[ and Ctrl+] toggle the rails.")
+        .child(
+            "Start a chat to run a real grok -p turn in this repo.\nCtrl+[ / Ctrl+] hide the rails. Drag the gutters to resize.",
+        )
 }
 
 fn chip(label: &'static str, cx: &mut Context<ShellView>) -> impl IntoElement {
@@ -581,47 +577,40 @@ fn chip(label: &'static str, cx: &mut Context<ShellView>) -> impl IntoElement {
         .child(label)
 }
 
-fn pill(
-    label: &'static str,
-    color: Hsla,
-    cx: &mut Context<ShellView>,
-    on_click: impl Fn(&mut ShellView, &mut Context<ShellView>) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(SharedString::from(label))
-        .px_3()
-        .py_1()
-        .rounded_lg()
-        .bg(color)
-        .text_color(rgb(0x0c1018))
-        .cursor_pointer()
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _, _, cx| on_click(this, cx)),
-        )
-        .child(label)
-}
-
 fn ghost_btn(
     label: &'static str,
+    hint: &'static str,
     cx: &mut Context<ShellView>,
     on_click: impl Fn(&mut ShellView, &mut Context<ShellView>) + 'static,
 ) -> impl IntoElement {
     div()
-        .id(SharedString::from(label))
-        .px_2()
-        .py_1()
+        .id(SharedString::from(format!("{label}-{hint}")))
+        .h(px(32.0))
+        .px_3()
+        .flex()
+        .items_center()
+        .gap_2()
         .rounded_lg()
         .border_1()
-        .border_color(Theme::hairline())
-        .bg(hsla(0.0, 0.0, 1.0, 0.04))
-        .text_color(Theme::muted())
+        .border_color(Theme::hairline_bright())
+        .bg(hsla(0.0, 0.0, 1.0, 0.07))
+        .text_color(Theme::text())
         .cursor_pointer()
+        .hover(|s| s.bg(hsla(0.58, 0.35, 0.28, 0.40)))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| on_click(this, cx)),
         )
         .child(label)
+        .child(div().text_color(Theme::muted()).child(hint))
+}
+
+fn short_path(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(path)
+        .to_owned()
 }
 
 fn rpc(id: &str, method: &str, params: Value) -> String {
@@ -694,9 +683,13 @@ fn main() {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_background: WindowBackgroundAppearance::Blurred,
+                is_movable: true,
+                is_resizable: true,
+                is_minimizable: true,
+                window_min_size: Some(size(px(920.0), px(620.0))),
                 titlebar: Some(TitlebarOptions {
                     title: Some("Multiplexer".into()),
-                    appears_transparent: true,
+                    appears_transparent: false,
                     traffic_light_position: None,
                 }),
                 ..Default::default()

@@ -245,6 +245,48 @@ impl Workspace {
     pub fn connect(&mut self, session_ids: Vec<String>) {
         self.connection = ConnectionState::Connected { session_ids };
     }
+
+    /// Last line preview for the thread list.
+    pub fn thread_preview(thread: &Thread) -> String {
+        thread
+            .messages
+            .last()
+            .map(|m| {
+                let prefix = match m.role {
+                    Role::User => "You: ",
+                    Role::Assistant => "Agent: ",
+                };
+                let body: String = m.text.chars().take(48).collect();
+                format!("{prefix}{body}")
+            })
+            .unwrap_or_else(|| "Empty thread".to_owned())
+    }
+
+    pub fn session_detail(&self, session_id: Option<&str>) -> String {
+        format!(
+            "Project\n{}\n\nModel\n{}\n\nConnection\n{}\n\nSession\n{}\n\nThreads\n{}",
+            self.project,
+            self.model,
+            self.connection.status_label(),
+            session_id.unwrap_or("(none yet)"),
+            self.threads.len()
+        )
+    }
+
+    pub fn resource_detail(&self) -> String {
+        let trees = if self.worktrees.is_empty() {
+            "(git worktree list empty or unavailable)".to_owned()
+        } else {
+            self.worktrees.join("\n")
+        };
+        format!(
+            "Cores 0 and 1 stay reserved for this app.\nAgent sessions pin to the remaining cores.\nJob Object kill-on-close reaps the process tree.\n\nWorktrees\n{trees}"
+        )
+    }
+
+    pub fn mcp_detail(&self) -> String {
+        "MCP servers are reused by config hash and torn down at zero refs.\nThe live process table and registry UI are still Phase 2.\nUntil then this pane is the contract for that view.".to_owned()
+    }
 }
 
 #[cfg(test)]
@@ -357,6 +399,13 @@ mod tests {
         assert!(ws.connection.is_connected());
         assert_eq!(ws.connection.session_count(), 1);
         assert!(ws.title_bar().contains("connected"));
+        assert_eq!(Workspace::thread_preview(&ws.threads[0]), "Empty thread");
+        ws.set_draft("hello");
+        ws.send_draft();
+        assert!(Workspace::thread_preview(ws.selected_thread().unwrap()).starts_with("You:"));
+        assert!(ws.session_detail(Some("sess-1")).contains("sess-1"));
+        assert!(ws.resource_detail().contains("Worktrees"));
+        assert!(ws.mcp_detail().contains("config hash"));
     }
 
     #[test]
