@@ -8,6 +8,7 @@ description = "Multiplexer core resource manager: CPU core bitmap allocation for
 
 [dependencies]
 thiserror.workspace = true
+sysinfo.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 win32job.workspace = true

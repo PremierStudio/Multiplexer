@@ -5,8 +5,11 @@ use gpui::{
     CursorStyle, Hsla, KeyDownEvent, MouseButton, MouseMoveEvent, SharedString, TitlebarOptions,
     Window, WindowBackgroundAppearance, WindowBounds, WindowOptions,
 };
+use multiplexer_checkpoint::CheckpointStore;
+use multiplexer_mcp::load_user_mcp_inventory;
+use multiplexer_resman::sample_cores;
 use multiplexer_server::Server;
-use multiplexer_shell::{InspectorTab, Role, Workspace};
+use multiplexer_shell::{CheckpointRow, CoreRow, InspectorTab, McpRow, Role, Workspace};
 use multiplexer_wire::codec::{decode_frame, encode_frame};
 use multiplexer_wire::jsonrpc::{Id, Message, Request};
 use multiplexer_wire::methods;
@@ -84,6 +87,28 @@ impl ShellView {
             .unwrap_or_else(|_| ".".into());
         let mut workspace = Workspace::new(cwd, "grok");
         workspace.connect(Vec::new());
+        workspace.cores = sample_cores(&[0, 1])
+            .into_iter()
+            .map(|c| CoreRow {
+                index: c.index,
+                usage: c.usage,
+                reserved: c.reserved,
+            })
+            .collect();
+        workspace.mcp = load_user_mcp_inventory()
+            .into_iter()
+            .map(|row| McpRow {
+                name: row.name,
+                command: row.command,
+                transport: row.transport,
+            })
+            .collect();
+        let mut store = CheckpointStore::new();
+        let start = store.create("local", "start");
+        workspace.checkpoints.push(CheckpointRow {
+            id: start.id.to_string(),
+            label: start.label,
+        });
         let server = Server::with_local();
         let mut view = Self {
             workspace,
@@ -92,7 +117,33 @@ impl ShellView {
             drag: None,
         };
         view.refresh_worktrees();
+        view.refresh_reminder();
+        view.workspace
+            .push_terminal("ready  ·  grok -p  ·  cores sampled  ·  mcp inventory loaded");
         view
+    }
+
+    fn interrupt(&mut self) {
+        if let Some(sid) = &self.session_id {
+            let _ = self.server.handle_frame(&rpc(
+                "int",
+                methods::SESSION_INTERRUPT,
+                json!({ "session_id": sid }),
+            ));
+        }
+        self.workspace.mark_interrupted();
+    }
+
+    fn refresh_reminder(&mut self) {
+        let frames = self.server.handle_frame(&rpc(
+            "wt",
+            methods::GIT_WORKTREES,
+            json!({ "cwd": self.workspace.project }),
+        ));
+        let paths = worktree_paths(&frames);
+        if let Some(path) = paths.into_iter().nth(1) {
+            self.workspace.set_reminder("existing", path);
+        }
     }
 
     fn refresh_worktrees(&mut self) {
@@ -161,10 +212,22 @@ impl Render for ShellView {
                     this.send();
                 } else if key == "backspace" {
                     this.workspace.backspace();
+                } else if key == "escape" {
+                    this.workspace.dismiss_reminder();
+                } else if key == "space" {
+                    this.workspace.type_char(' ');
+                } else if key == "v" && event.keystroke.modifiers.control {
+                    if let Some(item) = cx.read_from_clipboard() {
+                        if let Some(text) = item.text() {
+                            this.workspace.draft.push_str(&text);
+                        }
+                    }
                 } else if key == "[" && event.keystroke.modifiers.control {
                     this.workspace.chrome.toggle_left();
                 } else if key == "]" && event.keystroke.modifiers.control {
                     this.workspace.chrome.toggle_right();
+                } else if key == "." && event.keystroke.modifiers.control && this.workspace.busy {
+                    this.interrupt();
                 } else if key.len() == 1 {
                     if let Some(c) = key.chars().next() {
                         this.workspace.type_char(c);
@@ -197,6 +260,7 @@ impl Render for ShellView {
                 }),
             )
             .child(self.title_bar(cx))
+            .child(self.reminder_bar(cx))
             .child(
                 div()
                     .flex()
@@ -210,6 +274,7 @@ impl Render for ShellView {
                     .child(self.resize_handle(DragRail::Right, cx))
                     .child(self.right_rail(cx)),
             )
+            .child(self.terminal_strip())
     }
 }
 
@@ -243,6 +308,14 @@ impl ShellView {
                         self.workspace.connection.status_label()
                     )),
             )
+            .child(if self.workspace.busy {
+                div().child(ghost_btn("Stop", "Ctrl+.", cx, |this, cx| {
+                    this.interrupt();
+                    cx.notify();
+                }))
+            } else {
+                div()
+            })
             .child(ghost_btn(
                 "Inspector",
                 if right_on { "Hide" } else { "Show" },
@@ -337,42 +410,35 @@ impl ShellView {
                 cx.notify();
             }));
         }
-        rail.child(
-            div().flex().px_2().pt_2().gap_1().children(
-                [
-                    InspectorTab::Session,
-                    InspectorTab::Resources,
-                    InspectorTab::Mcp,
-                ]
-                .into_iter()
-                .map(|t| {
-                    let on = tab == t;
-                    div()
-                        .id(SharedString::from(t.label()))
-                        .px_2()
-                        .py_1()
-                        .rounded_lg()
-                        .cursor_pointer()
-                        .bg(if on {
-                            hsla(0.58, 0.40, 0.28, 0.50)
-                        } else {
-                            hsla(0.0, 0.0, 1.0, 0.03)
-                        })
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _, _, cx| {
-                                this.workspace.inspector = t;
-                                cx.notify();
-                            }),
-                        )
-                        .child(t.label())
-                }),
-            ),
-        )
+        rail.child(div().flex().px_2().pt_2().gap_1().children(
+            InspectorTab::all().into_iter().map(|t| {
+                let on = tab == t;
+                div()
+                    .id(SharedString::from(t.label()))
+                    .px_2()
+                    .py_1()
+                    .rounded_lg()
+                    .cursor_pointer()
+                    .bg(if on {
+                        hsla(0.58, 0.40, 0.28, 0.50)
+                    } else {
+                        hsla(0.0, 0.0, 1.0, 0.03)
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            this.workspace.inspector = t;
+                            cx.notify();
+                        }),
+                    )
+                    .child(t.label())
+            }),
+        ))
         .child(div().p_3().text_color(Theme::muted()).child(match tab {
             InspectorTab::Session => self.workspace.session_detail(Some(session.as_str())),
             InspectorTab::Resources => self.workspace.resource_detail(),
             InspectorTab::Mcp => self.workspace.mcp_detail(),
+            InspectorTab::Checkpoints => self.workspace.checkpoint_detail(),
         }))
     }
 
@@ -477,6 +543,47 @@ impl ShellView {
                             })),
                     ),
             )
+    }
+
+    fn reminder_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some((branch, path)) = self.workspace.reminder.clone() else {
+            return div().id("no-reminder").into_any();
+        };
+        div()
+            .id("worktree-reminder")
+            .px_3()
+            .py_1()
+            .bg(hsla(0.12, 0.45, 0.22, 0.55))
+            .border_b_1()
+            .border_color(Theme::hairline())
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .flex_1()
+                    .child(format!("Existing worktree on {branch}: {path}")),
+            )
+            .child(ghost_btn("Dismiss", "Esc", cx, |this, cx| {
+                this.workspace.dismiss_reminder();
+                cx.notify();
+            }))
+            .into_any()
+    }
+
+    fn terminal_strip(&self) -> impl IntoElement {
+        let lines = if self.workspace.terminal_log.is_empty() {
+            "Terminal: grok -p runs in this repo. Output lands in chat. A PTY pane is next."
+                .to_owned()
+        } else {
+            self.workspace.terminal_log.join("\n")
+        };
+        glass_bar()
+            .h(px(72.0))
+            .px_3()
+            .rounded_none()
+            .border_t_1()
+            .child(div().flex_1().text_color(Theme::muted()).child(lines))
     }
 
     fn resize_handle(&mut self, rail: DragRail, cx: &mut Context<Self>) -> impl IntoElement {

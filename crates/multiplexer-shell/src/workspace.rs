@@ -31,6 +31,7 @@ pub enum InspectorTab {
     Session,
     Resources,
     Mcp,
+    Checkpoints,
 }
 
 impl InspectorTab {
@@ -39,8 +40,36 @@ impl InspectorTab {
             Self::Session => "Session",
             Self::Resources => "Cores",
             Self::Mcp => "MCP",
+            Self::Checkpoints => "Points",
         }
     }
+
+    pub fn all() -> [InspectorTab; 4] {
+        [Self::Session, Self::Resources, Self::Mcp, Self::Checkpoints]
+    }
+}
+
+/// One logical CPU sample for the inspector.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CoreRow {
+    pub index: usize,
+    pub usage: f32,
+    pub reserved: bool,
+}
+
+/// One configured MCP server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpRow {
+    pub name: String,
+    pub command: String,
+    pub transport: String,
+}
+
+/// One checkpoint row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckpointRow {
+    pub id: String,
+    pub label: String,
 }
 
 /// Min/max pixel widths for the Outlook rails.
@@ -127,6 +156,12 @@ pub struct Workspace {
     pub inspector: InspectorTab,
     pub worktrees: Vec<String>,
     pub chrome: ChromeLayout,
+    pub cores: Vec<CoreRow>,
+    pub mcp: Vec<McpRow>,
+    pub checkpoints: Vec<CheckpointRow>,
+    pub reminder: Option<(String, String)>,
+    pub terminal_log: Vec<String>,
+    pub busy: bool,
     next_id: u64,
 }
 
@@ -142,6 +177,12 @@ impl Workspace {
             inspector: InspectorTab::Session,
             worktrees: Vec::new(),
             chrome: ChromeLayout::default(),
+            cores: Vec::new(),
+            mcp: Vec::new(),
+            checkpoints: Vec::new(),
+            reminder: None,
+            terminal_log: Vec::new(),
+            busy: false,
             next_id: 1,
         };
         ws.new_thread();
@@ -219,6 +260,7 @@ impl Workspace {
             });
             thread.status = "running".to_owned();
         }
+        self.busy = true;
         Some(text)
     }
 
@@ -230,6 +272,7 @@ impl Workspace {
             });
             thread.status = "idle".to_owned();
         }
+        self.busy = false;
     }
 
     pub fn mark_error(&mut self, message: impl Into<String>) {
@@ -240,6 +283,34 @@ impl Workspace {
                 text: message.into(),
             });
         }
+        self.busy = false;
+    }
+
+    pub fn mark_interrupted(&mut self) {
+        self.busy = false;
+        if let Some(thread) = self.selected_thread_mut() {
+            thread.status = "idle".to_owned();
+            thread.messages.push(ChatMessage {
+                role: Role::Assistant,
+                text: "(interrupted)".into(),
+            });
+        }
+    }
+
+    pub fn push_terminal(&mut self, line: impl Into<String>) {
+        self.terminal_log.push(line.into());
+        if self.terminal_log.len() > 80 {
+            let drop = self.terminal_log.len() - 80;
+            self.terminal_log.drain(0..drop);
+        }
+    }
+
+    pub fn set_reminder(&mut self, branch: impl Into<String>, path: impl Into<String>) {
+        self.reminder = Some((branch.into(), path.into()));
+    }
+
+    pub fn dismiss_reminder(&mut self) {
+        self.reminder = None;
     }
 
     pub fn connect(&mut self, session_ids: Vec<String>) {
@@ -274,18 +345,46 @@ impl Workspace {
     }
 
     pub fn resource_detail(&self) -> String {
-        let trees = if self.worktrees.is_empty() {
-            "(git worktree list empty or unavailable)".to_owned()
+        let mut out =
+            String::from("Reserved cores: 0, 1 (app)\nJob Object kill-on-close is armed.\n\n");
+        if self.cores.is_empty() {
+            out.push_str("Core samples: (waiting)\n");
         } else {
-            self.worktrees.join("\n")
-        };
-        format!(
-            "Cores 0 and 1 stay reserved for this app.\nAgent sessions pin to the remaining cores.\nJob Object kill-on-close reaps the process tree.\n\nWorktrees\n{trees}"
-        )
+            for c in &self.cores {
+                let mark = if c.reserved { "R" } else { " " };
+                out.push_str(&format!("[{mark}] cpu{:<2} {:>5.1}%\n", c.index, c.usage));
+            }
+        }
+        out.push_str("\nWorktrees\n");
+        if self.worktrees.is_empty() {
+            out.push_str("(none listed)");
+        } else {
+            out.push_str(&self.worktrees.join("\n"));
+        }
+        out
     }
 
     pub fn mcp_detail(&self) -> String {
-        "MCP servers are reused by config hash and torn down at zero refs.\nThe live process table and registry UI are still Phase 2.\nUntil then this pane is the contract for that view.".to_owned()
+        if self.mcp.is_empty() {
+            return "No MCP servers in ~/.grok/config.toml\nReuse/teardown still applies when they start.".to_owned();
+        }
+        self.mcp
+            .iter()
+            .map(|m| format!("{}  [{}]\n  {}", m.name, m.transport, m.command))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    pub fn checkpoint_detail(&self) -> String {
+        if self.checkpoints.is_empty() {
+            return "No checkpoints yet. A start checkpoint is created with the session runtime."
+                .to_owned();
+        }
+        self.checkpoints
+            .iter()
+            .map(|c| format!("{}  {}", c.id, c.label))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -394,6 +493,8 @@ mod tests {
         assert_eq!(InspectorTab::Session.label(), "Session");
         assert_eq!(InspectorTab::Resources.label(), "Cores");
         assert_eq!(InspectorTab::Mcp.label(), "MCP");
+        assert_eq!(InspectorTab::Checkpoints.label(), "Points");
+        assert_eq!(InspectorTab::all().len(), 4);
         let mut ws = Workspace::new("p", "m");
         ws.connect(vec!["sess-1".into()]);
         assert!(ws.connection.is_connected());
@@ -405,7 +506,33 @@ mod tests {
         assert!(Workspace::thread_preview(ws.selected_thread().unwrap()).starts_with("You:"));
         assert!(ws.session_detail(Some("sess-1")).contains("sess-1"));
         assert!(ws.resource_detail().contains("Worktrees"));
-        assert!(ws.mcp_detail().contains("config hash"));
+        assert!(ws.mcp_detail().contains("No MCP servers"));
+        ws.mcp.push(McpRow {
+            name: "linear".into(),
+            command: "npx".into(),
+            transport: "stdio".into(),
+        });
+        assert!(ws.mcp_detail().contains("linear"));
+        ws.cores.push(CoreRow {
+            index: 0,
+            usage: 12.0,
+            reserved: true,
+        });
+        assert!(ws.resource_detail().contains("cpu0"));
+        ws.checkpoints.push(CheckpointRow {
+            id: "cp-1".into(),
+            label: "start".into(),
+        });
+        assert!(ws.checkpoint_detail().contains("cp-1"));
+        ws.set_reminder("main", "C:/repo");
+        assert_eq!(ws.reminder.as_ref().map(|r| r.0.as_str()), Some("main"));
+        ws.dismiss_reminder();
+        assert!(ws.reminder.is_none());
+        ws.push_terminal("ready");
+        assert_eq!(ws.terminal_log.last().map(String::as_str), Some("ready"));
+        assert!(ws.busy);
+        ws.mark_interrupted();
+        assert!(!ws.busy);
     }
 
     #[test]

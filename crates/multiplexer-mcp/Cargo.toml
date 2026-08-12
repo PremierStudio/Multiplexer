@@ -8,6 +8,7 @@ description = "Pure MCP lifecycle state machine: reuse by config hash, refcount,
 
 [dependencies]
 thiserror.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
