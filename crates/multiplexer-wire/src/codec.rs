@@ -134,3 +134,16 @@ fn parse_id(obj: &serde_json::Map<String, Value>) -> Result<Id, CodecError> {
 fn serde_err(e: serde_json::Error) -> CodecError {
     CodecError::Parse(e.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serde_err_wraps_serde_message_as_parse() {
+        let src = serde_json::from_str::<u8>("[]").expect_err("type mismatch");
+        let err = serde_err(src);
+        assert!(matches!(&err, CodecError::Parse(s) if !s.is_empty()));
+        assert!(err.to_string().starts_with("parse error:"));
+    }
+}

@@ -241,6 +241,7 @@ fn event_round_trips_through_codec() {
 #[test]
 fn protocol_version_is_a_semver_string() {
     // plan/04 §9.2: protocol_version is a semver string (e.g. 1.2.0).
+    assert_eq!(PROTOCOL_VERSION, "0.1.0");
     let parts: Vec<&str> = PROTOCOL_VERSION.split('.').collect();
     assert_eq!(parts.len(), 3, "must be major.minor.patch");
     for p in &parts {
@@ -367,6 +368,71 @@ fn decode_rejects_frame_with_id_and_method_and_result() {
     assert!(matches!(err, CodecError::InvalidRequest(_)));
 }
 
+#[test]
+fn decode_rejects_frame_with_method_and_error() {
+    let err = decode_frame(r#"{"jsonrpc":"2.0","method":"x","error":{"code":-1,"message":"x"}}"#)
+        .unwrap_err();
+    assert!(
+        matches!(err, CodecError::InvalidRequest(s) if s.contains("cannot carry result or error"))
+    );
+}
+
+#[test]
+fn decode_rejects_non_string_method() {
+    let err = decode_frame(r#"{"jsonrpc":"2.0","method":1,"params":{}}"#).unwrap_err();
+    assert!(matches!(
+        err,
+        CodecError::InvalidRequest(s) if s.contains("method must be a string")
+    ));
+}
+
+#[test]
+fn decode_rejects_non_string_jsonrpc_version() {
+    let err =
+        decode_frame(r#"{"jsonrpc":2.0,"id":1,"method":"system.ping","params":{}}"#).unwrap_err();
+    assert!(matches!(err, CodecError::InvalidRequest(_)));
+}
+
+#[test]
+fn decode_missing_params_defaults_to_null() {
+    let msg = decode_frame(r#"{"jsonrpc":"2.0","id":1,"method":"system.ping"}"#).unwrap();
+    match msg {
+        Message::Request(r) => assert_eq!(r.params, serde_json::Value::Null),
+        other => panic!("expected request, got {other:?}"),
+    }
+}
+
+#[test]
+fn decode_notification_missing_params_defaults_to_null() {
+    let msg = decode_frame(r#"{"jsonrpc":"2.0","method":"event"}"#).unwrap();
+    match msg {
+        Message::Notification(n) => {
+            assert_eq!(n.method, "event");
+            assert_eq!(n.params, serde_json::Value::Null);
+        }
+        other => panic!("expected notification, got {other:?}"),
+    }
+}
+
+#[test]
+fn decode_rejects_invalid_id_on_success_response() {
+    let err = decode_frame(r#"{"jsonrpc":"2.0","id":true,"result":{}}"#).unwrap_err();
+    assert!(matches!(
+        err,
+        CodecError::InvalidRequest(s) if s.contains("id must be a string or integer")
+    ));
+}
+
+#[test]
+fn decode_rejects_invalid_id_on_error_response() {
+    let err = decode_frame(r#"{"jsonrpc":"2.0","id":null,"error":{"code":-1,"message":"x"}}"#)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        CodecError::InvalidRequest(s) if s.contains("id must be a string or integer")
+    ));
+}
+
 // ---------------------------------------------------------------------------
 // 7. App error kind codes (plan/04 §7.2)
 // ---------------------------------------------------------------------------
@@ -382,19 +448,26 @@ fn standard_error_codes_match_spec() {
 
 #[test]
 fn app_error_kind_codes_match_spec() {
-    assert_eq!(AppErrorKind::AuthRequired.code(), -32000);
-    assert_eq!(AppErrorKind::AuthExpired.code(), -32001);
-    assert_eq!(AppErrorKind::TicketInvalid.code(), -32002);
-    assert_eq!(AppErrorKind::PermissionDenied.code(), -32003);
-    assert_eq!(AppErrorKind::NotFound.code(), -32004);
-    assert_eq!(AppErrorKind::Conflict.code(), -32005);
-    assert_eq!(AppErrorKind::InvalidState.code(), -32006);
-    assert_eq!(AppErrorKind::PathInvalid.code(), -32007);
-    assert_eq!(AppErrorKind::ProviderError.code(), -32008);
-    assert_eq!(AppErrorKind::RateLimited.code(), -32009);
-    assert_eq!(AppErrorKind::Unsupported.code(), -32010);
-    assert_eq!(AppErrorKind::StreamClosed.code(), -32011);
-    assert_eq!(AppErrorKind::ProtocolVersionMismatch.code(), -32012);
+    let codes = [
+        (AppErrorKind::AuthRequired, -32000),
+        (AppErrorKind::AuthExpired, -32001),
+        (AppErrorKind::TicketInvalid, -32002),
+        (AppErrorKind::PermissionDenied, -32003),
+        (AppErrorKind::NotFound, -32004),
+        (AppErrorKind::Conflict, -32005),
+        (AppErrorKind::InvalidState, -32006),
+        (AppErrorKind::PathInvalid, -32007),
+        (AppErrorKind::ProviderError, -32008),
+        (AppErrorKind::RateLimited, -32009),
+        (AppErrorKind::Unsupported, -32010),
+        (AppErrorKind::StreamClosed, -32011),
+        (AppErrorKind::ProtocolVersionMismatch, -32012),
+    ];
+    for (kind, want) in codes {
+        assert_eq!(kind.code(), want, "{kind:?}");
+        assert!(kind.code() < 0, "{kind:?} code must be negative");
+        assert_ne!(kind.code(), want.unsigned_abs() as i64, "{kind:?}");
+    }
 }
 
 #[test]
@@ -443,20 +516,84 @@ fn app_error_kind_deserializes_from_snake_case() {
 
 #[test]
 fn method_constants_match_spec_namespaces() {
-    assert_eq!(methods::EVENT, "event");
-    assert_eq!(methods::SYSTEM_HELLO, "system.hello");
-    assert_eq!(methods::SYSTEM_PING, "system.ping");
-    assert_eq!(methods::SESSION_START, "session.start");
-    assert_eq!(methods::SESSION_STOP, "session.stop");
-    assert_eq!(methods::TURN_SEND, "turn.send");
-    assert_eq!(methods::APPROVAL_RESPOND, "approval.respond");
-    assert_eq!(methods::TERMINAL_INPUT, "terminal.input");
-    assert_eq!(methods::USER_INPUT_RESPOND, "userInput.respond");
-    assert_eq!(methods::CHECKPOINT_REVERT, "checkpoint.revert");
-    assert_eq!(methods::ORCHESTRATION_SPAWN, "orchestration.spawn");
-    assert_eq!(methods::SUBSCRIBE, "subscribe");
-    assert_eq!(methods::UNSUBSCRIBE, "unsubscribe");
-    assert_eq!(methods::STREAM_ACK, "stream.ack");
+    let expected = [
+        (methods::EVENT, "event"),
+        (methods::SESSION_START, "session.start"),
+        (methods::SESSION_STOP, "session.stop"),
+        (methods::SESSION_INTERRUPT, "session.interrupt"),
+        (methods::SESSION_LIST, "session.list"),
+        (methods::SESSION_GET, "session.get"),
+        (methods::TURN_SEND, "turn.send"),
+        (methods::TURN_CANCEL, "turn.cancel"),
+        (methods::TURN_HISTORY, "turn.history"),
+        (methods::APPROVAL_RESPOND, "approval.respond"),
+        (methods::APPROVAL_LIST, "approval.list"),
+        (methods::USER_INPUT_RESPOND, "userInput.respond"),
+        (methods::USER_INPUT_CANCEL, "userInput.cancel"),
+        (methods::CHECKPOINT_LIST, "checkpoint.list"),
+        (methods::CHECKPOINT_DIFF, "checkpoint.diff"),
+        (methods::CHECKPOINT_REVERT, "checkpoint.revert"),
+        (methods::CHECKPOINT_APPLY, "checkpoint.apply"),
+        (methods::TERMINAL_CREATE, "terminal.create"),
+        (methods::TERMINAL_RESIZE, "terminal.resize"),
+        (methods::TERMINAL_INPUT, "terminal.input"),
+        (methods::TERMINAL_KILL, "terminal.kill"),
+        (methods::TERMINAL_LIST, "terminal.list"),
+        (methods::TERMINAL_ATTACH, "terminal.attach"),
+        (methods::FS_READ, "fs.read"),
+        (methods::FS_WRITE, "fs.write"),
+        (methods::FS_LIST, "fs.list"),
+        (methods::FS_WATCH, "fs.watch"),
+        (methods::FS_UNWATCH, "fs.unwatch"),
+        (methods::FS_STAT, "fs.stat"),
+        (methods::GIT_STATUS, "git.status"),
+        (methods::GIT_DIFF, "git.diff"),
+        (methods::GIT_COMMIT, "git.commit"),
+        (methods::GIT_BRANCHES, "git.branches"),
+        (methods::GIT_CHECKOUT, "git.checkout"),
+        (methods::GIT_WORKTREES, "git.worktrees"),
+        (methods::GIT_WORKTREE_CREATE, "git.worktree.create"),
+        (methods::BROWSER_LIST, "browser.list"),
+        (methods::BROWSER_LAUNCH, "browser.launch"),
+        (methods::BROWSER_NAVIGATE, "browser.navigate"),
+        (methods::BROWSER_CDP, "browser.cdp"),
+        (methods::BROWSER_CLOSE, "browser.close"),
+        (methods::BROWSER_SCREENSHOT, "browser.screenshot"),
+        (methods::HAR_START, "har.start"),
+        (methods::HAR_STOP, "har.stop"),
+        (methods::HAR_REPLAY, "har.replay"),
+        (methods::HAR_LIST, "har.list"),
+        (methods::ORCHESTRATION_SPAWN, "orchestration.spawn"),
+        (methods::ORCHESTRATION_SUBSCRIBE, "orchestration.subscribe"),
+        (
+            methods::ORCHESTRATION_UNSUBSCRIBE,
+            "orchestration.unsubscribe",
+        ),
+        (methods::ORCHESTRATION_LIST, "orchestration.list"),
+        (methods::MODEL_LIST, "model.list"),
+        (methods::MODEL_SELECT, "model.select"),
+        (methods::MODEL_GET, "model.get"),
+        (methods::REMOTE_LIST, "remote.list"),
+        (methods::REMOTE_CONNECT, "remote.connect"),
+        (methods::REMOTE_DISCONNECT, "remote.disconnect"),
+        (methods::AUTH_PROVIDERS, "auth.providers"),
+        (methods::AUTH_LOGIN, "auth.login"),
+        (methods::AUTH_STATUS, "auth.status"),
+        (methods::AUTH_LOGOUT, "auth.logout"),
+        (methods::TELEMETRY_USAGE, "telemetry.usage"),
+        (methods::TELEMETRY_RESOURCES, "telemetry.resources"),
+        (methods::TELEMETRY_SUBSCRIBE, "telemetry.subscribe"),
+        (methods::SYSTEM_HELLO, "system.hello"),
+        (methods::SYSTEM_PING, "system.ping"),
+        (methods::SYSTEM_CAPABILITIES, "system.capabilities"),
+        (methods::SUBSCRIBE, "subscribe"),
+        (methods::UNSUBSCRIBE, "unsubscribe"),
+        (methods::ATTACH_STREAM, "attach_stream"),
+        (methods::STREAM_ACK, "stream.ack"),
+    ];
+    for (got, want) in expected {
+        assert_eq!(got, want);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -466,7 +603,41 @@ fn method_constants_match_spec_namespaces() {
 #[test]
 fn codec_errors_are_displayable() {
     let e = decode_frame("{ not json").unwrap_err();
-    assert!(!e.to_string().is_empty());
+    assert!(e.to_string().starts_with("parse error:"));
     let e = decode_frame("[]").unwrap_err();
-    assert!(!e.to_string().is_empty());
+    assert!(e.to_string().starts_with("invalid request:"));
+    let e = decode_frame(r#"{"jsonrpc":"1.0","id":1,"method":"x"}"#).unwrap_err();
+    assert!(e.to_string().contains("unsupported jsonrpc version '1.0'"));
+}
+
+#[test]
+fn event_kind_serializes_to_snake_case() {
+    for (kind, expected) in [
+        (EventKind::AgentMessageChunk, "agent_message_chunk"),
+        (EventKind::AgentThoughtChunk, "agent_thought_chunk"),
+        (EventKind::ToolCall, "tool_call"),
+        (EventKind::ToolCallUpdate, "tool_call_update"),
+        (EventKind::Plan, "plan"),
+        (EventKind::PermissionRequest, "permission_request"),
+        (EventKind::UserInputRequest, "user_input_request"),
+        (EventKind::Checkpoint, "checkpoint"),
+        (EventKind::TerminalOutput, "terminal_output"),
+        (EventKind::TerminalExit, "terminal_exit"),
+        (EventKind::HarEvent, "har_event"),
+        (EventKind::SubagentStatus, "subagent_status"),
+        (EventKind::FsChange, "fs_change"),
+        (EventKind::TurnStatus, "turn_status"),
+        (EventKind::SessionStatus, "session_status"),
+        (EventKind::TelemetryResources, "telemetry_resources"),
+        (EventKind::Error, "error"),
+    ] {
+        assert_eq!(
+            serde_json::to_string(&kind).unwrap(),
+            format!("\"{expected}\"")
+        );
+        assert_eq!(
+            serde_json::from_str::<EventKind>(&format!("\"{expected}\"")).unwrap(),
+            kind
+        );
+    }
 }

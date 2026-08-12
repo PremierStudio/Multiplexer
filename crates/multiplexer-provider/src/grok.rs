@@ -612,9 +612,13 @@ mod tests {
         assert_eq!(b.start_session(params(None)).unwrap().0, "sess-1");
     }
 
+    fn via_default<T: Default>() -> T {
+        T::default()
+    }
+
     #[test]
     fn vendored_factory_start_is_provider_error() {
-        let factory = VendoredGrokFactory::new();
+        let factory = via_default::<VendoredGrokFactory>();
         let err = factory.start(&params(None)).expect_err("gated");
         assert_eq!(err.kind(), AppErrorKind::ProviderError);
         #[cfg(not(feature = "embed-grok"))]

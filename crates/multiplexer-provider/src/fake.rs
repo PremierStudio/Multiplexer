@@ -136,7 +136,7 @@ fn begin_turn(inner: &mut Inner, key: &str, text: String) -> Result<(), Provider
     let state = inner
         .sessions
         .get_mut(key)
-        .ok_or_else(|| ProviderError::NotFound(format!("session {key}")))?;
+        .expect("session exists: running flag was just read");
     let id = state.id.clone();
     state.events.push_back(ProviderEvent::TextDelta {
         session: id.clone(),
@@ -188,11 +188,12 @@ impl ProviderAdapter for FakeProvider {
         inner
             .sessions
             .get_mut(&key)
-            .ok_or_else(|| ProviderError::NotFound(format!("session {key}")))?
+            .expect("session exists: just inserted")
             .events
             .push_back(ProviderEvent::SessionReady { session: ready_id });
         if let Some(text) = initial_prompt {
-            begin_turn(&mut inner, &key, text)?;
+            begin_turn(&mut inner, &key, text)
+                .expect("session exists: just inserted with running=false");
         }
         Ok(id)
     }
