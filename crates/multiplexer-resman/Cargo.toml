@@ -1,0 +1,13 @@
+[package]
+name = "multiplexer-resman"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Multiplexer core resource manager: CPU core bitmap allocation for sessions."
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
