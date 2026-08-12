@@ -3,6 +3,10 @@
 //! No GPUI types live here. The desktop binary projects [`DesktopChrome`]
 //! into a window. Tests and CI stay headless.
 
+mod workspace;
+
+pub use workspace::{ChatMessage, InspectorTab, Role, Thread, Workspace};
+
 use multiplexer_layout::{LayoutForest, LayoutNode, PaneId};
 
 /// Title of the primary Multiplexer window.

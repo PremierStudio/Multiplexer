@@ -12,5 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 gpui = "0.2.2"
+serde_json.workspace = true
 multiplexer-layout = { path = "../../crates/multiplexer-layout" }
 multiplexer-shell = { path = "../../crates/multiplexer-shell" }
+multiplexer-server = { path = "../../crates/multiplexer-server" }
+multiplexer-provider = { path = "../../crates/multiplexer-provider" }
+multiplexer-wire = { path = "../../crates/multiplexer-wire" }

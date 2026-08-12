@@ -1,123 +1,424 @@
-//! Phase 0.4 GPUI shell.
+//! Multiplexer desktop: chats, transcript, composer, inspector.
 //!
-//! Testable chrome lives in `multiplexer-shell`. This binary only projects
-//! that chrome into a window. Do not put assertions here: CI has no display.
+//! Product state lives in `multiplexer-shell::Workspace` (tested, headless).
+//! This binary paints that state and talks to an in-process FakeProvider
+//! through `Server::handle_frame`. CI does not launch this window.
 
 use gpui::{
-    div, prelude::*, px, relative, rgb, size, App, Application, Bounds, Context, SharedString,
-    TitlebarOptions, Window, WindowBounds, WindowOptions,
+    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, KeyDownEvent, MouseButton,
+    SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
-use multiplexer_layout::{Axis, LayoutNode, PaneId};
-use multiplexer_shell::DesktopChrome;
+use multiplexer_server::Server;
+use multiplexer_shell::{InspectorTab, Role, Workspace};
+use multiplexer_wire::codec::{decode_frame, encode_frame};
+use multiplexer_wire::jsonrpc::{Id, Message, Request};
+use multiplexer_wire::methods;
+use serde_json::{json, Value};
 
 struct ShellView {
-    chrome: DesktopChrome,
+    workspace: Workspace,
+    server: Server<multiplexer_server::ProviderBridge<multiplexer_provider::FakeProvider>>,
+    session_id: Option<String>,
+}
+
+impl ShellView {
+    fn new() -> Self {
+        let mut workspace = Workspace::new("Multiplexer", "fake");
+        workspace.connect(Vec::new());
+        Self {
+            workspace,
+            server: Server::with_fake_provider(),
+            session_id: None,
+        }
+    }
+
+    fn send(&mut self) {
+        let Some(text) = self.workspace.send_draft() else {
+            return;
+        };
+        let frames = if let Some(sid) = &self.session_id {
+            self.server.handle_frame(&rpc(
+                "turn",
+                methods::TURN_SEND,
+                json!({ "session_id": sid, "text": text }),
+            ))
+        } else {
+            let frames = self.server.handle_frame(&rpc(
+                "start",
+                methods::SESSION_START,
+                json!({
+                    "provider": "fake",
+                    "model": self.workspace.model,
+                    "workspace": ".",
+                    "initial_prompt": text,
+                }),
+            ));
+            if let Some(id) = session_id_from(&frames) {
+                self.session_id = Some(id.clone());
+                self.workspace.connect(vec![id]);
+            }
+            frames
+        };
+        let reply = assistant_text(&frames);
+        if reply.is_empty() {
+            self.workspace.push_assistant("(no reply)");
+        } else {
+            self.workspace.push_assistant(reply);
+        }
+    }
 }
 
 impl Render for ShellView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let focus = self.chrome.layout.focus();
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
             .size_full()
-            .bg(rgb(0x1a1a1a))
+            .bg(rgb(0x12141a))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                let key = event.keystroke.key.as_str();
+                if key == "enter" {
+                    this.send();
+                } else if key == "backspace" {
+                    this.workspace.backspace();
+                } else if key.len() == 1 {
+                    if let Some(c) = key.chars().next() {
+                        this.workspace.type_char(c);
+                    }
+                }
+                cx.notify();
+            }))
             .text_color(rgb(0xe8e8e8))
+            .text_sm()
+            .child(title_bar(&self.workspace))
             .child(
                 div()
-                    .h(px(36.0))
-                    .px_3()
                     .flex()
-                    .items_center()
-                    .bg(rgb(0x141414))
-                    .border_b_1()
-                    .border_color(rgb(0x2e2e2e))
-                    .child(self.chrome.connection_label()),
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.left_rail(cx))
+                    .child(self.center(cx))
+                    .child(self.right_rail(cx)),
             )
+    }
+}
+
+impl ShellView {
+    fn left_rail(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = self.workspace.selected;
+        let threads = self.workspace.threads.clone();
+        div()
+            .w(px(240.0))
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(0x16181f))
+            .border_r_1()
+            .border_color(rgb(0x2a2d36))
+            .child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .flex()
+                    .justify_between()
+                    .items_center()
+                    .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("Chats"))
+                    .child(button("New chat", rgb(0x3b82f6), cx, |this, cx| {
+                        this.workspace.new_thread();
+                        this.session_id = None;
+                        cx.notify();
+                    })),
+            )
+            .children(threads.into_iter().enumerate().map(|(i, t)| {
+                let bg = if i == selected {
+                    rgb(0x252a36)
+                } else {
+                    rgb(0x16181f)
+                };
+                div()
+                    .id(SharedString::from(format!("thr-{i}")))
+                    .px_3()
+                    .py_2()
+                    .bg(bg)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(0x1e2230)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            this.workspace.select(i);
+                            cx.notify();
+                        }),
+                    )
+                    .child(div().child(t.title.clone()))
+                    .child(
+                        div()
+                            .text_color(rgb(0x8b90a0))
+                            .child(format!("{} · {}", t.status, t.id)),
+                    )
+            }))
+    }
+
+    fn center(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let thread = self.workspace.selected_thread().cloned();
+        let draft = self.workspace.draft.clone();
+        div()
+            .flex_1()
+            .h_full()
+            .flex()
+            .flex_col()
+            .min_w_0()
             .child(
                 div()
                     .flex_1()
-                    .size_full()
-                    .child(project_node(&self.chrome.layout.primary().root, focus)),
+                    .min_h_0()
+                    .p_4()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .children(match thread {
+                        Some(t) if t.messages.is_empty() => vec![empty_center()],
+                        Some(t) => t
+                            .messages
+                            .into_iter()
+                            .map(|m| {
+                                let (who, color) = match m.role {
+                                    Role::User => ("You", rgb(0x93c5fd)),
+                                    Role::Assistant => ("Agent", rgb(0x86efac)),
+                                };
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(div().text_color(color).child(who))
+                                    .child(div().child(m.text))
+                            })
+                            .collect(),
+                        None => vec![empty_center()],
+                    }),
+            )
+            .child(
+                div()
+                    .p_3()
+                    .border_t_1()
+                    .border_color(rgb(0x2a2d36))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(chip("What can you do?", cx))
+                            .child(chip("List my sessions", cx)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .id("composer")
+                                    .flex_1()
+                                    .px_3()
+                                    .py_2()
+                                    .bg(rgb(0x1c1f28))
+                                    .border_1()
+                                    .border_color(rgb(0x3a3f4d))
+                                    .child(if draft.is_empty() {
+                                        SharedString::from("Message the agent…  (type, then Send)")
+                                    } else {
+                                        SharedString::from(draft)
+                                    }),
+                            )
+                            .child(button("Send", rgb(0x22c55e), cx, |this, cx| {
+                                this.send();
+                                cx.notify();
+                            })),
+                    ),
+            )
+    }
+
+    fn right_rail(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let tab = self.workspace.inspector;
+        let session = self
+            .session_id
+            .clone()
+            .unwrap_or_else(|| "(none yet)".into());
+        div()
+            .w(px(280.0))
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(0x16181f))
+            .border_l_1()
+            .border_color(rgb(0x2a2d36))
+            .child(
+                div().flex().children(
+                    [
+                        InspectorTab::Session,
+                        InspectorTab::Resources,
+                        InspectorTab::Mcp,
+                    ]
+                    .into_iter()
+                    .map(|t| {
+                        let on = tab == t;
+                        div()
+                            .id(SharedString::from(t.label()))
+                            .px_3()
+                            .py_2()
+                            .cursor_pointer()
+                            .bg(if on { rgb(0x252a36) } else { rgb(0x16181f) })
+                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                this.workspace.inspector = t;
+                                cx.notify();
+                            }))
+                            .child(t.label())
+                    }),
+                ),
+            )
+            .child(
+                div()
+                    .p_3()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(match tab {
+                        InspectorTab::Session => format!(
+                            "Project: {}\nModel: {}\nSession: {}\nThreads: {}",
+                            self.workspace.project,
+                            self.workspace.model,
+                            session,
+                            self.workspace.threads.len()
+                        ),
+                        InspectorTab::Resources => {
+                            "Cores 0,1 reserved for the app.\nAgent sessions pin to the rest.\nJob Object kill-on-close is live in multiplexer-resman.".into()
+                        }
+                        InspectorTab::Mcp => {
+                            "MCP supervisor reuses servers by config hash.\nTeardown at zero refs.\nRegistry UI is Phase 2.".into()
+                        }
+                    }),
             )
     }
 }
 
-fn project_node(node: &LayoutNode, focus: PaneId) -> gpui::AnyElement {
-    match node {
-        LayoutNode::Split(split) => {
-            let container = match split.axis {
-                Axis::Horizontal => div().flex().flex_row(),
-                Axis::Vertical => div().flex().flex_col(),
-            };
-            container
-                .size_full()
-                .child(sized_child(&split.first, split.ratio, split.axis, focus))
-                .child(sized_child(
-                    &split.second,
-                    1.0 - split.ratio,
-                    split.axis,
-                    focus,
-                ))
-                .into_any()
-        }
-        LayoutNode::Leaf { pane, ghost, .. } => pane_frame(*pane, *ghost, focus).into_any(),
-    }
-}
-
-fn sized_child(node: &LayoutNode, ratio: f32, axis: Axis, focus: PaneId) -> gpui::Div {
-    let sized = match axis {
-        Axis::Horizontal => div().w(relative(ratio)).h_full(),
-        Axis::Vertical => div().h(relative(ratio)).w_full(),
-    };
-    sized.flex_grow().child(project_node(node, focus))
-}
-
-fn pane_frame(pane: PaneId, ghost: bool, focus: PaneId) -> gpui::Div {
-    let focused = pane == focus;
-    let bg = if ghost {
-        rgb(0x2a2a2a)
-    } else if focused {
-        rgb(0x252830)
-    } else {
-        rgb(0x222222)
-    };
-    let label = if ghost {
-        format!("ghost {}", pane.0)
-    } else {
-        format!("pane {}", pane.0)
-    };
+fn title_bar(ws: &Workspace) -> impl IntoElement {
     div()
-        .size_full()
-        .m(px(1.0))
-        .bg(bg)
-        .border_1()
-        .border_color(rgb(0x3a3a3a))
+        .h(px(40.0))
+        .px_4()
         .flex()
-        .justify_center()
         .items_center()
+        .bg(rgb(0x0e1016))
+        .border_b_1()
+        .border_color(rgb(0x2a2d36))
+        .child(ws.title_bar())
+}
+
+fn empty_center() -> gpui::Div {
+    div()
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(rgb(0x8b90a0))
+        .child("Start a chat. This is the control surface, not an empty pane.")
+}
+
+fn chip(label: &'static str, cx: &mut Context<ShellView>) -> impl IntoElement {
+    div()
+        .id(SharedString::from(label))
+        .px_2()
+        .py_1()
+        .bg(rgb(0x1c1f28))
+        .border_1()
+        .border_color(rgb(0x3a3f4d))
+        .cursor_pointer()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| {
+                this.workspace.set_draft(label);
+                this.send();
+                cx.notify();
+            }),
+        )
         .child(label)
+}
+
+fn button(
+    label: &'static str,
+    color: gpui::Rgba,
+    cx: &mut Context<ShellView>,
+    on_click: impl Fn(&mut ShellView, &mut Context<ShellView>) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(SharedString::from(label))
+        .px_2()
+        .py_1()
+        .bg(color)
+        .text_color(rgb(0x0e1016))
+        .cursor_pointer()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| on_click(this, cx)),
+        )
+        .child(label)
+}
+
+fn rpc(id: &str, method: &str, params: Value) -> String {
+    encode_frame(&Message::Request(Request::new(
+        Id::String(id.to_owned()),
+        method,
+        params,
+    )))
+    .expect("encode")
+}
+
+fn session_id_from(frames: &[String]) -> Option<String> {
+    for f in frames {
+        if let Ok(Message::Response(r)) = decode_frame(f) {
+            if let Some(id) = r.result.get("session_id").and_then(Value::as_str) {
+                return Some(id.to_owned());
+            }
+        }
+    }
+    None
+}
+
+fn assistant_text(frames: &[String]) -> String {
+    let mut out = String::new();
+    for f in frames {
+        if let Ok(Message::Notification(n)) = decode_frame(f) {
+            if n.method == methods::EVENT {
+                if let Some(text) = n
+                    .params
+                    .get("data")
+                    .and_then(|d| d.get("text"))
+                    .and_then(Value::as_str)
+                {
+                    out.push_str(text);
+                }
+            }
+        }
+    }
+    out
 }
 
 fn main() {
     Application::new().run(|cx: &mut App| {
-        let chrome = DesktopChrome::default_outlook();
-        let title: SharedString = chrome.title.clone().into();
-        let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
+        let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some(title),
+                    title: Some("Multiplexer".into()),
                     appears_transparent: false,
                     traffic_light_position: None,
                 }),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| ShellView { chrome }),
+            |_, cx| cx.new(|_| ShellView::new()),
         )
         .expect("open Multiplexer window");
-        // Windows stays blank until the app is activated and paints once.
         cx.activate(true);
     });
 }

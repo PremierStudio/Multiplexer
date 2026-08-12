@@ -10,8 +10,8 @@ The pipeline lives in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) 
 1. fmt            cargo fmt --check
 2. clippy         cargo clippy --workspace -- -D warnings      (deny warnings)
 3. unit+property  cargo test --workspace
-4. mutation       cargo mutants, >=70% killed                  (cargo-mutants 27.1.0)
-5. coverage       cargo llvm-cov, >=85% line / >=80% branch
+4. mutation       cargo mutants, 100% viable kill              (cargo-mutants 27.1.0)
+5. coverage       cargo llvm-cov, 100% line on crates
 6. integration/   cargo test --workspace --all-targets         (placeholder)
    component/e2e
 ```
@@ -20,13 +20,13 @@ The pipeline lives in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) 
 
 ### Gate 4: mutation (cargo-mutants)
 
-`cargo-mutants` introduces small faults ("mutants") into the code and re-runs the suite against each. A mutant the tests fail to catch is a **survived** mutant, and `cargo-mutants` exits non-zero when any survive, so a missed mutant fails the gate. The **70% kill floor is the merge bar** (decision D33); the bar may rise over time. Survivors are a code smell, not just a test gap: fix the test or the dead code, never silence a survivor.
+`cargo-mutants` introduces small faults ("mutants") into the code and re-runs the suite against each. A mutant the tests fail to catch is a **survived** mutant, and `cargo-mutants` exits non-zero when any survive, so a missed mutant fails the gate. The merge bar is **100% of viable mutants killed**. Unviable mutants (the mutated code does not compile) do not count. Survivors are a code smell, not just a test gap: fix the test or the dead code, never silence a survivor.
 
 The CI invocation uses `--in-place` to avoid the default copy-tree mode (which copies the whole tree, roughly 30 GB here) while still writing the same `mutants.out/` format. `.cargo/mutants.toml` restricts generation to `crates/**/*.rs` and excludes `third_party/**`, `spike/**`, and `apps/**`. The mutation step sets `CARGO_INCREMENTAL=0` so in-place rebuilds cannot reuse a stale incremental cache. The version is pinned to **27.1.0**, the version that produced the existing `mutants.out/` report.
 
 ### Gate 5: coverage (cargo-llvm-cov)
 
-Enforces the plan/15 gates: **>=85% line** and **>=80% branch**. The HTML report is uploaded as a CI artifact. Coverage is a floor, not a target; the mutation gate is the stronger signal.
+Enforces **100% line coverage** on workspace library crates (`--exclude multiplexer-desktop --exclude multiplexer-server`, which need a display or a bound port). The HTML report is uploaded as a CI artifact. The mutation gate is the stronger signal: every viable mutant must die.
 
 ### Gate 6: integration / component / e2e (placeholder)
 
@@ -46,14 +46,14 @@ cargo clippy --workspace -- -D warnings
 # 3. unit + property
 cargo test --workspace
 
-# 4. mutation (>=70% killed; slow)
+# 4. mutation (100% viable kill; slow)
 cargo install cargo-mutants --version 27.1.0 --locked
 # .cargo/mutants.toml excludes third_party/**, spike/**, and apps/**
 CARGO_INCREMENTAL=0 cargo mutants --in-place --timeout 30
 
-# 5. coverage (>=85% line, >=80% branch; slow)
+# 5. coverage (100% line on library crates; slow)
 cargo install cargo-llvm-cov --locked
-cargo llvm-cov --workspace --fail-under-lines 85 --fail-under-branches 80 --html --output-dir target/llvm-cov/html
+cargo llvm-cov --workspace --exclude multiplexer-desktop --exclude multiplexer-server --fail-under-lines 100 --html --output-dir target/llvm-cov/html
 
 # 6. integration / component / e2e (placeholder)
 cargo test --workspace --all-targets

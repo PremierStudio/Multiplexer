@@ -1,0 +1,257 @@
+//! Headless workspace model: threads, transcript, composer, inspector.
+
+use crate::ConnectionState;
+
+/// Who wrote a transcript line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    User,
+    Assistant,
+}
+
+/// One chat line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatMessage {
+    pub role: Role,
+    pub text: String,
+}
+
+/// One agent thread in the left rail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Thread {
+    pub id: String,
+    pub title: String,
+    pub messages: Vec<ChatMessage>,
+    pub status: String,
+}
+
+/// Right-rail inspector tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InspectorTab {
+    Session,
+    Resources,
+    Mcp,
+}
+
+impl InspectorTab {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Session => "Session",
+            Self::Resources => "Cores",
+            Self::Mcp => "MCP",
+        }
+    }
+}
+
+/// Product workspace: chats + composer + inspector. No GPUI types.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Workspace {
+    pub project: String,
+    pub model: String,
+    pub connection: ConnectionState,
+    pub threads: Vec<Thread>,
+    pub selected: usize,
+    pub draft: String,
+    pub inspector: InspectorTab,
+    next_id: u64,
+}
+
+impl Workspace {
+    pub fn new(project: impl Into<String>, model: impl Into<String>) -> Self {
+        let mut ws = Self {
+            project: project.into(),
+            model: model.into(),
+            connection: ConnectionState::Disconnected,
+            threads: Vec::new(),
+            selected: 0,
+            draft: String::new(),
+            inspector: InspectorTab::Session,
+            next_id: 1,
+        };
+        ws.new_thread();
+        ws
+    }
+
+    pub fn title_bar(&self) -> String {
+        format!(
+            "Multiplexer  ·  {}  ·  {}  ·  {}",
+            self.project,
+            self.model,
+            self.connection.status_label()
+        )
+    }
+
+    pub fn selected_thread(&self) -> Option<&Thread> {
+        self.threads.get(self.selected)
+    }
+
+    pub fn selected_thread_mut(&mut self) -> Option<&mut Thread> {
+        self.threads.get_mut(self.selected)
+    }
+
+    pub fn new_thread(&mut self) -> String {
+        let id = format!("thr-{}", self.next_id);
+        self.next_id += 1;
+        self.threads.push(Thread {
+            id: id.clone(),
+            title: "New chat".to_owned(),
+            messages: Vec::new(),
+            status: "idle".to_owned(),
+        });
+        self.selected = self.threads.len() - 1;
+        self.draft.clear();
+        id
+    }
+
+    pub fn select(&mut self, index: usize) -> bool {
+        if index < self.threads.len() {
+            self.selected = index;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn set_draft(&mut self, text: impl Into<String>) {
+        self.draft = text.into();
+    }
+
+    pub fn type_char(&mut self, c: char) {
+        if !c.is_control() {
+            self.draft.push(c);
+        }
+    }
+
+    pub fn backspace(&mut self) {
+        self.draft.pop();
+    }
+
+    /// Take the draft as a user message. Returns the text if it was non-empty.
+    pub fn send_draft(&mut self) -> Option<String> {
+        let text = self.draft.trim().to_owned();
+        if text.is_empty() {
+            return None;
+        }
+        self.draft.clear();
+        if let Some(thread) = self.selected_thread_mut() {
+            if thread.title == "New chat" {
+                thread.title = text.chars().take(40).collect();
+            }
+            thread.messages.push(ChatMessage {
+                role: Role::User,
+                text: text.clone(),
+            });
+            thread.status = "running".to_owned();
+        }
+        Some(text)
+    }
+
+    pub fn push_assistant(&mut self, text: impl Into<String>) {
+        if let Some(thread) = self.selected_thread_mut() {
+            thread.messages.push(ChatMessage {
+                role: Role::Assistant,
+                text: text.into(),
+            });
+            thread.status = "idle".to_owned();
+        }
+    }
+
+    pub fn mark_error(&mut self, message: impl Into<String>) {
+        if let Some(thread) = self.selected_thread_mut() {
+            thread.status = "error".to_owned();
+            thread.messages.push(ChatMessage {
+                role: Role::Assistant,
+                text: message.into(),
+            });
+        }
+    }
+
+    pub fn connect(&mut self, session_ids: Vec<String>) {
+        self.connection = ConnectionState::Connected { session_ids };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_workspace_has_one_empty_thread() {
+        let ws = Workspace::new("Multiplexer", "fake");
+        assert_eq!(ws.threads.len(), 1);
+        assert_eq!(ws.threads[0].title, "New chat");
+        assert_eq!(ws.selected, 0);
+        assert!(ws.draft.is_empty());
+        assert_eq!(ws.inspector, InspectorTab::Session);
+        assert!(ws.title_bar().contains("Multiplexer"));
+        assert!(ws.title_bar().contains("fake"));
+        assert!(ws.title_bar().contains("disconnected"));
+    }
+
+    #[test]
+    fn send_draft_creates_user_message_and_renames_thread() {
+        let mut ws = Workspace::new("p", "m");
+        assert_eq!(ws.send_draft(), None);
+        ws.set_draft("  hello world  ");
+        assert_eq!(ws.send_draft().as_deref(), Some("hello world"));
+        let t = ws.selected_thread().unwrap();
+        assert_eq!(t.title, "hello world");
+        assert_eq!(t.messages.len(), 1);
+        assert_eq!(t.messages[0].role, Role::User);
+        assert_eq!(t.status, "running");
+        assert!(ws.draft.is_empty());
+    }
+
+    #[test]
+    fn type_and_backspace_edit_draft() {
+        let mut ws = Workspace::new("p", "m");
+        ws.type_char('a');
+        ws.type_char('\n');
+        ws.type_char('b');
+        assert_eq!(ws.draft, "ab");
+        ws.backspace();
+        assert_eq!(ws.draft, "a");
+    }
+
+    #[test]
+    fn new_thread_selects_the_new_one() {
+        let mut ws = Workspace::new("p", "m");
+        ws.set_draft("x");
+        ws.send_draft();
+        let id = ws.new_thread();
+        assert_eq!(id, "thr-2");
+        assert_eq!(ws.selected, 1);
+        assert_eq!(ws.threads.len(), 2);
+        assert!(ws.draft.is_empty());
+        assert!(ws.select(0));
+        assert_eq!(ws.selected, 0);
+        assert!(!ws.select(9));
+    }
+
+    #[test]
+    fn assistant_and_error_update_status() {
+        let mut ws = Workspace::new("p", "m");
+        ws.set_draft("q");
+        ws.send_draft();
+        ws.push_assistant("answer");
+        assert_eq!(ws.selected_thread().unwrap().status, "idle");
+        assert_eq!(
+            ws.selected_thread().unwrap().messages[1].role,
+            Role::Assistant
+        );
+        ws.mark_error("boom");
+        assert_eq!(ws.selected_thread().unwrap().status, "error");
+    }
+
+    #[test]
+    fn inspector_labels_and_connect() {
+        assert_eq!(InspectorTab::Session.label(), "Session");
+        assert_eq!(InspectorTab::Resources.label(), "Cores");
+        assert_eq!(InspectorTab::Mcp.label(), "MCP");
+        let mut ws = Workspace::new("p", "m");
+        ws.connect(vec!["sess-1".into()]);
+        assert!(ws.connection.is_connected());
+        assert_eq!(ws.connection.session_count(), 1);
+        assert!(ws.title_bar().contains("connected"));
+    }
+}
