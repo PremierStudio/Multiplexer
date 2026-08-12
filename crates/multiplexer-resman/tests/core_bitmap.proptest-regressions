@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f0e47a72119178b20a947cb1043a262e320f2f7724bd1c2eb3a988480eb83821 # shrinks to n = 4, extra_reserved = [], allocations = [1]
+cc 957c09197858ca37a6b0fa3572751866d3ce58fc5f44fe204b84b6feda66c080 # shrinks to n = 6, extra_reserved = [2], allocations = [1]
+cc 46ac21a4000eefdff184f95a130635f147cf8fdf38cb454e96fbde1b7da48cf9 # shrinks to n = 4, allocations = [1, 1]
+cc 7d345bfc9bd3cdcc0aea2158458cbdfbd10bf63332b1bde2f9f9397f615d5d64 # shrinks to n = 6, extra_reserved = [], allocations = [2, 2]
+cc 19831b9318d42fc4218827a1448efe02fad039694af5965caaee8139898d3f27 # shrinks to n = 4, extra_reserved = [], allocations = [1, 1, 1]

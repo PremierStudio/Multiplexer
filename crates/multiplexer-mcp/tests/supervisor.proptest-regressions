@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc d1bfec4508a13579f7621745ca23621bb2ddf7219fc2290f3be38fda0bbcb95b # shrinks to a = ServerConfig { name: "a", command: "a", args: [], env_keys: [] }, b = "b"

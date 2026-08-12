@@ -88,6 +88,8 @@ fn free_then_reallocate_works() {
     let first = alloc_cores(&mut bitmap, SessionId(1), 3);
     assert_eq!(first.cores, vec![2, 3, 4]);
 
+    assert_eq!(bitmap.allocated(SessionId(1)), Some(&first));
+
     let freed = bitmap.free(SessionId(1)).expect("session known");
     assert_eq!(freed.cores, first.cores);
 

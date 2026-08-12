@@ -4,6 +4,8 @@ members = [
     "crates/multiplexer-wire",
     "crates/multiplexer-resman",
     "crates/multiplexer-worktree",
+    "crates/multiplexer-mcp",
+    "crates/multiplexer-layout",
 ]
 
 [workspace.package]
@@ -17,3 +19,4 @@ serde_json = "1"
 thiserror = "2"
 proptest = "1"
 cargo-mutants = { version = "1" }
+win32job = "2"

@@ -1,0 +1,24 @@
+# cargo-mutants 27.1 config (see https://mutants.rs/config-file.html).
+# Default path: .cargo/mutants.toml
+#
+# Gate 4 runs `cargo mutants --in-place` so the tree is not copied. The
+# allowlist plus excludes are a second fence: never generate mutants under
+# the vendored grok-build tree or the spike sandbox, even if those
+# directories later become workspace members.
+
+examine_globs = ["crates/**/*.rs"]
+exclude_globs = [
+    "third_party/**",
+    "spike/**",
+]
+# close(self) { drop(self) } is equivalent to an empty body: self is always dropped
+# on return. Tests still exercise close() via Drop side effects.
+# ChildKiller::drop only runs when Job assign fails after spawn; that path cannot
+# be forced without mocking win32job.
+# preferred() ranks by (reusable, unique seq). Equal ranks cannot occur, so
+# `>` and `>=` are the same comparison.
+exclude_re = [
+    "Containment::close",
+    "Drop for ChildKiller",
+    "replace > with >= in preferred",
+]

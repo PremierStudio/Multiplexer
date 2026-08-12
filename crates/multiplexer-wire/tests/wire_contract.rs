@@ -194,7 +194,7 @@ fn event_notification_carries_in_response_to_when_set() {
         json!({ "text": "hi" }),
     );
     ev.in_response_to = Some(Id::String("req_01".into()));
-    let json = serde_json::to_value(&ev.to_notification()).unwrap();
+    let json = serde_json::to_value(ev.to_notification()).unwrap();
     assert_eq!(json["params"]["in_response_to"], "req_01");
 }
 
@@ -206,7 +206,7 @@ fn event_notification_omits_in_response_to_when_unset() {
         1,
         json!({ "text": "hi" }),
     );
-    let json = serde_json::to_value(&ev.to_notification()).unwrap();
+    let json = serde_json::to_value(ev.to_notification()).unwrap();
     assert!(
         json["params"].get("in_response_to").is_none(),
         "absent in_response_to must not serialize"

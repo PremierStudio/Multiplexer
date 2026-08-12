@@ -57,8 +57,13 @@ jobs:
       # survives, so a missed mutant fails the gate. Pinned to 27.1.0, the version
       # that produced mutants.out/. --in-place avoids the default copy-tree mode
       # (which copies the whole tree, ~30GB here) and still writes the same
-      # mutants.out/ format. The 70% kill floor is the merge bar (D33).
+      # mutants.out/ format. File filters live in .cargo/mutants.toml so the
+      # vendored grok-build tree and spike/ are never walked. CARGO_INCREMENTAL=0
+      # prevents --in-place incremental cache from reporting false misses.
+      # The 70% kill floor is the merge bar (D33).
       - name: Gate 4 - mutation (cargo-mutants)
+        env:
+          CARGO_INCREMENTAL: 0
         run: |
           cargo install cargo-mutants --version 27.1.0 --locked
           cargo mutants --in-place --timeout 30
