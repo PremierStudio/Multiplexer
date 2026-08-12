@@ -2,6 +2,7 @@
 
 use std::sync::{Mutex, MutexGuard};
 
+use multiplexer_wire::approval::ApprovalDecision;
 use multiplexer_wire::codec::{decode_frame, encode_frame, CodecError};
 use multiplexer_wire::error::{standard, AppErrorKind, RpcError};
 use multiplexer_wire::jsonrpc::{ErrorResponse, Id, Message, Request, Response};
@@ -10,15 +11,24 @@ use multiplexer_wire::protocol::PROTOCOL_VERSION;
 use serde_json::{json, Map, Value};
 
 use crate::backend::{BackendError, FakeBackend, SessionBackend, SessionStartParams};
+use crate::git::GitCatalog;
 
 /// In-process JSON-RPC router. Holds the session backend behind a mutex.
 pub struct Server<B = FakeBackend> {
     backend: Mutex<B>,
+    git: Mutex<Option<Box<dyn GitCatalog>>>,
 }
 
 impl Server<FakeBackend> {
     pub fn new() -> Self {
         Self::with_backend(FakeBackend::new())
+    }
+
+    /// Router with a scripted (or real) git catalog for `git.worktrees`.
+    pub fn with_git<G: GitCatalog + 'static>(git: G) -> Self {
+        let server = Self::new();
+        server.install_git(git);
+        server
     }
 }
 
@@ -39,7 +49,13 @@ impl<B: SessionBackend> Server<B> {
     pub fn with_backend(backend: B) -> Self {
         Self {
             backend: Mutex::new(backend),
+            git: Mutex::new(None),
         }
+    }
+
+    /// Install or replace the git catalog used by `git.worktrees`.
+    pub fn install_git<G: GitCatalog + 'static>(&self, git: G) {
+        *self.git.lock().unwrap_or_else(|p| p.into_inner()) = Some(Box::new(git));
     }
 
     /// Decode `text`, dispatch, and return the response frame plus any
@@ -71,7 +87,10 @@ impl<B: SessionBackend> Server<B> {
             methods::SESSION_LIST => self.session_list(req),
             methods::SESSION_GET => self.session_get(req),
             methods::SESSION_STOP => self.session_stop(req),
+            methods::SESSION_INTERRUPT => self.session_interrupt(req),
             methods::TURN_SEND => self.turn_send(req),
+            methods::APPROVAL_RESPOND => self.approval_respond(req),
+            methods::GIT_WORKTREES => self.git_worktrees(req),
             methods::SYSTEM_PING => vec![ok_frame(req.id, json!({ "pong": true }))],
             methods::SYSTEM_HELLO => self.system_hello(req),
             _ => vec![error_frame(
@@ -139,6 +158,48 @@ impl<B: SessionBackend> Server<B> {
         match backend.send_turn(&session_id, &text) {
             Ok(()) => respond_and_drain(&mut *backend, req.id, json!({ "accepted": true })),
             Err(e) => vec![error_frame(req.id, backend_rpc(e))],
+        }
+    }
+
+    fn session_interrupt(&self, req: Request) -> Vec<String> {
+        let session_id = match parse_session_id(&req.params) {
+            Ok(id) => id,
+            Err(e) => return vec![error_frame(req.id, e)],
+        };
+        let mut backend = self.lock();
+        match backend.interrupt(&session_id) {
+            Ok(()) => respond_and_drain(&mut *backend, req.id, json!({})),
+            Err(e) => vec![error_frame(req.id, backend_rpc(e))],
+        }
+    }
+
+    fn approval_respond(&self, req: Request) -> Vec<String> {
+        let (session_id, request_id, decision) = match parse_approval(&req.params) {
+            Ok(parsed) => parsed,
+            Err(e) => return vec![error_frame(req.id, e)],
+        };
+        let mut backend = self.lock();
+        match backend.approval_respond(&session_id, &request_id, decision) {
+            Ok(()) => respond_and_drain(&mut *backend, req.id, json!({})),
+            Err(e) => vec![error_frame(req.id, backend_rpc(e))],
+        }
+    }
+
+    fn git_worktrees(&self, req: Request) -> Vec<String> {
+        let cwd = match parse_cwd(&req.params) {
+            Ok(cwd) => cwd,
+            Err(e) => return vec![error_frame(req.id, e)],
+        };
+        let git = self.git.lock().unwrap_or_else(|p| p.into_inner());
+        match git.as_ref() {
+            Some(catalog) => match catalog.list_worktrees(&cwd) {
+                Ok(worktrees) => vec![ok_frame(req.id, json!({ "worktrees": worktrees }))],
+                Err(e) => vec![error_frame(req.id, backend_rpc(e))],
+            },
+            None => vec![error_frame(
+                req.id,
+                RpcError::app(AppErrorKind::Unsupported, "git catalog not configured"),
+            )],
         }
     }
 
@@ -230,6 +291,20 @@ fn parse_turn(params: &Value) -> Result<(String, String), RpcError> {
         }
     };
     Ok((session_id, text))
+}
+
+fn parse_approval(params: &Value) -> Result<(String, String, ApprovalDecision), RpcError> {
+    let obj = require_object(params)?;
+    let session_id = require_nonempty_string(obj, "session_id")?;
+    let request_id = require_nonempty_string(obj, "request_id")?;
+    let raw = require_nonempty_string(obj, "decision")?;
+    let decision = ApprovalDecision::parse(&raw)
+        .map_err(|err| RpcError::new(standard::INVALID_PARAMS, err.to_string()))?;
+    Ok((session_id, request_id, decision))
+}
+
+fn parse_cwd(params: &Value) -> Result<String, RpcError> {
+    require_nonempty_string(require_object(params)?, "cwd")
 }
 
 fn require_object(params: &Value) -> Result<&Map<String, Value>, RpcError> {

@@ -1,8 +1,9 @@
 //! Local session backend. Mirrors the provider adapter surface the router
 //! needs so this crate is not blocked on `multiplexer-provider`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use multiplexer_wire::approval::ApprovalDecision;
 use multiplexer_wire::event::{EventKind, StreamEvent};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -75,6 +76,13 @@ pub trait SessionBackend: Send {
     fn get(&self, session_id: &str) -> Result<SessionSnapshot, BackendError>;
     fn stop(&mut self, session_id: &str) -> Result<(), BackendError>;
     fn send_turn(&mut self, session_id: &str, text: &str) -> Result<(), BackendError>;
+    fn interrupt(&mut self, session_id: &str) -> Result<(), BackendError>;
+    fn approval_respond(
+        &mut self,
+        session_id: &str,
+        request_id: &str,
+        decision: ApprovalDecision,
+    ) -> Result<(), BackendError>;
     fn drain_events(&mut self) -> Vec<StreamEvent>;
 }
 
@@ -86,6 +94,7 @@ pub struct FakeBackend {
     order: Vec<String>,
     events: Vec<StreamEvent>,
     seq_by_stream: HashMap<String, u64>,
+    pending_approvals: HashSet<(String, String)>,
 }
 
 impl FakeBackend {
@@ -104,6 +113,18 @@ impl FakeBackend {
             .ok_or_else(|| BackendError::NotFound {
                 session_id: session_id.to_owned(),
             })
+    }
+
+    /// Track a pending approval so [`SessionBackend::approval_respond`] can succeed.
+    pub fn request_approval(
+        &mut self,
+        session_id: &str,
+        request_id: &str,
+    ) -> Result<(), BackendError> {
+        self.require(session_id)?;
+        self.pending_approvals
+            .insert((session_id.to_owned(), request_id.to_owned()));
+        Ok(())
     }
 
     fn push_event(&mut self, stream: String, event: EventKind, data: Value) {
@@ -156,6 +177,7 @@ impl SessionBackend for FakeBackend {
         self.require(session_id)?;
         self.sessions.remove(session_id);
         self.order.retain(|id| id != session_id);
+        self.pending_approvals.retain(|(id, _)| id != session_id);
         Ok(())
     }
 
@@ -166,6 +188,29 @@ impl SessionBackend for FakeBackend {
             EventKind::AgentMessageChunk,
             json!({ "text": text }),
         );
+        Ok(())
+    }
+
+    fn interrupt(&mut self, session_id: &str) -> Result<(), BackendError> {
+        self.require(session_id)?;
+        Ok(())
+    }
+
+    fn approval_respond(
+        &mut self,
+        session_id: &str,
+        request_id: &str,
+        _decision: ApprovalDecision,
+    ) -> Result<(), BackendError> {
+        self.require(session_id)?;
+        if !self
+            .pending_approvals
+            .remove(&(session_id.to_owned(), request_id.to_owned()))
+        {
+            return Err(BackendError::NotFound {
+                session_id: format!("approval {request_id}"),
+            });
+        }
         Ok(())
     }
 
@@ -223,5 +268,84 @@ mod tests {
             session_id: "sess_x".into(),
         };
         assert_eq!(err.to_string(), "session not found: sess_x");
+    }
+
+    #[test]
+    fn interrupt_unknown_is_not_found() {
+        let mut backend = FakeBackend::new();
+        let err = backend.interrupt("sess_missing").unwrap_err();
+        assert_eq!(
+            err,
+            BackendError::NotFound {
+                session_id: "sess_missing".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn interrupt_known_session_ok() {
+        let mut backend = FakeBackend::new();
+        let id = backend.start(params("m")).unwrap().session_id;
+        backend.interrupt(&id).unwrap();
+    }
+
+    #[test]
+    fn approval_unknown_session_is_not_found() {
+        let mut backend = FakeBackend::new();
+        let err = backend
+            .approval_respond("sess_missing", "req-1", ApprovalDecision::Allow)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BackendError::NotFound {
+                session_id: "sess_missing".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn approval_unknown_request_is_not_found() {
+        let mut backend = FakeBackend::new();
+        let id = backend.start(params("m")).unwrap().session_id;
+        let err = backend
+            .approval_respond(&id, "req-missing", ApprovalDecision::Deny)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            BackendError::NotFound {
+                session_id: "approval req-missing".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn approval_tracked_request_succeeds_once() {
+        let mut backend = FakeBackend::new();
+        let id = backend.start(params("m")).unwrap().session_id;
+        backend.request_approval(&id, "req-1").unwrap();
+        backend
+            .approval_respond(&id, "req-1", ApprovalDecision::AllowAlways)
+            .unwrap();
+        let err = backend
+            .approval_respond(&id, "req-1", ApprovalDecision::Allow)
+            .unwrap_err();
+        assert!(matches!(err, BackendError::NotFound { .. }));
+    }
+
+    #[test]
+    fn request_approval_unknown_session_is_not_found() {
+        let mut backend = FakeBackend::new();
+        assert!(backend.request_approval("sess_x", "req-1").is_err());
+    }
+
+    #[test]
+    fn stop_drops_pending_approvals() {
+        let mut backend = FakeBackend::new();
+        let id = backend.start(params("m")).unwrap().session_id;
+        backend.request_approval(&id, "req-1").unwrap();
+        backend.stop(&id).unwrap();
+        assert!(backend
+            .approval_respond(&id, "req-1", ApprovalDecision::Allow)
+            .is_err());
     }
 }

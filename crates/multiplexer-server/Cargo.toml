@@ -9,6 +9,7 @@ description = "In-process JSON-RPC request router for the Multiplexer compositio
 [dependencies]
 multiplexer-wire = { path = "../multiplexer-wire" }
 multiplexer-provider = { path = "../multiplexer-provider" }
+multiplexer-worktree = { path = "../multiplexer-worktree" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -6,6 +6,7 @@ use multiplexer_provider::{
     FakeProvider, ModelId, ProviderAdapter, ProviderError, ProviderEvent, ProviderKind, SessionId,
     SessionStartParams as ProviderStart, TurnInput,
 };
+use multiplexer_wire::approval::ApprovalDecision;
 use multiplexer_wire::event::{EventKind, StreamEvent};
 use serde_json::json;
 
@@ -148,6 +149,23 @@ impl<A: ProviderAdapter> SessionBackend for ProviderBridge<A> {
                     text: text.to_owned(),
                 },
             )
+            .map_err(Self::map_err)
+    }
+
+    fn interrupt(&mut self, session_id: &str) -> Result<(), BackendError> {
+        self.adapter
+            .interrupt_turn(&SessionId::from(session_id))
+            .map_err(Self::map_err)
+    }
+
+    fn approval_respond(
+        &mut self,
+        session_id: &str,
+        request_id: &str,
+        decision: ApprovalDecision,
+    ) -> Result<(), BackendError> {
+        self.adapter
+            .approval_respond(&SessionId::from(session_id), request_id, decision)
             .map_err(Self::map_err)
     }
 

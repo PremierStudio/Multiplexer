@@ -5,6 +5,7 @@ members = [
     "crates/multiplexer-provider",
     "crates/multiplexer-resman",
     "crates/multiplexer-worktree",
+    "crates/multiplexer-checkpoint",
     "crates/multiplexer-mcp",
     "crates/multiplexer-layout",
     "crates/multiplexer-shell",

@@ -346,6 +346,9 @@ fn missing_get_stop_turn_params_are_invalid() {
         (methods::SESSION_GET, json!({ "session_id": 1 })),
         (methods::SESSION_STOP, json!({})),
         (methods::SESSION_STOP, json!({ "session_id": "" })),
+        (methods::SESSION_INTERRUPT, json!({})),
+        (methods::SESSION_INTERRUPT, json!({ "session_id": "" })),
+        (methods::SESSION_INTERRUPT, json!({ "session_id": 1 })),
         (methods::TURN_SEND, json!({ "text": "hi" })),
         (methods::TURN_SEND, json!({ "session_id": "sess_1" })),
         (
@@ -357,6 +360,39 @@ fn missing_get_stop_turn_params_are_invalid() {
             json!({ "session_id": "sess_1", "text": 9 }),
         ),
         (methods::TURN_SEND, Value::Null),
+        (methods::APPROVAL_RESPOND, json!({})),
+        (
+            methods::APPROVAL_RESPOND,
+            json!({ "session_id": "s", "request_id": "r" }),
+        ),
+        (
+            methods::APPROVAL_RESPOND,
+            json!({ "session_id": "s", "decision": "allow" }),
+        ),
+        (
+            methods::APPROVAL_RESPOND,
+            json!({ "request_id": "r", "decision": "allow" }),
+        ),
+        (
+            methods::APPROVAL_RESPOND,
+            json!({ "session_id": "", "request_id": "r", "decision": "allow" }),
+        ),
+        (
+            methods::APPROVAL_RESPOND,
+            json!({ "session_id": "s", "request_id": "", "decision": "allow" }),
+        ),
+        (
+            methods::APPROVAL_RESPOND,
+            json!({ "session_id": "s", "request_id": "r", "decision": "" }),
+        ),
+        (
+            methods::APPROVAL_RESPOND,
+            json!({ "session_id": "s", "request_id": "r", "decision": 1 }),
+        ),
+        (methods::GIT_WORKTREES, json!({})),
+        (methods::GIT_WORKTREES, json!({ "cwd": "" })),
+        (methods::GIT_WORKTREES, json!({ "cwd": 1 })),
+        (methods::GIT_WORKTREES, Value::Null),
     ];
     for (method, params) in cases {
         let frames = server.handle_frame(&rpc("bad", method, params.clone()));
@@ -626,6 +662,23 @@ impl SessionBackend for RejectAll {
         })
     }
 
+    fn interrupt(&mut self, session_id: &str) -> Result<(), BackendError> {
+        Err(BackendError::NotFound {
+            session_id: session_id.to_owned(),
+        })
+    }
+
+    fn approval_respond(
+        &mut self,
+        session_id: &str,
+        _: &str,
+        _: multiplexer_wire::approval::ApprovalDecision,
+    ) -> Result<(), BackendError> {
+        Err(BackendError::NotFound {
+            session_id: session_id.to_owned(),
+        })
+    }
+
     fn drain_events(&mut self) -> Vec<StreamEvent> {
         Vec::new()
     }
@@ -642,4 +695,104 @@ fn start_backend_error_is_not_found() {
     let (_, err) = first_error(&frames);
     assert_eq!(app_kind(&err), "not_found");
     assert!(err.message.contains("new"));
+}
+
+#[test]
+fn interrupt_unknown_is_not_found() {
+    let server = Server::new();
+    let frames = server.handle_frame(&rpc(
+        "i1",
+        methods::SESSION_INTERRUPT,
+        json!({ "session_id": "sess_missing" }),
+    ));
+    let (id, err) = first_error(&frames);
+    assert_eq!(id, Id::String("i1".into()));
+    assert_eq!(err.code, AppErrorKind::NotFound.code());
+    assert_eq!(app_kind(&err), "not_found");
+}
+
+#[test]
+fn interrupt_known_session_is_ok() {
+    let server = Server::new();
+    let session_id = start_session(&server, "s1", "grok-4", "/ws");
+    let frames = server.handle_frame(&rpc(
+        "i1",
+        methods::SESSION_INTERRUPT,
+        json!({ "session_id": session_id }),
+    ));
+    let (id, result) = first_response(&frames);
+    assert_eq!(id, Id::String("i1".into()));
+    assert_eq!(result, json!({}));
+}
+
+#[test]
+fn approval_respond_invalid_decision_is_invalid_params() {
+    let server = Server::new();
+    for decision in ["maybe", "yes", "ALLOW", "allow-once", "true"] {
+        let frames = server.handle_frame(&rpc(
+            "a1",
+            methods::APPROVAL_RESPOND,
+            json!({
+                "session_id": "sess_1",
+                "request_id": "req_1",
+                "decision": decision,
+            }),
+        ));
+        let (id, err) = first_error(&frames);
+        assert_eq!(id, Id::String("a1".into()));
+        assert_eq!(
+            err.code,
+            standard::INVALID_PARAMS,
+            "decision={decision} should be invalid"
+        );
+    }
+}
+
+#[test]
+fn git_worktrees_returns_parsed_list_from_fake_git() {
+    let git = multiplexer_worktree::FakeGit::new();
+    git.push(Ok(
+        "worktree /repo\nHEAD abc123\nbranch refs/heads/main\nlocked\n".into(),
+    ));
+    let server = Server::with_git(multiplexer_worktree::WorktreeService::new(git));
+    let frames = server.handle_frame(&rpc(
+        "g1",
+        methods::GIT_WORKTREES,
+        json!({ "cwd": "/repo" }),
+    ));
+    let (id, result) = first_response(&frames);
+    assert_eq!(id, Id::String("g1".into()));
+    let trees = result["worktrees"].as_array().expect("worktrees array");
+    assert_eq!(trees.len(), 1);
+    assert_eq!(trees[0]["path"], "/repo");
+    assert_eq!(trees[0]["head"], "abc123");
+    assert_eq!(trees[0]["branch"], "refs/heads/main");
+    assert_eq!(trees[0]["detached"], false);
+    assert_eq!(trees[0]["locked"], true);
+    assert_eq!(trees[0]["prunable"], false);
+}
+
+#[test]
+fn git_worktrees_server_still_handles_sessions() {
+    let git = multiplexer_worktree::FakeGit::new();
+    let server = Server::with_git(multiplexer_worktree::WorktreeService::new(git));
+    let session_id = start_session(&server, "s1", "grok-4", "/ws");
+    let frames = server.handle_frame(&rpc("l1", methods::SESSION_LIST, json!({})));
+    let listed = first_response(&frames).1;
+    let sessions = listed["sessions"].as_array().expect("sessions");
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["id"], session_id);
+}
+
+#[test]
+fn git_worktrees_without_catalog_is_unsupported() {
+    let server = Server::new();
+    let frames = server.handle_frame(&rpc(
+        "g1",
+        methods::GIT_WORKTREES,
+        json!({ "cwd": "/repo" }),
+    ));
+    let (_, err) = first_error(&frames);
+    assert_eq!(err.code, AppErrorKind::Unsupported.code());
+    assert_eq!(app_kind(&err), "unsupported");
 }
