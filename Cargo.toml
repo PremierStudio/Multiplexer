@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/multiplexer-wire",
     "crates/multiplexer-resman",
+    "crates/multiplexer-worktree",
 ]
 
 [workspace.package]
