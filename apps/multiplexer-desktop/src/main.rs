@@ -91,6 +91,7 @@ impl ShellView {
                 name: row.name,
                 command: row.command,
                 transport: row.transport,
+                state: multiplexer_shell::McpLife::Stopped,
             })
             .collect();
         workspace.set_files(
@@ -245,6 +246,44 @@ impl ShellView {
                 self.focus = Focus::Composer;
                 self.term_meta("edit the worktree command, then Enter to send or run it in Term");
             }
+            InspectorAction::StartMcp => {
+                if let Some(id) = self.workspace.right_expanded_id.clone() {
+                    if let Some(name) = id.strip_prefix("mcp:") {
+                        if self.workspace.start_mcp(name) {
+                            self.workspace.push_notice(
+                                multiplexer_shell::NoticeKind::Good,
+                                format!("{name} ready (supervised table, no child spawn)"),
+                            );
+                        }
+                    }
+                }
+            }
+            InspectorAction::StopMcp => {
+                if let Some(id) = self.workspace.right_expanded_id.clone() {
+                    if let Some(name) = id.strip_prefix("mcp:") {
+                        if self.workspace.stop_mcp(name) {
+                            self.workspace.push_notice(
+                                multiplexer_shell::NoticeKind::Info,
+                                format!("{name} stopped"),
+                            );
+                        }
+                    }
+                }
+            }
+            InspectorAction::MentionFile => {
+                if let Some(id) = self.workspace.right_expanded_id.clone() {
+                    if let Some(path) = id.strip_prefix("file:") {
+                        let _ = self.workspace.select_file(path);
+                    }
+                }
+                if self.workspace.insert_file_mention() {
+                    self.focus = Focus::Composer;
+                    self.workspace.push_notice(
+                        multiplexer_shell::NoticeKind::Info,
+                        "mentioned file in composer",
+                    );
+                }
+            }
         }
         cx.notify();
     }
@@ -282,6 +321,7 @@ impl ShellView {
                 name: row.name,
                 command: row.command,
                 transport: row.transport,
+                state: multiplexer_shell::McpLife::Stopped,
             })
             .collect();
         self.term_meta(&format!("mcp inventory {}", self.workspace.mcp.len()));
@@ -675,6 +715,10 @@ impl ShellView {
             self.dispatch(ClientAction::ToggleHelp, cx);
             return;
         }
+        if key == "f2" {
+            self.dispatch(ClientAction::ToggleSettings, cx);
+            return;
+        }
         if key == "[" && mods.control {
             self.dispatch(ClientAction::ToggleLeft, cx);
             return;
@@ -871,6 +915,7 @@ impl Render for ShellView {
                 }),
             )
             .child(self.title_bar(cx))
+            .child(self.notice_bar(cx))
             .child(self.reminder_bar(cx))
             .child(self.approval_bar(cx))
             .child(
@@ -893,6 +938,9 @@ impl Render for ShellView {
         }
         if self.workspace.help_open {
             root = root.child(self.help_overlay(cx));
+        }
+        if self.workspace.settings_open {
+            root = root.child(self.settings_overlay(cx));
         }
         root
     }
@@ -1464,6 +1512,95 @@ impl ShellView {
                 this.dispatch(ClientAction::Deny, cx);
             }))
             .into_any()
+    }
+
+    fn notice_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.workspace.notices.is_empty() {
+            return div().id("no-notices").into_any();
+        }
+        let notices = self.workspace.notices.clone();
+        div()
+            .id("notice-stack")
+            .flex()
+            .flex_col()
+            .children(notices.into_iter().map(|n| {
+                let id = n.id;
+                div()
+                    .id(SharedString::from(format!("notice-{id}")))
+                    .px_3()
+                    .py_1()
+                    .bg(Theme::accent_muted())
+                    .border_b_1()
+                    .border_color(Theme::hairline())
+                    .flex()
+                    .gap_2()
+                    .child(div().flex_1().child(n.text))
+                    .child(icon_btn(
+                        ChromeGlyph::Close.mark(),
+                        "dismiss",
+                        cx,
+                        move |this, cx| {
+                            multiplexer_shell::dismiss_notice(&mut this.workspace.notices, id);
+                            cx.notify();
+                        },
+                    ))
+            }))
+            .into_any()
+    }
+
+    fn settings_overlay(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mode = format!("{:?}", self.workspace.settings.mode);
+        let density = format!("{:?}", self.workspace.settings.density);
+        let model = self.workspace.settings.default_model.clone();
+        div()
+            .id("settings")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .justify_center()
+            .pt(px(72.0))
+            .bg(hsla(0.64, 0.20, 0.04, 0.45))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.workspace.settings_open = false;
+                    cx.notify();
+                }),
+            )
+            .child(
+                div()
+                    .w(px(420.0))
+                    .rounded_xl()
+                    .bg(Theme::glass_strong())
+                    .border_1()
+                    .border_color(Theme::hairline_bright())
+                    .shadow(Theme::shadow())
+                    .p_4()
+                    .child("Settings")
+                    .child(div().text_color(Theme::muted()).mt_2().child(format!(
+                        "Theme {mode}   Density {density}   Default model {model}"
+                    )))
+                    .child(
+                        div()
+                            .mt_2()
+                            .flex()
+                            .gap_2()
+                            .child(ghost_btn("Theme", "cycle", cx, |this, cx| {
+                                this.workspace.settings.cycle_mode();
+                                cx.notify();
+                            }))
+                            .child(ghost_btn("Density", "cycle", cx, |this, cx| {
+                                this.workspace.settings.cycle_density();
+                                cx.notify();
+                            }))
+                            .child(ghost_btn("Close", "F2", cx, |this, cx| {
+                                this.workspace.settings_open = false;
+                                cx.notify();
+                            })),
+                    ),
+            )
     }
 
     fn terminal_strip(&mut self, cx: &mut Context<Self>) -> impl IntoElement {

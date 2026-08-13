@@ -14,6 +14,9 @@ pub enum InspectorAction {
     CopySession,
     RunGitStatus,
     NewWorktreeHint,
+    StartMcp,
+    StopMcp,
+    MentionFile,
 }
 
 /// One labeled control for the active inspector tab.
@@ -48,11 +51,15 @@ pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
             "Refresh reserved cores",
             InspectorAction::RefreshCores,
         )],
-        InspectorTab::Mcp => vec![button(
-            "Reload",
-            "Refresh MCP inventory",
-            InspectorAction::RefreshMcp,
-        )],
+        InspectorTab::Mcp => vec![
+            button(
+                "Reload",
+                "Refresh MCP inventory",
+                InspectorAction::RefreshMcp,
+            ),
+            button("Start", "Supervised ready", InspectorAction::StartMcp),
+            button("Stop", "Supervised stopped", InspectorAction::StopMcp),
+        ],
         InspectorTab::Checkpoints => vec![
             button(
                 "New",
@@ -75,8 +82,13 @@ pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
             ),
         ],
         InspectorTab::Terminal | InspectorTab::Skills => Vec::new(),
-        InspectorTab::Files => Vec::new(),
+        InspectorTab::Files => vec![button(
+            "Mention",
+            "@ path into composer",
+            InspectorAction::MentionFile,
+        )],
         InspectorTab::Activity => Vec::new(),
+        InspectorTab::Agents => Vec::new(),
     }
 }
 
@@ -93,6 +105,7 @@ pub fn inspector_body(ws: &Workspace, session_id: Option<&str>) -> String {
         InspectorTab::Skills => ws.skills_detail(),
         InspectorTab::Files => ws.files_detail(),
         InspectorTab::Activity => ws.activity_detail(),
+        InspectorTab::Agents => ws.agents_detail(),
     }
 }
 
@@ -161,5 +174,7 @@ mod tests {
         assert_eq!(inspector_body(&ws, None), ws.files_detail());
         ws.inspector = InspectorTab::Activity;
         assert_eq!(inspector_body(&ws, None), ws.activity_detail());
+        ws.inspector = InspectorTab::Agents;
+        assert_eq!(inspector_body(&ws, None), ws.agents_detail());
     }
 }

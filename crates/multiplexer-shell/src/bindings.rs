@@ -43,13 +43,17 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         | ClientAction::DeleteThread
         | ClientAction::CycleModel
         | ClientAction::SelectLeftSection(_)
-        | ClientAction::ToggleBottom => HostCall::Local,
+        | ClientAction::ToggleBottom
+        | ClientAction::InsertFileMention
+        | ClientAction::ToggleSettings => HostCall::Local,
         ClientAction::Send
         | ClientAction::RefreshCores
         | ClientAction::RunTerminal
         | ClientAction::CycleFile
         | ClientAction::CopyLastMessage
-        | ClientAction::RefreshMcp => HostCall::NeedsHost,
+        | ClientAction::RefreshMcp
+        | ClientAction::StartMcp
+        | ClientAction::StopMcp => HostCall::NeedsHost,
         ClientAction::Interrupt => match ctx.session_id.as_deref() {
             Some(session_id) => HostCall::Rpc {
                 method: "session.interrupt",

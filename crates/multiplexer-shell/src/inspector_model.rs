@@ -16,6 +16,7 @@ pub fn inspector_rows(ws: &Workspace) -> Vec<ListRowSpec> {
         InspectorTab::Skills => skill_rows(ws),
         InspectorTab::Files => file_rows(ws),
         InspectorTab::Activity => activity_rows(ws),
+        InspectorTab::Agents => agent_rows(ws),
     }
 }
 
@@ -92,11 +93,18 @@ fn mcp_rows(ws: &Workspace) -> Vec<ListRowSpec> {
                 .or_else(|| BrandIcon::from_name(&m.command))
                 .map(|b| b.slug().to_string())
                 .unwrap_or_else(|| ChromeGlyph::Plug.mark().to_string());
+            let tone = match m.state {
+                crate::workspace::McpLife::Ready => Tone::Good,
+                crate::workspace::McpLife::Crashed | crate::workspace::McpLife::Failed => {
+                    Tone::Danger
+                }
+                crate::workspace::McpLife::Stopped => Tone::Neutral,
+            };
             mark_expanded(
                 ListRowSpec::new(format!("mcp:{}", m.name), m.name.clone())
                     .with_icon(icon)
                     .with_subtitle(m.command.clone())
-                    .with_badge(BadgeSpec::new(Tone::Neutral, m.transport.clone())),
+                    .with_badge(BadgeSpec::new(tone, m.state.label())),
                 ws,
             )
         })
@@ -253,6 +261,25 @@ fn activity_rows(ws: &Workspace) -> Vec<ListRowSpec> {
     rows
 }
 
+fn agent_rows(ws: &Workspace) -> Vec<ListRowSpec> {
+    if ws.threads.is_empty() {
+        return vec![ListRowSpec::new("agent:empty", "No local threads")
+            .with_icon(ChromeGlyph::Agent.mark())];
+    }
+    ws.threads
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let mut row = ListRowSpec::new(format!("agent:{}", t.id), t.title.clone())
+                .with_icon(ChromeGlyph::Agent.mark())
+                .with_subtitle(t.status.clone())
+                .with_meta(format!("{} msgs", t.messages.len()));
+            row.selected = i == ws.selected;
+            mark_expanded(row, ws)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,6 +301,7 @@ mod tests {
             name: "github".into(),
             command: "npx".into(),
             transport: "stdio".into(),
+            state: crate::workspace::McpLife::Stopped,
         });
         let rows = inspector_rows(&ws);
         assert_eq!(rows[0].id, "mcp:github");

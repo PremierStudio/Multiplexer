@@ -114,6 +114,7 @@ mod tests {
             name: "linear".into(),
             command: "npx".into(),
             transport: "stdio".into(),
+            state: crate::workspace::McpLife::Stopped,
         });
         let tiles = integration_tiles(&ws);
         let hit = filter_tiles(&tiles, "lin");

@@ -39,6 +39,7 @@ pub enum InspectorTab {
     Skills,
     Files,
     Activity,
+    Agents,
 }
 
 impl InspectorTab {
@@ -53,6 +54,7 @@ impl InspectorTab {
             Self::Skills => "Skills",
             Self::Files => "Files",
             Self::Activity => "Activity",
+            Self::Agents => "Agents",
         }
     }
 
@@ -67,10 +69,11 @@ impl InspectorTab {
             Self::Skills => "✦",
             Self::Files => "▤",
             Self::Activity => "●",
+            Self::Agents => "⚡",
         }
     }
 
-    pub fn all() -> [InspectorTab; 9] {
+    pub fn all() -> [InspectorTab; 10] {
         [
             Self::Session,
             Self::Resources,
@@ -81,6 +84,7 @@ impl InspectorTab {
             Self::Skills,
             Self::Files,
             Self::Activity,
+            Self::Agents,
         ]
     }
 }
@@ -135,12 +139,34 @@ pub struct CoreRow {
     pub reserved: bool,
 }
 
+/// Supervised MCP lifecycle projection (not a real child this wave).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum McpLife {
+    #[default]
+    Stopped,
+    Ready,
+    Crashed,
+    Failed,
+}
+
+impl McpLife {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Stopped => "stopped",
+            Self::Ready => "ready",
+            Self::Crashed => "crashed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 /// One configured MCP server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpRow {
     pub name: String,
     pub command: String,
     pub transport: String,
+    pub state: McpLife,
 }
 
 /// One checkpoint row.
@@ -259,7 +285,15 @@ pub struct Workspace {
     pub right_expanded_id: Option<String>,
     pub bottom_open: bool,
     pub bottom_height: f32,
+    pub selected_file: Option<String>,
+    pub notices: Vec<crate::notices::Notice>,
+    pub settings: crate::settings::UiSettings,
+    pub wt_path: String,
+    pub wt_branch: String,
+    pub wt_create_branch: bool,
+    pub settings_open: bool,
     next_id: u64,
+    next_notice: u64,
 }
 
 impl Workspace {
@@ -296,7 +330,15 @@ impl Workspace {
             right_expanded_id: None,
             bottom_open: false,
             bottom_height: BOTTOM_HEIGHT_COLLAPSED,
+            selected_file: None,
+            notices: Vec::new(),
+            settings: crate::settings::UiSettings::default(),
+            wt_path: "../mux-feat".into(),
+            wt_branch: "feat".into(),
+            wt_create_branch: true,
+            settings_open: false,
             next_id: 1,
+            next_notice: 1,
         };
         ws.new_thread();
         ws
@@ -643,7 +685,15 @@ impl Workspace {
         }
         self.mcp
             .iter()
-            .map(|m| format!("{}  [{}]\n  {}", m.name, m.transport, m.command))
+            .map(|m| {
+                format!(
+                    "{}  [{}]  {}\n  {}",
+                    m.name,
+                    m.transport,
+                    m.state.label(),
+                    m.command
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -775,6 +825,71 @@ impl Workspace {
             self.right_expanded_id = None;
             true
         }
+    }
+
+    pub fn start_mcp(&mut self, name: &str) -> bool {
+        match self.mcp.iter_mut().find(|m| m.name == name) {
+            Some(row) => {
+                row.state = McpLife::Ready;
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn stop_mcp(&mut self, name: &str) -> bool {
+        match self.mcp.iter_mut().find(|m| m.name == name) {
+            Some(row) => {
+                row.state = McpLife::Stopped;
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn select_file(&mut self, path: impl Into<String>) -> bool {
+        let path = path.into();
+        if self.files.iter().any(|f| f == &path) {
+            self.selected_file = Some(path);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn insert_file_mention(&mut self) -> bool {
+        let Some(path) = self.selected_file.clone() else {
+            return false;
+        };
+        let mention = format!(" `@{path}` ");
+        self.cursor = crate::composer::insert_at(&mut self.draft, self.cursor, &mention);
+        true
+    }
+
+    pub fn push_notice(&mut self, kind: crate::notices::NoticeKind, text: impl Into<String>) {
+        crate::notices::push_notice(&mut self.notices, &mut self.next_notice, kind, text);
+    }
+
+    pub fn agent_rows(&self) -> Vec<(String, String, String, usize)> {
+        self.threads
+            .iter()
+            .map(|t| {
+                (
+                    t.id.clone(),
+                    t.title.clone(),
+                    t.status.clone(),
+                    t.messages.len(),
+                )
+            })
+            .collect()
+    }
+
+    pub fn agents_detail(&self) -> String {
+        let mut out = String::from("Local threads only. Subagent spawn is not wired.\n\n");
+        for (id, title, status, n) in self.agent_rows() {
+            out.push_str(&format!("{title}  [{status}]  {id}  {n} msgs\n"));
+        }
+        out
     }
 }
 
@@ -912,7 +1027,8 @@ mod tests {
         assert_eq!(InspectorTab::Skills.label(), "Skills");
         assert_eq!(InspectorTab::Files.label(), "Files");
         assert_eq!(InspectorTab::Activity.label(), "Activity");
-        assert_eq!(InspectorTab::all().len(), 9);
+        assert_eq!(InspectorTab::Agents.label(), "Agents");
+        assert_eq!(InspectorTab::all().len(), 10);
         let mut ws = Workspace::new("p", "m");
         ws.connect(vec!["sess-1".into()]);
         assert!(ws.connection.is_connected());
@@ -929,6 +1045,7 @@ mod tests {
             name: "linear".into(),
             command: "npx".into(),
             transport: "stdio".into(),
+            state: McpLife::Stopped,
         });
         assert!(ws.mcp_detail().contains("linear"));
         ws.cores.push(CoreRow {
@@ -994,9 +1111,9 @@ mod tests {
     }
 
     #[test]
-    fn inspector_all_is_nine_tabs() {
+    fn inspector_all_is_ten_tabs() {
         let all = InspectorTab::all();
-        assert_eq!(all.len(), 9);
+        assert_eq!(all.len(), 10);
         assert_eq!(
             all,
             [
@@ -1009,12 +1126,46 @@ mod tests {
                 InspectorTab::Skills,
                 InspectorTab::Files,
                 InspectorTab::Activity,
+                InspectorTab::Agents,
             ]
         );
         assert_eq!(
             all.map(InspectorTab::label),
-            ["Session", "Cores", "MCP", "Points", "Git", "Term", "Skills", "Files", "Activity"]
+            [
+                "Session", "Cores", "MCP", "Points", "Git", "Term", "Skills", "Files", "Activity",
+                "Agents"
+            ]
         );
+    }
+
+    #[test]
+    fn mcp_start_sets_ready_and_stop_releases() {
+        let mut ws = Workspace::new("p", "m");
+        assert!(!ws.start_mcp("linear"));
+        ws.mcp.push(McpRow {
+            name: "linear".into(),
+            command: "npx".into(),
+            transport: "stdio".into(),
+            state: McpLife::Stopped,
+        });
+        assert!(ws.start_mcp("linear"));
+        assert_eq!(ws.mcp[0].state, McpLife::Ready);
+        assert!(ws.mcp_detail().contains("ready"));
+        assert!(ws.stop_mcp("linear"));
+        assert_eq!(ws.mcp[0].state, McpLife::Stopped);
+        assert!(ws.mcp_detail().contains("stopped"));
+    }
+
+    #[test]
+    fn file_tree_select_expand_and_mention() {
+        let mut ws = Workspace::new("p", "m");
+        ws.set_files(vec!["src/lib.rs".into(), "Cargo.toml".into()]);
+        assert!(!ws.select_file("missing.rs"));
+        assert!(ws.select_file("src/lib.rs"));
+        assert_eq!(ws.selected_file.as_deref(), Some("src/lib.rs"));
+        ws.set_draft("see");
+        assert!(ws.insert_file_mention());
+        assert!(ws.draft.contains("`@src/lib.rs`"));
     }
 
     #[test]

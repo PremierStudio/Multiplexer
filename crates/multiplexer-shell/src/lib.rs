@@ -11,7 +11,10 @@ mod composer;
 mod icons;
 mod inspector_model;
 mod integrations;
+mod notices;
 mod palette;
+mod search;
+mod settings;
 mod slash;
 mod status;
 mod terminal_ui;
@@ -29,7 +32,10 @@ pub use composer::{
 pub use icons::{BrandIcon, ChromeGlyph};
 pub use inspector_model::inspector_rows;
 pub use integrations::{filter_tiles, integration_tiles, TileSpec};
+pub use notices::{dismiss_notice, push_notice, Notice, NoticeKind};
 pub use palette::{default_items, filter_items, PaletteItem, PaletteState};
+pub use search::{search_workspace, SearchHit, SearchKind};
+pub use settings::UiSettings;
 pub use slash::{parse_slash, slash_hint, SlashCommand};
 pub use status::{status_from, status_line, ClientStatus};
 pub use terminal_ui::{
@@ -41,8 +47,8 @@ pub use widgets::{
     Tone,
 };
 pub use workspace::{
-    ChatMessage, CheckpointRow, ChromeLayout, CoreRow, InspectorTab, LeftSection, McpRow, Role,
-    Thread, Workspace, BOTTOM_HEIGHT_COLLAPSED, BOTTOM_HEIGHT_EXPANDED, LEFT_WIDTH_MAX,
+    ChatMessage, CheckpointRow, ChromeLayout, CoreRow, InspectorTab, LeftSection, McpLife, McpRow,
+    Role, Thread, Workspace, BOTTOM_HEIGHT_COLLAPSED, BOTTOM_HEIGHT_EXPANDED, LEFT_WIDTH_MAX,
     LEFT_WIDTH_MIN, RAIL_COLLAPSED, RIGHT_WIDTH_MAX, RIGHT_WIDTH_MIN,
 };
 

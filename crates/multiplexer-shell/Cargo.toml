@@ -8,3 +8,4 @@ description = "Pure desktop chrome: window title plus Outlook layout. No GPUI ty
 
 [dependencies]
 multiplexer-layout = { path = "../multiplexer-layout" }
+multiplexer-theme = { path = "../multiplexer-theme" }

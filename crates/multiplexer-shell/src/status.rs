@@ -126,6 +126,7 @@ mod tests {
                 name: format!("m{i}"),
                 command: "npx".into(),
                 transport: "stdio".into(),
+                state: crate::workspace::McpLife::Stopped,
             });
         }
         for i in 0..16 {

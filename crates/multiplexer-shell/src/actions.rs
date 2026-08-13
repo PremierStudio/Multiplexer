@@ -30,6 +30,10 @@ pub enum ClientAction {
     CopyLastMessage,
     SelectLeftSection(crate::workspace::LeftSection),
     ToggleBottom,
+    StartMcp,
+    StopMcp,
+    InsertFileMention,
+    ToggleSettings,
 }
 
 /// Apply a workspace-only layout action.
@@ -70,6 +74,12 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
             ws.toggle_bottom();
             true
         }
+        ClientAction::InsertFileMention => ws.insert_file_mention(),
+        ClientAction::ToggleSettings => {
+            ws.settings_open = !ws.settings_open;
+            true
+        }
+        ClientAction::StartMcp | ClientAction::StopMcp => false,
         ClientAction::DismissReminder => {
             if ws.reminder.is_none() {
                 false
@@ -123,7 +133,7 @@ mod tests {
         Workspace::new("p", "m")
     }
 
-    fn host_noops() -> [ClientAction; 12] {
+    fn host_noops() -> [ClientAction; 14] {
         [
             ClientAction::Send,
             ClientAction::Interrupt,
@@ -137,6 +147,8 @@ mod tests {
             ClientAction::RefreshGit,
             ClientAction::CycleFile,
             ClientAction::CopyLastMessage,
+            ClientAction::StartMcp,
+            ClientAction::StopMcp,
         ]
     }
 
