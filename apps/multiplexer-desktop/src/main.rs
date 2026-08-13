@@ -19,7 +19,7 @@ use article::render_article;
 use assets::{tui_font_candidates, DesktopAssets, MONO_FONT, TUI_FONT, UI_FONT};
 use gpui::{
     div, font, prelude::*, px, size, App, Application, Bounds, ClipboardItem, Context, CursorStyle,
-    KeyDownEvent, MouseButton, MouseMoveEvent, SharedString, Window,
+    FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseMoveEvent, SharedString, Window,
 };
 use inspector::tab_buttons;
 use multiplexer_checkpoint::{HiddenGitStore, ProcessGitExec};
@@ -44,14 +44,15 @@ use multiplexer_shell::{
     menu_for_thread, merge_cores, merge_mcp, merge_models, move_end, move_home, move_left,
     move_right, move_word_left, move_word_right, open_external_program, palette_hits,
     parse_builtin, parse_deep_link, parse_model_keys, parse_slash, parse_unified_diff, plan_send,
-    preferred_terminal, read_crash_journal, read_layout, read_settings, remotes_pill_label,
-    remotes_serve_note, row_detail, search_workspace, slash_arg, status_from, status_line,
-    status_mark, thread_leaf_title, title_overflow, tui_host_px, visible_notices, visible_tail,
-    working_copy, write_crash_journal, write_first_run_done, write_layout, write_settings,
-    BindingTable, BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow,
-    FocusRegion, HunkLineKind, InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind,
-    PaletteState, RemoteRow, Role, SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand,
-    TermLineKind, TuiLife, Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
+    preferred_terminal, pty_takes_keys, read_crash_journal, read_layout, read_settings,
+    remotes_pill_label, remotes_serve_note, row_detail, search_workspace, slash_arg, status_from,
+    status_line, status_mark, thread_leaf_title, title_overflow, tui_host_px, visible_notices,
+    visible_tail, working_copy, write_crash_journal, write_first_run_done, write_layout,
+    write_settings, BindingTable, BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph,
+    ClientAction, CoreRow, FocusRegion, HunkLineKind, InspectorTab, LeftSection, McpRow, MenuKind,
+    NoticeKind, PaletteState, RemoteRow, Role, SearchKind, SendPlan, SettingsSection, SkillItem,
+    SlashCommand, TermLineKind, TuiLife, Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS,
+    TERM_PROMPT,
 };
 use multiplexer_terminal::{
     pty_grid_from_px, pty_input, pty_paste_bytes, EmbeddedSession, ProcessCapture, PtyFrame,
@@ -115,12 +116,13 @@ pub(crate) struct ShellView {
     embedded: HashMap<String, EmbeddedSession>,
     frames: HashMap<String, PtyFrame>,
     tui_font: SharedString,
+    focus_handle: FocusHandle,
     pending_diff: Option<(String, Receiver<CommandResult>)>,
     turn_started: Option<Instant>,
 }
 
 impl ShellView {
-    fn new() -> Self {
+    fn new(focus_handle: FocusHandle) -> Self {
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| ".".into());
@@ -216,6 +218,7 @@ impl ShellView {
             embedded: HashMap::new(),
             frames: HashMap::new(),
             tui_font: tui_family(),
+            focus_handle,
             pending_diff: None,
             turn_started: None,
         };
@@ -1908,7 +1911,26 @@ impl ShellView {
         }
     }
 
-    fn handle_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+    fn overlay_blocks_pty(&self) -> bool {
+        self.palette.open
+            || self.workspace.search_open
+            || self.workspace.settings_open
+            || self.workspace.help_open
+            || self.workspace.first_run_open
+    }
+
+    fn tui_keys_live(&self) -> bool {
+        pty_takes_keys(
+            self.workspace.selected_center_mode() == CenterMode::GrokTui,
+            self.overlay_blocks_pty(),
+        )
+    }
+
+    fn handle_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tui_keys_live() {
+            self.focus = Focus::Tui;
+            cx.focus_self(window);
+        }
         let key = event.keystroke.key.as_str();
         let mods = &event.keystroke.modifiers;
         let chord = Chord::new(key, mods.control, mods.shift, mods.alt);
@@ -1952,8 +1974,8 @@ impl ShellView {
         }
 
         if let Some(action) = bound {
-            if self.focus == Focus::Tui && !is_tui_hatch(action) {
-                // Keystrokes belong to the in-app shell, not the composer.
+            if self.tui_keys_live() && !is_tui_hatch(action) {
+                // Keystrokes belong to the hosted grok PTY, not the composer.
             } else {
                 if matches!(action, ClientAction::Send) && mods.shift {
                     self.insert_text("\n");
@@ -1966,6 +1988,7 @@ impl ShellView {
         }
 
         if self.workspace.pending.is_some()
+            && !self.tui_keys_live()
             && !self.workspace.overlay_flags().any()
             && !mods.control
         {
@@ -1992,7 +2015,7 @@ impl ShellView {
             return;
         }
 
-        if self.focus == Focus::Tui {
+        if self.tui_keys_live() {
             if let Some(session) = self.selected_session() {
                 let ch = event.keystroke.key_char.as_deref();
                 if let Some(bytes) = pty_input(key, ch, mods.control) {
@@ -2176,7 +2199,7 @@ impl ShellView {
             self.workspace.chat_filter.push_str(text);
             return;
         }
-        if self.focus == Focus::Tui {
+        if self.tui_keys_live() || self.focus == Focus::Tui {
             if let Some(session) = self.selected_session() {
                 let _ = session.write(&pty_paste_bytes(text));
             }
@@ -2252,6 +2275,10 @@ impl Render for ShellView {
         let win_h = f32::from(window.viewport_size().height);
         self.win_w = win_w;
         self.win_h = win_h;
+        if self.tui_keys_live() {
+            self.focus = Focus::Tui;
+            cx.focus_self(window);
+        }
         let mut root = div()
             .flex()
             .flex_col()
@@ -2261,8 +2288,9 @@ impl Render for ShellView {
             .font(font(UI_FONT))
             .text_color(Theme::text())
             .text_size(Theme::text_ui())
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                this.handle_key(event, cx);
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                this.handle_key(event, window, cx);
             }))
             .on_mouse_move(cx.listener(
                 move |this, event: &MouseMoveEvent, _, cx| match this.drag {
@@ -4479,6 +4507,12 @@ impl ShellView {
     }
 }
 
+impl Focusable for ShellView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 fn draft_display(draft: &str, cursor: usize, show_caret: bool) -> String {
     if !show_caret {
         return draft.to_owned();
@@ -4806,8 +4840,12 @@ fn main() {
             let _ = cx.text_system().add_fonts(DesktopAssets::font_bytes());
             install_tui_font(cx);
             let bounds = Bounds::centered(None, size(px(1360.0), px(860.0)), cx);
-            cx.open_window(Theme::window_options(bounds), |_, cx| {
-                cx.new(|_| ShellView::new())
+            cx.open_window(Theme::window_options(bounds), |window, cx| {
+                cx.new(|cx| {
+                    let view = ShellView::new(cx.focus_handle());
+                    window.focus(&view.focus_handle);
+                    view
+                })
             })
             .expect("open Multiplexer window");
             cx.activate(true);

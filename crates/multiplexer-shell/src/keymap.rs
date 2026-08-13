@@ -309,6 +309,12 @@ pub fn action_from_id(id: &str) -> Option<ClientAction> {
     })
 }
 
+/// True when the Outlook center is the hosted grok PTY, so letters must
+/// not go to the hidden composer.
+pub fn pty_takes_keys(center_tui: bool, overlay_open: bool) -> bool {
+    center_tui && !overlay_open
+}
+
 /// Hatch chords that stay live while an external Grok TUI is running.
 pub fn is_tui_hatch(action: ClientAction) -> bool {
     matches!(
@@ -476,5 +482,15 @@ mod tests {
         assert!(!is_tui_hatch(ClientAction::NewThread));
         assert!(!is_tui_hatch(ClientAction::Send));
         assert!(!is_tui_hatch(ClientAction::ToggleSearch));
+    }
+
+    #[test]
+    fn pty_takes_keys_only_when_center_is_tui_and_no_overlay() {
+        assert!(pty_takes_keys(true, false));
+        assert!(!pty_takes_keys(false, false));
+        assert!(!pty_takes_keys(true, true));
+        assert!(!pty_takes_keys(false, true));
+        assert_ne!(pty_takes_keys(true, false), pty_takes_keys(true, true));
+        assert_ne!(pty_takes_keys(true, false), pty_takes_keys(false, false));
     }
 }

@@ -65,7 +65,7 @@ pub use fuzzy::{fuzzy_best, fuzzy_score};
 pub use icons::{lucide_for_gpui, BrandIcon, ChromeGlyph};
 pub use inspector_model::{inspector_rows, row_detail};
 pub use integrations::{filter_tiles, integration_tiles, TileSpec};
-pub use keymap::{action_from_id, action_id, is_tui_hatch, BindingTable, Chord};
+pub use keymap::{action_from_id, action_id, is_tui_hatch, pty_takes_keys, BindingTable, Chord};
 pub use menus::{
     items as menu_items, menu_for, menu_for_thread, thread_items, MenuItem, MenuKind, OpenMenu,
 };

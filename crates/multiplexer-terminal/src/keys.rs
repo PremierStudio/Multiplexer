@@ -26,7 +26,13 @@ pub fn pty_input(key: &str, ch: Option<&str>, ctrl: bool) -> Option<Vec<u8>> {
         "pageup" => Some(b"\x1b[5~".to_vec()),
         "pagedown" => Some(b"\x1b[6~".to_vec()),
         _ => {
-            let text = ch.filter(|s| !s.is_empty())?;
+            let text = ch.filter(|s| !s.is_empty()).or_else(|| {
+                if key.chars().count() == 1 {
+                    Some(key)
+                } else {
+                    None
+                }
+            })?;
             if text == "\n" || text == "\r" {
                 return Some(b"\r".to_vec());
             }
@@ -151,14 +157,17 @@ mod tests {
         assert_eq!(pty_key_bytes("x", Some("a")).unwrap(), b"a");
         assert_eq!(pty_key_bytes("x", Some("\n")).unwrap(), b"\r");
         assert_eq!(pty_key_bytes("x", Some("\r")).unwrap(), b"\r");
-        assert!(pty_key_bytes("x", Some("")).is_none());
-        assert!(pty_key_bytes("x", None).is_none());
+        assert_eq!(pty_key_bytes("x", Some("")).unwrap(), b"x");
+        assert_eq!(pty_input("a", None, false).unwrap(), b"a");
+        assert_eq!(pty_input("Z", None, false).unwrap(), b"Z");
+        assert!(pty_input("unknown", None, false).is_none());
+        assert_ne!(pty_input("a", None, false).unwrap(), b"");
         assert_eq!(pty_input("c", None, true).unwrap(), vec![0x03]);
         assert_eq!(pty_input("d", None, true).unwrap(), vec![0x04]);
         assert_eq!(pty_input("z", None, true).unwrap(), vec![0x1a]);
         assert_eq!(pty_input("unknown", Some("c"), true).unwrap(), vec![0x03]);
         assert_ne!(pty_input("c", None, true).unwrap(), b"c");
-        assert!(pty_input("c", None, false).is_none());
+        assert_eq!(pty_input("c", None, false).unwrap(), b"c");
         assert!(pty_input("1", None, true).is_none());
         assert!(pty_input("left", None, true).is_none());
         assert_eq!(pty_paste_bytes("ab\ncd\r\nef\r"), b"ab\rcd\ref\r");
