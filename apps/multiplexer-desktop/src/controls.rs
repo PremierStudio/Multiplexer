@@ -16,11 +16,13 @@ pub enum Surface {
     HelpOverlay,
     ApprovalCard,
     ReminderBar,
+    Search,
+    Settings,
 }
 
 impl Surface {
     /// Every surface the window must paint. Order is the Outlook layout.
-    pub const fn all() -> [Surface; 10] {
+    pub const fn all() -> [Surface; 12] {
         [
             Self::TitleBar,
             Self::LeftRail,
@@ -32,6 +34,8 @@ impl Surface {
             Self::HelpOverlay,
             Self::ApprovalCard,
             Self::ReminderBar,
+            Self::Search,
+            Self::Settings,
         ]
     }
 }
@@ -122,6 +126,11 @@ pub const REQUIRED_IDS: &[&str] = &[
     "tab_activity",
     "tab_agents",
     "stop_tui",
+    "toggle_search",
+    "settings_close",
+    "settings_theme",
+    "settings_density",
+    "toast_dismiss",
 ];
 
 const fn spec(
@@ -272,23 +281,41 @@ const CONTROLS: &[ControlSpec] = &[
     spec("tab_activity", Surface::RightRail, "Activity", None),
     spec("tab_agents", Surface::RightRail, "Agents", None),
     spec("stop_tui", Surface::Center, "Stop Grok TUI", None),
+    spec(
+        "toggle_search",
+        Surface::Search,
+        "Search names",
+        Some("ctrl-p"),
+    ),
+    spec(
+        "settings_close",
+        Surface::Settings,
+        "Close settings",
+        Some("escape"),
+    ),
+    spec("settings_theme", Surface::Settings, "Theme", None),
+    spec("settings_density", Surface::Settings, "Density", None),
+    spec("toast_dismiss", Surface::TitleBar, "Dismiss toast", None),
 ];
 
-/// Global chords. Escape is `close_overlay` (palette, help, reminder).
+/// Global chords. Escape is `close_overlay` (palette, help, search, settings).
 const SHORTCUTS: &[(&str, &str)] = &[
     ("enter", "send"),
     ("escape", "close_overlay"),
     ("ctrl-k", "command_palette"),
+    ("ctrl-shift-p", "command_palette"),
     ("ctrl-n", "new_thread"),
     ("ctrl-[", "chats_toggle"),
     ("ctrl-]", "inspector_toggle"),
     ("ctrl-.", "stop"),
-    ("ctrl-p", "command_palette"),
+    ("ctrl-p", "toggle_search"),
+    ("ctrl-shift-f", "toggle_search"),
     ("ctrl-v", "paste"),
     ("shift-enter", "newline"),
     ("f1", "help"),
     ("ctrl-`", "toggle_bottom"),
     ("f2", "settings"),
+    ("ctrl-,", "settings"),
     ("ctrl-shift-g", "center_tui"),
     ("ctrl-shift-l", "layout_reset"),
     ("ctrl-shift-h", "focus_layout"),
@@ -360,9 +387,9 @@ mod tests {
             assert_eq!(spec.action, *required);
             assert!(spec.is_live(), "{required} is dead");
         }
-        assert_eq!(REQUIRED_IDS.len(), 67);
+        assert_eq!(REQUIRED_IDS.len(), 72);
         assert_eq!(have.len(), REQUIRED_IDS.len());
-        assert_eq!(all_controls().len(), 67);
+        assert_eq!(all_controls().len(), 72);
 
         let required_once = [
             "chats_toggle",
@@ -493,6 +520,11 @@ mod tests {
             ("tab_activity", Surface::RightRail),
             ("tab_agents", Surface::RightRail),
             ("stop_tui", Surface::Center),
+            ("toggle_search", Surface::Search),
+            ("settings_close", Surface::Settings),
+            ("settings_theme", Surface::Settings),
+            ("settings_density", Surface::Settings),
+            ("toast_dismiss", Surface::TitleBar),
         ];
         for (id, surface) in pin {
             let spec = control_by_id(id).unwrap_or_else(|| panic!("missing {id}"));
@@ -505,9 +537,11 @@ mod tests {
     #[test]
     fn shortcuts_cover_palette() {
         assert_eq!(shortcut_action("ctrl-k"), Some("command_palette"));
-        assert_eq!(shortcut_action("ctrl-p"), Some("command_palette"));
+        assert_eq!(shortcut_action("ctrl-shift-p"), Some("command_palette"));
+        assert_eq!(shortcut_action("ctrl-p"), Some("toggle_search"));
         assert_ne!(shortcut_action("ctrl-k"), Some("palette_run"));
         assert_ne!(shortcut_action("ctrl-p"), Some("help"));
+        assert_ne!(shortcut_action("ctrl-p"), shortcut_action("ctrl-shift-p"));
 
         let palette = control_by_id("command_palette").expect("command_palette");
         assert_eq!(palette.surface, Surface::TitleBar);
@@ -583,13 +617,13 @@ mod tests {
 
     #[test]
     fn surfaces_nonempty() {
-        assert_eq!(Surface::all().len(), 10);
+        assert_eq!(Surface::all().len(), 12);
         for surface in Surface::all() {
             let on = controls_on(surface);
             assert!(!on.is_empty(), "{surface:?} must have at least one control");
             assert!(on.iter().all(|c| c.surface == surface));
         }
-        assert_eq!(controls_on(Surface::TitleBar).len(), 13);
+        assert_eq!(controls_on(Surface::TitleBar).len(), 14);
         assert_eq!(controls_on(Surface::LeftRail).len(), 8);
         assert_eq!(controls_on(Surface::Center).len(), 9);
         assert_eq!(controls_on(Surface::Composer).len(), 3);
@@ -599,6 +633,8 @@ mod tests {
         assert_eq!(controls_on(Surface::HelpOverlay).len(), 1);
         assert_eq!(controls_on(Surface::ApprovalCard).len(), 2);
         assert_eq!(controls_on(Surface::ReminderBar).len(), 1);
+        assert_eq!(controls_on(Surface::Search).len(), 1);
+        assert_eq!(controls_on(Surface::Settings).len(), 3);
     }
 
     #[test]
@@ -614,9 +650,11 @@ mod tests {
             Surface::HelpOverlay => 7,
             Surface::ApprovalCard => 8,
             Surface::ReminderBar => 9,
+            Surface::Search => 10,
+            Surface::Settings => 11,
         };
         let tags: Vec<u8> = Surface::all().into_iter().map(tag).collect();
-        assert_eq!(tags, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(tags, vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
         assert_ne!(Surface::TitleBar, Surface::LeftRail);
         assert_ne!(Surface::Palette, Surface::HelpOverlay);
         assert_ne!(Surface::ApprovalCard, Surface::ReminderBar);
@@ -624,7 +662,7 @@ mod tests {
 
     #[test]
     fn shortcut_map_has_required_bindings() {
-        assert_eq!(shortcut_map().len(), 20);
+        assert_eq!(shortcut_map().len(), 23);
         assert_eq!(shortcut_action("ctrl-shift-g"), Some("center_tui"));
         assert_eq!(shortcut_action("enter"), Some("send"));
         assert_eq!(shortcut_action("escape"), Some("close_overlay"));
@@ -633,7 +671,10 @@ mod tests {
         assert_eq!(shortcut_action("ctrl-["), Some("chats_toggle"));
         assert_eq!(shortcut_action("ctrl-]"), Some("inspector_toggle"));
         assert_eq!(shortcut_action("ctrl-."), Some("stop"));
-        assert_eq!(shortcut_action("ctrl-p"), Some("command_palette"));
+        assert_eq!(shortcut_action("ctrl-p"), Some("toggle_search"));
+        assert_eq!(shortcut_action("ctrl-shift-p"), Some("command_palette"));
+        assert_eq!(shortcut_action("ctrl-shift-f"), Some("toggle_search"));
+        assert_eq!(shortcut_action("ctrl-,"), Some("settings"));
         assert_eq!(shortcut_action("ctrl-v"), Some("paste"));
         assert_eq!(shortcut_action("shift-enter"), Some("newline"));
         assert_eq!(shortcut_action("f1"), Some("help"));
@@ -665,7 +706,7 @@ mod tests {
                 "{key} maps to {action}, which is not a control action"
             );
         }
-        assert_eq!(keys.len(), 20);
+        assert_eq!(keys.len(), 23);
     }
 
     #[test]

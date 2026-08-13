@@ -11,10 +11,13 @@ mod center;
 mod chrome_geom;
 mod composer;
 mod diff_view;
+mod fuzzy;
 mod icons;
 mod inspector_model;
 mod integrations;
+mod keymap;
 mod notices;
+mod overlay;
 mod palette;
 mod remote;
 mod search;
@@ -37,14 +40,25 @@ pub use composer::{
     move_right, move_word_left, move_word_right,
 };
 pub use diff_view::{mark_last_turn, parse_porcelain, sort_diffs, DiffRow, DiffSort};
+pub use fuzzy::{fuzzy_best, fuzzy_score};
 pub use icons::{BrandIcon, ChromeGlyph};
 pub use inspector_model::{inspector_rows, row_detail};
 pub use integrations::{filter_tiles, integration_tiles, TileSpec};
-pub use notices::{dismiss_notice, push_notice, Notice, NoticeKind};
-pub use palette::{default_items, filter_items, palette_hits, PaletteItem, PaletteState};
+pub use keymap::{action_from_id, action_id, is_tui_hatch, BindingTable, Chord};
+pub use notices::{
+    auto_dismisses, dismiss_newest, dismiss_notice, push_notice, visible_notices, Notice,
+    NoticeKind, NOTICE_AUTO_MS, NOTICE_CAP, NOTICE_PAINT,
+};
+pub use overlay::{OverlayFlags, OverlayKind};
+pub use palette::{
+    default_items, filter_items, hit_action, palette_hits, pane_items, PaletteItem, PaletteState,
+};
 pub use remote::{detect_remotes, RemoteRow};
 pub use search::{search_workspace, SearchHit, SearchKind};
-pub use settings::UiSettings;
+pub use settings::{
+    default_settings_path, read_settings, settings_from_json, settings_to_json, write_settings,
+    SettingsSection, UiSettings,
+};
 pub use slash::{parse_slash, plan_send, slash_hint, SendPlan, SlashCommand};
 pub use status::{status_from, status_line, ClientStatus};
 pub use terminal_ui::{

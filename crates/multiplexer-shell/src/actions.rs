@@ -52,6 +52,14 @@ pub enum ClientAction {
     OpenGitTab,
     OpenSessionTab,
     OpenSettingsRemotes,
+    ToggleSearch,
+    CloseSearch,
+    CloseOverlay,
+    ResetOutlook,
+    CopySession,
+    ReloadDiffs,
+    RunGitStatus,
+    DismissToast,
 }
 
 /// Apply a workspace-only layout action.
@@ -141,12 +149,11 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
             changed || was_closed
         }
         ClientAction::OpenSettingsRemotes => {
-            if ws.settings_open {
-                false
-            } else {
-                ws.settings_open = true;
-                true
-            }
+            let changed = !ws.settings_open
+                || ws.settings_section != crate::settings::SettingsSection::Remotes;
+            ws.settings_section = crate::settings::SettingsSection::Remotes;
+            ws.open_overlay(crate::overlay::OverlayKind::Settings);
+            changed
         }
         ClientAction::ToggleBottom => {
             ws.toggle_bottom();
@@ -167,9 +174,27 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
         }
         ClientAction::InsertFileMention => ws.insert_file_mention(),
         ClientAction::ToggleSettings => {
-            ws.settings_open = !ws.settings_open;
+            ws.toggle_overlay(crate::overlay::OverlayKind::Settings);
             true
         }
+        ClientAction::ToggleSearch => {
+            ws.toggle_overlay(crate::overlay::OverlayKind::Search);
+            true
+        }
+        ClientAction::CloseSearch => {
+            if !ws.search_open {
+                false
+            } else {
+                ws.close_overlay(crate::overlay::OverlayKind::Search);
+                true
+            }
+        }
+        ClientAction::CloseOverlay => ws.pop_overlay().is_some(),
+        ClientAction::ResetOutlook => {
+            ws.reset_outlook_chrome();
+            true
+        }
+        ClientAction::DismissToast => ws.dismiss_newest_notice(),
         ClientAction::StartMcp => {
             let name = ws
                 .right_expanded_id
@@ -201,19 +226,19 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
             ws.model != before
         }
         ClientAction::TogglePalette => {
-            ws.toggle_palette();
+            ws.toggle_overlay(crate::overlay::OverlayKind::Palette);
             true
         }
         ClientAction::ClosePalette => {
             if !ws.palette_open {
                 false
             } else {
-                ws.close_palette();
+                ws.close_overlay(crate::overlay::OverlayKind::Palette);
                 true
             }
         }
         ClientAction::ToggleHelp => {
-            ws.toggle_help();
+            ws.toggle_overlay(crate::overlay::OverlayKind::Help);
             true
         }
         ClientAction::Send
@@ -230,7 +255,10 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
         | ClientAction::CopyLastMessage
         | ClientAction::LaunchGrokTui
         | ClientAction::StopGrokTui
-        | ClientAction::OpenBrowser => false,
+        | ClientAction::OpenBrowser
+        | ClientAction::CopySession
+        | ClientAction::ReloadDiffs
+        | ClientAction::RunGitStatus => false,
     }
 }
 
@@ -242,7 +270,7 @@ mod tests {
         Workspace::new("p", "m")
     }
 
-    fn host_noops() -> [ClientAction; 15] {
+    fn host_noops() -> [ClientAction; 18] {
         [
             ClientAction::Send,
             ClientAction::Interrupt,
@@ -259,6 +287,9 @@ mod tests {
             ClientAction::LaunchGrokTui,
             ClientAction::StopGrokTui,
             ClientAction::OpenBrowser,
+            ClientAction::CopySession,
+            ClientAction::ReloadDiffs,
+            ClientAction::RunGitStatus,
         ]
     }
 
@@ -596,6 +627,16 @@ mod tests {
         assert!(ws.settings_open);
         assert!(apply_layout_action(&mut ws, ClientAction::ToggleSettings));
         assert!(!ws.settings_open);
+        assert!(apply_layout_action(&mut ws, ClientAction::TogglePalette));
+        assert!(ws.palette_open);
+        assert!(apply_layout_action(&mut ws, ClientAction::ToggleSettings));
+        assert!(ws.settings_open && !ws.palette_open);
+        assert!(apply_layout_action(&mut ws, ClientAction::ToggleSearch));
+        assert!(ws.search_open && !ws.settings_open);
+        assert!(apply_layout_action(&mut ws, ClientAction::CloseOverlay));
+        assert!(!ws.search_open);
+        assert!(apply_layout_action(&mut ws, ClientAction::ResetOutlook));
+        assert!(ws.chrome.left_open() && ws.chrome.right_open());
         ws.set_files(vec!["src/lib.rs".into()]);
         assert!(ws.select_file("src/lib.rs"));
         assert!(apply_layout_action(

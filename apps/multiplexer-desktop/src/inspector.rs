@@ -1,37 +1,16 @@
 //! Right-rail inspector: labeled tab buttons plus body text.
 
-use multiplexer_shell::{InspectorTab, Workspace};
-
-/// Host-handled action for one inspector button.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InspectorAction {
-    RefreshCores,
-    RefreshMcp,
-    RefreshGit,
-    CreateCheckpoint,
-    RevertCheckpoint,
-    CycleModel,
-    CopySession,
-    RunGitStatus,
-    NewWorktreeHint,
-    StartMcp,
-    StopMcp,
-    MentionFile,
-    ReloadDiffs,
-    SortDiffLastTurn,
-    SortDiffFileName,
-    OpenBrowser,
-}
+use multiplexer_shell::{ClientAction, InspectorTab, Workspace};
 
 /// One labeled control for the active inspector tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InspectorButton {
     pub label: &'static str,
     pub hint: &'static str,
-    pub action: InspectorAction,
+    pub action: ClientAction,
 }
 
-fn button(label: &'static str, hint: &'static str, action: InspectorAction) -> InspectorButton {
+fn button(label: &'static str, hint: &'static str, action: ClientAction) -> InspectorButton {
     InspectorButton {
         label,
         hint,
@@ -43,57 +22,41 @@ fn button(label: &'static str, hint: &'static str, action: InspectorAction) -> I
 pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
     match tab {
         InspectorTab::Session => vec![
-            button(
-                "Model",
-                "Cycle the session model",
-                InspectorAction::CycleModel,
-            ),
-            button("Copy", "Copy the session id", InspectorAction::CopySession),
+            button("Model", "Cycle the session model", ClientAction::CycleModel),
+            button("Copy", "Copy the session id", ClientAction::CopySession),
         ],
         InspectorTab::Resources => vec![button(
             "Reload",
             "Refresh reserved cores",
-            InspectorAction::RefreshCores,
+            ClientAction::RefreshCores,
         )],
         InspectorTab::Mcp => vec![
-            button(
-                "Reload",
-                "Refresh MCP inventory",
-                InspectorAction::RefreshMcp,
-            ),
-            button(
-                "Start",
-                "Set ready flag (no child)",
-                InspectorAction::StartMcp,
-            ),
-            button("Stop", "Clear ready flag", InspectorAction::StopMcp),
+            button("Reload", "Refresh MCP inventory", ClientAction::RefreshMcp),
+            button("Start", "Set ready flag (no child)", ClientAction::StartMcp),
+            button("Stop", "Clear ready flag", ClientAction::StopMcp),
         ],
         InspectorTab::Checkpoints => vec![
-            button(
-                "New",
-                "Create a checkpoint",
-                InspectorAction::CreateCheckpoint,
-            ),
+            button("New", "Create a checkpoint", ClientAction::CreateCheckpoint),
             button(
                 "Set pointer",
                 "Move pointer only, files unchanged",
-                InspectorAction::RevertCheckpoint,
+                ClientAction::RestoreCheckpoint,
             ),
         ],
         InspectorTab::Git => vec![
-            button("Reload", "Refresh worktrees", InspectorAction::RefreshGit),
-            button("Status", "Run git status", InspectorAction::RunGitStatus),
+            button("Reload", "Refresh worktrees", ClientAction::RefreshGit),
+            button("Status", "Run git status", ClientAction::RunGitStatus),
             button(
                 "New WT",
                 "Hint a worktree path",
-                InspectorAction::NewWorktreeHint,
+                ClientAction::CreateWorktree,
             ),
         ],
         InspectorTab::Terminal | InspectorTab::Skills => Vec::new(),
         InspectorTab::Files => vec![button(
             "Mention",
             "@ path into composer",
-            InspectorAction::MentionFile,
+            ClientAction::InsertFileMention,
         )],
         InspectorTab::Activity => Vec::new(),
         InspectorTab::Agents => Vec::new(),
@@ -101,24 +64,16 @@ pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
             button(
                 "Reload",
                 "git status --porcelain",
-                InspectorAction::ReloadDiffs,
+                ClientAction::ReloadDiffs,
             ),
             button(
                 "Last turn",
                 "sort last turn first",
-                InspectorAction::SortDiffLastTurn,
+                ClientAction::SortDiffLastTurn,
             ),
-            button(
-                "Name",
-                "sort by file name",
-                InspectorAction::SortDiffFileName,
-            ),
+            button("Name", "sort by file name", ClientAction::SortDiffFileName),
         ],
-        InspectorTab::Browser => vec![button(
-            "Open",
-            "system browser",
-            InspectorAction::OpenBrowser,
-        )],
+        InspectorTab::Browser => vec![button("Open", "system browser", ClientAction::OpenBrowser)],
     }
 }
 
@@ -157,10 +112,10 @@ mod tests {
         let buttons = tab_buttons(InspectorTab::Session);
         assert!(buttons
             .iter()
-            .any(|b| b.label == "Model" && b.action == InspectorAction::CycleModel));
+            .any(|b| b.label == "Model" && b.action == ClientAction::CycleModel));
         assert!(buttons
             .iter()
-            .any(|b| b.label == "Copy" && b.action == InspectorAction::CopySession));
+            .any(|b| b.label == "Copy" && b.action == ClientAction::CopySession));
     }
 
     #[test]
@@ -168,10 +123,10 @@ mod tests {
         let buttons = tab_buttons(InspectorTab::Checkpoints);
         assert!(buttons
             .iter()
-            .any(|b| b.label == "New" && b.action == InspectorAction::CreateCheckpoint));
+            .any(|b| b.label == "New" && b.action == ClientAction::CreateCheckpoint));
         assert!(buttons
             .iter()
-            .any(|b| b.label == "Set pointer" && b.action == InspectorAction::RevertCheckpoint));
+            .any(|b| b.label == "Set pointer" && b.action == ClientAction::RestoreCheckpoint));
     }
 
     #[test]

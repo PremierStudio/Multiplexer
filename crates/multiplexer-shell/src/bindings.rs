@@ -62,7 +62,12 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         | ClientAction::OpenProjectFiles
         | ClientAction::OpenGitTab
         | ClientAction::OpenSessionTab
-        | ClientAction::OpenSettingsRemotes => HostCall::Local,
+        | ClientAction::OpenSettingsRemotes
+        | ClientAction::ToggleSearch
+        | ClientAction::CloseSearch
+        | ClientAction::CloseOverlay
+        | ClientAction::ResetOutlook
+        | ClientAction::DismissToast => HostCall::Local,
         ClientAction::CreateWorktree => worktree_create_call(ctx),
         ClientAction::Send
         | ClientAction::RefreshCores
@@ -74,7 +79,10 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         | ClientAction::StopMcp
         | ClientAction::LaunchGrokTui
         | ClientAction::StopGrokTui
-        | ClientAction::OpenBrowser => HostCall::NeedsHost,
+        | ClientAction::OpenBrowser
+        | ClientAction::CopySession
+        | ClientAction::ReloadDiffs
+        | ClientAction::RunGitStatus => HostCall::NeedsHost,
         ClientAction::Interrupt => match ctx.session_id.as_deref() {
             Some(session_id) => HostCall::Rpc {
                 method: "session.interrupt",
@@ -360,6 +368,9 @@ mod tests {
             ClientAction::HideLeft,
             ClientAction::FocusLayout,
             ClientAction::OpenGitTab,
+            ClientAction::ToggleSearch,
+            ClientAction::CloseOverlay,
+            ClientAction::ResetOutlook,
         ] {
             assert_eq!(host_call(action, &ctx), HostCall::Local, "{action:?}");
             assert_ne!(host_call(action, &ctx), HostCall::NeedsHost, "{action:?}");

@@ -357,6 +357,11 @@ pub struct Workspace {
     pub wt_branch: String,
     pub wt_create_branch: bool,
     pub settings_open: bool,
+    pub search_open: bool,
+    pub search_query: String,
+    pub search_selected: usize,
+    pub settings_section: crate::settings::SettingsSection,
+    pub recent_commands: Vec<String>,
     pub file_expanded: Vec<String>,
     pub usage_turns: u64,
     pub usage_tokens: u64,
@@ -415,6 +420,11 @@ impl Workspace {
             wt_branch: "feat".into(),
             wt_create_branch: true,
             settings_open: false,
+            search_open: false,
+            search_query: String::new(),
+            search_selected: 0,
+            settings_section: crate::settings::SettingsSection::Appearance,
+            recent_commands: Vec::new(),
             file_expanded: Vec::new(),
             usage_turns: 0,
             usage_tokens: 0,
@@ -694,16 +704,77 @@ impl Workspace {
         }
     }
 
+    pub fn overlay_flags(&self) -> crate::overlay::OverlayFlags {
+        crate::overlay::OverlayFlags {
+            palette: self.palette_open,
+            help: self.help_open,
+            settings: self.settings_open,
+            search: self.search_open,
+        }
+    }
+
+    fn apply_overlay_flags(&mut self, flags: crate::overlay::OverlayFlags) {
+        self.palette_open = flags.palette;
+        self.help_open = flags.help;
+        self.settings_open = flags.settings;
+        let search_was = self.search_open;
+        self.search_open = flags.search;
+        if search_was && !flags.search {
+            self.search_query.clear();
+            self.search_selected = 0;
+        }
+    }
+
+    pub fn open_overlay(&mut self, kind: crate::overlay::OverlayKind) {
+        let mut flags = self.overlay_flags();
+        flags.open(kind);
+        self.apply_overlay_flags(flags);
+    }
+
+    pub fn close_overlay(&mut self, kind: crate::overlay::OverlayKind) {
+        let mut flags = self.overlay_flags();
+        flags.close(kind);
+        self.apply_overlay_flags(flags);
+    }
+
+    pub fn toggle_overlay(&mut self, kind: crate::overlay::OverlayKind) {
+        let mut flags = self.overlay_flags();
+        flags.toggle(kind);
+        self.apply_overlay_flags(flags);
+    }
+
+    pub fn pop_overlay(&mut self) -> Option<crate::overlay::OverlayKind> {
+        let mut flags = self.overlay_flags();
+        let popped = flags.pop();
+        self.apply_overlay_flags(flags);
+        popped
+    }
+
     pub fn toggle_palette(&mut self) {
-        self.palette_open = !self.palette_open;
+        self.toggle_overlay(crate::overlay::OverlayKind::Palette);
     }
 
     pub fn close_palette(&mut self) {
-        self.palette_open = false;
+        self.close_overlay(crate::overlay::OverlayKind::Palette);
     }
 
     pub fn toggle_help(&mut self) {
-        self.help_open = !self.help_open;
+        self.toggle_overlay(crate::overlay::OverlayKind::Help);
+    }
+
+    pub fn remember_command(&mut self, id: &str) {
+        if id.is_empty() {
+            return;
+        }
+        self.recent_commands.retain(|x| x != id);
+        self.recent_commands.insert(0, id.to_owned());
+        if self.recent_commands.len() > 8 {
+            self.recent_commands.truncate(8);
+        }
+    }
+
+    pub fn dismiss_newest_notice(&mut self) -> bool {
+        crate::notices::dismiss_newest(&mut self.notices)
     }
 
     /// Last line preview for the thread list.
@@ -1079,6 +1150,16 @@ impl Workspace {
     }
 
     pub fn insert_file_mention(&mut self) -> bool {
+        if self.selected_file.is_none() {
+            if let Some(path) = self
+                .right_expanded_id
+                .as_deref()
+                .and_then(|id| id.strip_prefix("file:"))
+                .map(str::to_owned)
+            {
+                let _ = self.select_file(&path);
+            }
+        }
         let Some(path) = self.selected_file.clone() else {
             return false;
         };
@@ -1923,5 +2004,42 @@ mod tests {
         assert_eq!(ws.agent_rows().len(), before);
         assert_eq!(ws.agent_rows()[0].0, ws.threads[0].id);
         assert!(ws.select_thread_id(&ws.threads[0].id.clone()));
+    }
+
+    #[test]
+    fn overlay_policy_and_recent_commands() {
+        let mut ws = Workspace::new("p", "m");
+        ws.open_overlay(crate::overlay::OverlayKind::Palette);
+        ws.open_overlay(crate::overlay::OverlayKind::Help);
+        assert!(ws.palette_open && ws.help_open);
+        ws.open_overlay(crate::overlay::OverlayKind::Settings);
+        assert!(ws.settings_open && !ws.palette_open && !ws.help_open);
+        assert_eq!(
+            ws.pop_overlay(),
+            Some(crate::overlay::OverlayKind::Settings)
+        );
+        assert!(!ws.settings_open);
+        ws.search_query = "foo".into();
+        ws.search_selected = 2;
+        ws.open_overlay(crate::overlay::OverlayKind::Search);
+        ws.close_overlay(crate::overlay::OverlayKind::Search);
+        assert!(ws.search_query.is_empty());
+        assert_eq!(ws.search_selected, 0);
+
+        ws.remember_command("new-chat");
+        ws.remember_command("mcp");
+        ws.remember_command("new-chat");
+        assert_eq!(ws.recent_commands, vec!["new-chat", "mcp"]);
+        ws.remember_command("");
+        assert_eq!(ws.recent_commands.len(), 2);
+        for i in 0..10 {
+            ws.remember_command(&format!("c{i}"));
+        }
+        assert_eq!(ws.recent_commands.len(), 8);
+        assert_eq!(ws.recent_commands[0], "c9");
+        assert!(!ws.dismiss_newest_notice());
+        ws.push_notice(crate::notices::NoticeKind::Info, "hi");
+        assert!(ws.dismiss_newest_notice());
+        assert!(ws.notices.is_empty());
     }
 }

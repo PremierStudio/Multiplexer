@@ -135,7 +135,7 @@ pub fn default_items() -> Vec<PaletteItem> {
         PaletteItem {
             id: "toggle-palette",
             label: "Toggle palette",
-            hint: "Ctrl+K",
+            hint: "Ctrl+K · Ctrl+Shift+P",
             action: ClientAction::TogglePalette,
         },
         PaletteItem {
@@ -213,8 +213,20 @@ pub fn default_items() -> Vec<PaletteItem> {
         PaletteItem {
             id: "settings",
             label: "Settings",
-            hint: "F2",
+            hint: "Ctrl+,",
             action: ClientAction::ToggleSettings,
+        },
+        PaletteItem {
+            id: "search",
+            label: "Search names",
+            hint: "Ctrl+P",
+            action: ClientAction::ToggleSearch,
+        },
+        PaletteItem {
+            id: "focus-layout",
+            label: "Focus layout",
+            hint: "Ctrl+Shift+H",
+            action: ClientAction::FocusLayout,
         },
         PaletteItem {
             id: "create-worktree",
@@ -280,21 +292,154 @@ pub fn filter_items(query: &str) -> Vec<PaletteItem> {
         .collect()
 }
 
-/// Palette rows as search hits. Empty query is the command catalog; a
-/// nonempty query searches threads, files, and commands together.
+/// Destination panes. Empty palette query includes these; never the file tree.
+pub fn pane_items() -> Vec<PaletteItem> {
+    use crate::workspace::{InspectorTab, LeftSection};
+    vec![
+        PaletteItem {
+            id: "pane-chats",
+            label: "Chats",
+            hint: "Ctrl+1",
+            action: ClientAction::SelectLeftSection(LeftSection::Threads),
+        },
+        PaletteItem {
+            id: "pane-agents",
+            label: "Agents",
+            hint: "Ctrl+2",
+            action: ClientAction::SelectLeftSection(LeftSection::Agents),
+        },
+        PaletteItem {
+            id: "pane-files",
+            label: "Files",
+            hint: "Ctrl+3",
+            action: ClientAction::SelectLeftSection(LeftSection::Files),
+        },
+        PaletteItem {
+            id: "pane-activity",
+            label: "Activity",
+            hint: "Ctrl+4",
+            action: ClientAction::SelectLeftSection(LeftSection::Activity),
+        },
+        PaletteItem {
+            id: "pane-session",
+            label: "Session",
+            hint: "",
+            action: ClientAction::SelectTab(InspectorTab::Session),
+        },
+        PaletteItem {
+            id: "pane-git",
+            label: "Git",
+            hint: "",
+            action: ClientAction::SelectTab(InspectorTab::Git),
+        },
+        PaletteItem {
+            id: "pane-diffs",
+            label: "Diffs",
+            hint: "",
+            action: ClientAction::SelectTab(InspectorTab::Diff),
+        },
+        PaletteItem {
+            id: "pane-browser",
+            label: "Browser",
+            hint: "",
+            action: ClientAction::SelectTab(InspectorTab::Browser),
+        },
+        PaletteItem {
+            id: "pane-term",
+            label: "Terminal drawer",
+            hint: "Ctrl+`",
+            action: ClientAction::ToggleBottom,
+        },
+    ]
+}
+
+fn hit_from_item(kind: crate::SearchKind, item: &PaletteItem) -> crate::SearchHit {
+    crate::SearchHit {
+        kind,
+        id: item.id.to_owned(),
+        title: item.label.to_owned(),
+        hint: item.hint.to_owned(),
+    }
+}
+
+/// Palette rows. Empty query is recent + panes + commands (no files).
+/// A nonempty query is a fuzzy subsequence across namespaces.
 pub fn palette_hits(ws: &crate::Workspace, query: &str) -> Vec<crate::SearchHit> {
-    if query.is_empty() {
-        default_items()
+    if query.trim().is_empty() {
+        let mut hits = Vec::new();
+        for id in ws.recent_commands.iter().take(8) {
+            if let Some(item) = default_items().into_iter().find(|i| i.id == id.as_str()) {
+                hits.push(hit_from_item(crate::SearchKind::Recent, &item));
+            }
+        }
+        for item in pane_items() {
+            hits.push(hit_from_item(crate::SearchKind::Pane, &item));
+        }
+        for item in default_items() {
+            hits.push(hit_from_item(crate::SearchKind::Command, &item));
+        }
+        return hits;
+    }
+    let mut scored: Vec<(u32, crate::SearchHit)> = Vec::new();
+    for t in &ws.threads {
+        if let Some(score) = crate::fuzzy::fuzzy_best(query, &[&t.title, &t.id]) {
+            scored.push((
+                score,
+                crate::SearchHit {
+                    kind: crate::SearchKind::Thread,
+                    id: t.id.clone(),
+                    title: t.title.clone(),
+                    hint: "thread".into(),
+                },
+            ));
+        }
+    }
+    for f in &ws.files {
+        if let Some(score) = crate::fuzzy::fuzzy_score(query, f) {
+            scored.push((
+                score,
+                crate::SearchHit {
+                    kind: crate::SearchKind::File,
+                    id: f.clone(),
+                    title: f.clone(),
+                    hint: "file".into(),
+                },
+            ));
+        }
+    }
+    for item in pane_items() {
+        if let Some(score) = crate::fuzzy::fuzzy_best(query, &[item.id, item.label, item.hint]) {
+            scored.push((score, hit_from_item(crate::SearchKind::Pane, &item)));
+        }
+    }
+    for item in default_items() {
+        if let Some(score) = crate::fuzzy::fuzzy_best(query, &[item.id, item.label, item.hint]) {
+            scored.push((score, hit_from_item(crate::SearchKind::Command, &item)));
+        }
+    }
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.title.cmp(&b.1.title)));
+    scored.into_iter().map(|(_, h)| h).collect()
+}
+
+/// Resolve a palette hit to the action that should run.
+pub fn hit_action(ws: &crate::Workspace, hit: &crate::SearchHit) -> Option<ClientAction> {
+    match hit.kind {
+        crate::SearchKind::Thread => ws
+            .threads
+            .iter()
+            .position(|t| t.id == hit.id)
+            .map(ClientAction::SelectThread),
+        crate::SearchKind::File => Some(ClientAction::SelectTab(
+            crate::workspace::InspectorTab::Files,
+        )),
+        crate::SearchKind::Command | crate::SearchKind::Recent => default_items()
             .into_iter()
-            .map(|item| crate::SearchHit {
-                kind: crate::SearchKind::Command,
-                id: item.id.to_owned(),
-                title: item.label.to_owned(),
-                hint: item.hint.to_owned(),
-            })
-            .collect()
-    } else {
-        crate::search_workspace(ws, query)
+            .find(|i| i.id == hit.id)
+            .map(|i| i.action),
+        crate::SearchKind::Pane => pane_items()
+            .into_iter()
+            .find(|i| i.id == hit.id)
+            .map(|i| i.action),
     }
 }
 
@@ -574,5 +719,32 @@ mod tests {
 
         let empty = palette_hits(&ws, "");
         assert!(empty.iter().any(|h| h.kind == crate::SearchKind::Command));
+        assert!(empty.iter().any(|h| h.kind == crate::SearchKind::Pane));
+        assert!(empty.iter().all(|h| h.kind != crate::SearchKind::File));
+    }
+
+    #[test]
+    fn empty_includes_recent_and_fuzzy_ranks() {
+        let mut ws = crate::Workspace::new("p", "m");
+        ws.remember_command("mcp");
+        ws.remember_command("new-chat");
+        let empty = palette_hits(&ws, "");
+        assert_eq!(empty[0].kind, crate::SearchKind::Recent);
+        assert_eq!(empty[0].id, "new-chat");
+        assert!(empty
+            .iter()
+            .any(|h| h.kind == crate::SearchKind::Recent && h.id == "mcp"));
+
+        let hits = palette_hits(&ws, "cp");
+        assert!(hits.iter().any(|h| h.id == "checkpoint"));
+        assert!(
+            hit_action(&ws, hits.iter().find(|h| h.id == "checkpoint").unwrap())
+                .is_some_and(|a| a == ClientAction::CreateCheckpoint)
+        );
+        let pane = empty.iter().find(|h| h.id == "pane-git").unwrap();
+        assert_eq!(
+            hit_action(&ws, pane),
+            Some(ClientAction::SelectTab(InspectorTab::Git))
+        );
     }
 }

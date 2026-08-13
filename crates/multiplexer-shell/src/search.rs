@@ -9,6 +9,8 @@ pub enum SearchKind {
     Thread,
     File,
     Command,
+    Pane,
+    Recent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

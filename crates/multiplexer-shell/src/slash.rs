@@ -15,6 +15,13 @@ pub enum SlashCommand {
     Skills,
     Palette,
     Model,
+    Search,
+    Settings,
+    Files,
+    Agents,
+    Diff,
+    Browser,
+    Tui,
     Unknown(String),
 }
 
@@ -39,6 +46,13 @@ pub fn parse_slash(draft: &str) -> Option<SlashCommand> {
         "skills" => SlashCommand::Skills,
         "palette" => SlashCommand::Palette,
         "model" => SlashCommand::Model,
+        "search" => SlashCommand::Search,
+        "settings" => SlashCommand::Settings,
+        "files" => SlashCommand::Files,
+        "agents" => SlashCommand::Agents,
+        "diff" | "diffs" => SlashCommand::Diff,
+        "browser" => SlashCommand::Browser,
+        "tui" => SlashCommand::Tui,
         _ => SlashCommand::Unknown(token.to_string()),
     })
 }
@@ -82,6 +96,13 @@ pub fn slash_hint(cmd: &SlashCommand) -> &'static str {
         SlashCommand::Skills => "open skills",
         SlashCommand::Palette => "open the command palette",
         SlashCommand::Model => "switch model",
+        SlashCommand::Search => "open name search",
+        SlashCommand::Settings => "open settings",
+        SlashCommand::Files => "open project files",
+        SlashCommand::Agents => "open local agents",
+        SlashCommand::Diff => "open diffs",
+        SlashCommand::Browser => "open browser tab",
+        SlashCommand::Tui => "host the Grok TUI",
         SlashCommand::Unknown(_) => "unknown command",
     }
 }
@@ -117,6 +138,14 @@ mod tests {
             ("/skills", SlashCommand::Skills),
             ("/palette", SlashCommand::Palette),
             ("/model", SlashCommand::Model),
+            ("/search", SlashCommand::Search),
+            ("/settings", SlashCommand::Settings),
+            ("/files", SlashCommand::Files),
+            ("/agents", SlashCommand::Agents),
+            ("/diff", SlashCommand::Diff),
+            ("/diffs", SlashCommand::Diff),
+            ("/browser", SlashCommand::Browser),
+            ("/tui", SlashCommand::Tui),
             ("/NEW extra", SlashCommand::New),
         ];
         for (draft, expected) in cases {
@@ -167,6 +196,13 @@ mod tests {
             SlashCommand::Skills,
             SlashCommand::Palette,
             SlashCommand::Model,
+            SlashCommand::Search,
+            SlashCommand::Settings,
+            SlashCommand::Files,
+            SlashCommand::Agents,
+            SlashCommand::Diff,
+            SlashCommand::Browser,
+            SlashCommand::Tui,
         ];
         for cmd in &cmds {
             let hint = slash_hint(cmd);
