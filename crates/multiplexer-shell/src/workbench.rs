@@ -208,6 +208,120 @@ pub fn preferred_terminal<'a>(
     found.first()
 }
 
+/// Built-in last-frame host inside Multiplexer (not Windows Terminal).
+pub const TUI_HOST_BUILTIN: &str = "builtin";
+
+/// GUI terminal apps that can run grok so the pager looks native.
+pub fn tui_host_candidates() -> Vec<(String, String, String)> {
+    let mut out = vec![(
+        TUI_HOST_BUILTIN.into(),
+        "Built-in (Multiplexer)".into(),
+        String::new(),
+    )];
+    let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
+    let wt_store = format!("{local}\\Microsoft\\WindowsApps\\wt.exe");
+    let hosts = [
+        (
+            "wt",
+            "Windows Terminal",
+            path_program("wt").unwrap_or(wt_store),
+        ),
+        (
+            "wezterm",
+            "WezTerm",
+            path_program("wezterm")
+                .unwrap_or_else(|| path_program("wezterm-gui").unwrap_or_default()),
+        ),
+        (
+            "alacritty",
+            "Alacritty",
+            path_program("alacritty").unwrap_or_default(),
+        ),
+    ];
+    for (id, label, path) in hosts {
+        if !path.trim().is_empty() {
+            out.push((id.into(), label.into(), path));
+        }
+    }
+    out
+}
+
+pub fn detect_tui_hosts(candidates: &[(String, String, String)]) -> Vec<SystemTerminal> {
+    candidates
+        .iter()
+        .filter(|(id, _, path)| *id == TUI_HOST_BUILTIN || std::path::Path::new(path).is_file())
+        .map(|(id, label, path)| SystemTerminal {
+            id: id.clone(),
+            label: label.clone(),
+            path: path.clone(),
+        })
+        .collect()
+}
+
+/// Empty preferred: Windows Terminal if installed, else built-in.
+pub fn resolve_tui_host<'a>(
+    hosts: &'a [SystemTerminal],
+    preferred: &str,
+) -> Option<&'a SystemTerminal> {
+    let want = preferred.trim();
+    if !want.is_empty() {
+        if let Some(hit) = hosts.iter().find(|h| h.id == want) {
+            return Some(hit);
+        }
+    }
+    hosts
+        .iter()
+        .find(|h| h.id == "wt")
+        .or_else(|| hosts.iter().find(|h| h.id == TUI_HOST_BUILTIN))
+        .or_else(|| hosts.first())
+}
+
+pub fn is_builtin_tui_host(id: &str) -> bool {
+    id.trim().is_empty() || id == TUI_HOST_BUILTIN
+}
+
+pub fn is_system_tui_surface(surface: &str) -> bool {
+    let s = surface.trim();
+    !s.is_empty() && !s.starts_with("in-app")
+}
+
+/// Warm the pager on boot only when it stays inside Multiplexer.
+pub fn should_warm_tui(host_id: &str) -> bool {
+    is_builtin_tui_host(host_id)
+}
+
+/// `wt.exe` exits after handing the tab to Windows Terminal.
+pub fn hosted_child_exit_is_handoff(host_id: &str) -> bool {
+    host_id.trim() == "wt"
+}
+
+/// Window / tab title so Focus can find this chat's grok.
+pub fn tui_window_title(thread_title: &str) -> String {
+    let title = thread_title.trim();
+    if title.is_empty() {
+        "Multiplexer · Grok".into()
+    } else {
+        format!("Multiplexer · {title}")
+    }
+}
+
+pub fn preferred_tui_host_id(hosts: &[SystemTerminal], preferred: &str) -> String {
+    resolve_tui_host(hosts, preferred)
+        .map(|h| h.id.clone())
+        .unwrap_or_else(|| TUI_HOST_BUILTIN.to_owned())
+}
+
+/// Kill only the grok that was started with this `--session-id`.
+pub fn stop_grok_session_command(session_id: &str) -> Option<String> {
+    let sid = session_id.trim();
+    if sid.is_empty() || sid.len() > 64 || !sid.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return None;
+    }
+    Some(format!(
+        "Get-CimInstance Win32_Process | Where-Object {{ $_.Name -match 'grok' -and $_.CommandLine -like '*--session-id {sid}*' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
+    ))
+}
+
 /// Stable activity rows for left and right Activity. Cap 20.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivityItem {
@@ -416,6 +530,61 @@ mod tests {
         assert!(!linux_terminal_candidates()
             .iter()
             .any(|c| c.0 == "gnome-terminal"));
+        let hosts = detect_tui_hosts(&tui_host_candidates());
+        assert_eq!(tui_host_candidates()[0].0, TUI_HOST_BUILTIN);
+        assert!(!tui_host_candidates().is_empty());
+        assert!(hosts.iter().any(|h| h.id == TUI_HOST_BUILTIN));
+        assert!(is_builtin_tui_host("builtin"));
+        assert!(is_builtin_tui_host(""));
+        assert!(!is_builtin_tui_host("wt"));
+        assert!(!is_system_tui_surface("in-app Grok"));
+        assert!(is_system_tui_surface("Windows Terminal"));
+        assert!(!is_system_tui_surface(""));
+        let only_builtin = vec![SystemTerminal {
+            id: TUI_HOST_BUILTIN.into(),
+            label: "Built-in".into(),
+            path: String::new(),
+        }];
+        assert_eq!(
+            resolve_tui_host(&only_builtin, "").map(|h| h.id.as_str()),
+            Some(TUI_HOST_BUILTIN)
+        );
+        let with_wt = vec![
+            only_builtin[0].clone(),
+            SystemTerminal {
+                id: "wt".into(),
+                label: "Windows Terminal".into(),
+                path: r"C:\wt.exe".into(),
+            },
+        ];
+        assert_eq!(
+            resolve_tui_host(&with_wt, "").map(|h| h.id.as_str()),
+            Some("wt")
+        );
+        assert_eq!(
+            resolve_tui_host(&with_wt, "builtin").map(|h| h.id.as_str()),
+            Some(TUI_HOST_BUILTIN)
+        );
+        assert_ne!(
+            resolve_tui_host(&with_wt, "wt").map(|h| h.id.as_str()),
+            Some(TUI_HOST_BUILTIN)
+        );
+        let with_wez = vec![
+            SystemTerminal {
+                id: "wezterm".into(),
+                label: "WezTerm".into(),
+                path: r"C:\wezterm.exe".into(),
+            },
+            only_builtin[0].clone(),
+        ];
+        assert_eq!(
+            resolve_tui_host(&with_wez, "").map(|h| h.id.as_str()),
+            Some(TUI_HOST_BUILTIN)
+        );
+        assert_ne!(
+            resolve_tui_host(&with_wez, "").map(|h| h.id.as_str()),
+            Some("wezterm")
+        );
         assert!(default_terminal_candidates()
             .iter()
             .any(|c| c.0 == "cmd" || c.0 == "zsh" || c.0 == "bash"));
@@ -429,6 +598,28 @@ mod tests {
         );
         assert_ne!(cargo, Some(String::new()));
         assert_ne!(cargo, Some("xyzzy".into()));
+        assert!(should_warm_tui(TUI_HOST_BUILTIN));
+        assert!(should_warm_tui(""));
+        assert!(!should_warm_tui("wt"));
+        assert!(hosted_child_exit_is_handoff("wt"));
+        assert!(!hosted_child_exit_is_handoff("wezterm"));
+        assert!(!hosted_child_exit_is_handoff("builtin"));
+        assert_eq!(tui_window_title(""), "Multiplexer · Grok");
+        assert_eq!(tui_window_title("  New chat  "), "Multiplexer · New chat");
+        assert_ne!(tui_window_title("A"), tui_window_title("B"));
+        assert_eq!(preferred_tui_host_id(&with_wt, ""), "wt");
+        assert_eq!(preferred_tui_host_id(&only_builtin, "wt"), TUI_HOST_BUILTIN);
+        let sid = "15e1198a-711f-41cf-a080-7cc7bdfd8a5b";
+        let kill = stop_grok_session_command(sid).expect("uuid");
+        assert!(kill.contains(sid));
+        assert!(kill.contains("--session-id"));
+        assert!(stop_grok_session_command("").is_none());
+        assert!(stop_grok_session_command("bad; rm").is_none());
+        assert!(stop_grok_session_command("abc'$(calc)'").is_none());
+        assert!(stop_grok_session_command(&"a".repeat(64)).is_some());
+        assert!(stop_grok_session_command(&"a".repeat(65)).is_none());
+        assert_ne!(stop_grok_session_command(sid).as_deref(), Some(""));
+        assert_ne!(stop_grok_session_command(sid).as_deref(), Some("xyzzy"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

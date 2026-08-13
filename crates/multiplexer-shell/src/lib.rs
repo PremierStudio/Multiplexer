@@ -63,7 +63,8 @@ pub use diff_view::{
     sort_diffs, status_mark, DiffHunk, DiffRow, DiffSort, HunkLine, HunkLineKind,
 };
 pub use embed::{
-    embed_from_selection, embed_grok, embed_surface, live_pty_takes_gui_send, EmbedTarget,
+    embed_from_selection, embed_grok, embed_surface, gui_send_route, live_pty_takes_gui_send,
+    EmbedTarget, GuiSendRoute,
 };
 pub use fuzzy::{fuzzy_best, fuzzy_score};
 pub use grok_history::{
@@ -117,9 +118,12 @@ pub use widgets::{
 };
 pub use workbench::{
     activity_items, default_browser_candidates, default_terminal_candidates, detect_browsers,
-    detect_terminals, filter_files, join_project_path, linux_terminal_candidates,
+    detect_terminals, detect_tui_hosts, filter_files, hosted_child_exit_is_handoff,
+    is_builtin_tui_host, is_system_tui_surface, join_project_path, linux_terminal_candidates,
     macos_terminal_candidates, merge_mcp, preferred_browser, preferred_terminal,
-    windows_terminal_candidates, ActivityItem, SystemTerminal,
+    preferred_tui_host_id, resolve_tui_host, should_warm_tui, stop_grok_session_command,
+    tui_host_candidates, tui_window_title, windows_terminal_candidates, ActivityItem,
+    SystemTerminal, TUI_HOST_BUILTIN,
 };
 pub use workspace::{
     ChatMessage, CheckpointRow, ChromeLayout, CoreRow, FocusRegion, InspectorTab, LeftSection,

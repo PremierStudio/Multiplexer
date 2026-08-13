@@ -24,8 +24,8 @@ use gpui::{
 use inspector::tab_buttons;
 use multiplexer_checkpoint::{HiddenGitStore, ProcessGitExec};
 use multiplexer_client::{
-    list_project_tree, spawn_command, spawn_grok_turn, windows_cmd, CommandResult, ListOptions,
-    TurnRequest, TurnResult,
+    list_project_tree, spawn_command, spawn_grok_tui, spawn_grok_turn, windows_cmd, CommandResult,
+    ListOptions, TuiLaunch, TurnRequest, TurnResult,
 };
 use multiplexer_mcp::{
     list_dir_entry_names, load_user_mcp_inventory, merge_skill_rows, parse_hooks_tomlish,
@@ -38,22 +38,25 @@ use multiplexer_shell::{
     bottom_height_from_mouse, cap_text, changes_headline, default_browser_candidates,
     default_crash_path, default_first_run_path, default_grok_home, default_layout_path,
     default_settings_path, default_terminal_candidates, delete_forward, detect_browsers,
-    detect_remotes, detect_terminals, embed_grok, embed_surface, find_history_file,
-    first_run_completed, first_run_keychain_notice, format_line, git_commit_line, git_preview_line,
-    grok_history_path, help_text, hit_action, hunks_for_path, insert_at, inspector_rows,
-    is_tui_hatch, join_project_path, journal_from_workspace, leaf_name, live_pty_takes_gui_send,
-    menu_for, menu_for_thread, merge_cores, merge_mcp, merge_models, move_end, move_home,
-    move_left, move_right, move_word_left, move_word_right, open_external_program, palette_hits,
-    parse_builtin, parse_chat_history, parse_deep_link, parse_model_keys, parse_slash,
-    parse_unified_diff, plan_send, preferred_terminal, pty_takes_keys, read_crash_journal,
-    read_layout, read_settings, remotes_pill_label, remotes_serve_note, row_detail,
-    search_workspace, slash_arg, status_from, status_line, status_mark, thread_leaf_title,
-    title_overflow, tui_host_px, visible_notices, visible_tail, working_copy, write_crash_journal,
-    write_first_run_done, write_layout, write_settings, BindingTable, BuiltinCmd, CenterMode,
-    CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow, FocusRegion, HunkLineKind,
-    InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind, PaletteState, RemoteRow, Role,
-    SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand, TermLineKind, TuiInputBuf,
-    TuiLife, Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
+    detect_remotes, detect_terminals, detect_tui_hosts, embed_grok, embed_surface,
+    find_history_file, first_run_completed, first_run_keychain_notice, format_line,
+    git_commit_line, git_preview_line, grok_history_path, gui_send_route, help_text, hit_action,
+    hosted_child_exit_is_handoff, hunks_for_path, insert_at, inspector_rows, is_builtin_tui_host,
+    is_system_tui_surface, is_tui_hatch, join_project_path, journal_from_workspace, leaf_name,
+    live_pty_takes_gui_send, menu_for, menu_for_thread, merge_cores, merge_mcp, merge_models,
+    move_end, move_home, move_left, move_right, move_word_left, move_word_right,
+    open_external_program, palette_hits, parse_builtin, parse_chat_history, parse_deep_link,
+    parse_model_keys, parse_slash, parse_unified_diff, plan_send, preferred_terminal,
+    pty_takes_keys, read_crash_journal, read_layout, read_settings, remotes_pill_label,
+    remotes_serve_note, resolve_tui_host, row_detail, search_workspace, should_warm_tui, slash_arg,
+    status_from, status_line, status_mark, stop_grok_session_command, thread_leaf_title,
+    title_overflow, tui_host_candidates, tui_host_px, tui_window_title, visible_notices,
+    visible_tail, working_copy, write_crash_journal, write_first_run_done, write_layout,
+    write_settings, BindingTable, BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph,
+    ClientAction, CoreRow, FocusRegion, GuiSendRoute, HunkLineKind, InspectorTab, LeftSection,
+    McpRow, MenuKind, NoticeKind, PaletteState, RemoteRow, Role, SearchKind, SendPlan,
+    SettingsSection, SkillItem, SlashCommand, SystemTerminal, TermLineKind, TuiInputBuf, TuiLife,
+    Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT, TUI_HOST_BUILTIN,
 };
 use multiplexer_terminal::{
     caret_split, pty_grid_from_px, pty_input, pty_paste_bytes, pty_submit_line, EmbeddedSession,
@@ -91,6 +94,13 @@ enum Focus {
     Tui,
 }
 
+struct HostedSession {
+    child: Option<std::process::Child>,
+    host_id: String,
+    session_id: String,
+    title: String,
+}
+
 pub(crate) struct ShellView {
     workspace: Workspace,
     server: Server<
@@ -115,6 +125,8 @@ pub(crate) struct ShellView {
     notice_born: Vec<(u64, Instant)>,
     capture: Option<ProcessCapture>,
     embedded: HashMap<String, EmbeddedSession>,
+    hosted: HashMap<String, HostedSession>,
+    tui_hosts: Vec<SystemTerminal>,
     frames: HashMap<String, PtyFrame>,
     tui_lines: HashMap<String, TuiInputBuf>,
     tui_font: SharedString,
@@ -195,6 +207,7 @@ impl ShellView {
         {
             workspace.selected_terminal = term.id.clone();
         }
+        let tui_hosts = detect_tui_hosts(&tui_host_candidates());
         let server = Server::with_local();
         server.install_checkpoints(store);
         let bindings = workspace.settings.binding_table();
@@ -218,6 +231,8 @@ impl ShellView {
             notice_born: Vec::new(),
             capture: None,
             embedded: HashMap::new(),
+            hosted: HashMap::new(),
+            tui_hosts,
             frames: HashMap::new(),
             tui_lines: HashMap::new(),
             tui_font: tui_family(),
@@ -435,17 +450,58 @@ impl ShellView {
     }
 
     fn warm_thread_grok(&mut self) {
-        self.spawn_thread_grok(false);
+        self.spawn_thread_grok(false, false);
     }
 
     fn ensure_thread_grok(&mut self) {
-        self.spawn_thread_grok(true);
+        self.spawn_thread_grok(true, true);
     }
 
-    fn spawn_thread_grok(&mut self, flip_center: bool) {
+    fn ensure_hosted_for_send(&mut self) {
+        self.spawn_thread_grok(false, true);
+    }
+
+    fn resolved_tui_host(&self) -> Option<&SystemTerminal> {
+        resolve_tui_host(&self.tui_hosts, &self.workspace.settings.preferred_terminal)
+    }
+
+    fn hosted_live(&self) -> bool {
+        let Some(id) = self.selected_thread_id() else {
+            return false;
+        };
+        if self.hosted.contains_key(&id) {
+            return self
+                .workspace
+                .selected_thread()
+                .is_some_and(|t| t.tui.life == TuiLife::Running);
+        }
+        self.workspace.selected_thread().is_some_and(|t| {
+            t.tui.life == TuiLife::Running && is_system_tui_surface(&t.tui.surface)
+        })
+    }
+
+    fn spawn_thread_grok(&mut self, flip_center: bool, allow_system: bool) {
         let Some(id) = self.selected_thread_id() else {
             return;
         };
+        let host = self
+            .resolved_tui_host()
+            .cloned()
+            .unwrap_or_else(|| SystemTerminal {
+                id: TUI_HOST_BUILTIN.into(),
+                label: "Built-in (Multiplexer)".into(),
+                path: String::new(),
+            });
+        if !is_builtin_tui_host(&host.id) {
+            if !allow_system && !should_warm_tui(&host.id) {
+                return;
+            }
+            self.start_hosted_for(&id, &host, flip_center);
+            return;
+        }
+        if self.hosted.contains_key(&id) {
+            self.kill_hosted(&id);
+        }
         if self.embedded.contains_key(&id) {
             if let Some(t) = self.workspace.selected_thread() {
                 if t.tui.life == TuiLife::Running {
@@ -470,6 +526,172 @@ impl ShellView {
         let target = embed_grok(&self.workspace.project, &sid);
         let args: Vec<&str> = target.args.iter().map(String::as_str).collect();
         self.start_embedded_for(&id, &target.program, &args, &target.label, flip_center);
+    }
+
+    fn start_hosted_for(&mut self, thread_id: &str, host: &SystemTerminal, flip_center: bool) {
+        if flip_center {
+            let _ = self.workspace.set_center_mode(CenterMode::GrokTui);
+        }
+        if self.hosted.contains_key(thread_id) {
+            if let Some(t) = self.workspace.selected_thread() {
+                if t.tui.life == TuiLife::Running {
+                    if flip_center {
+                        self.focus_hosted_window();
+                        self.focus = Focus::Composer;
+                    }
+                    return;
+                }
+            }
+            self.kill_hosted(thread_id);
+        }
+        if let Some(mut dead) = self.embedded.remove(thread_id) {
+            let _ = dead.kill();
+        }
+        self.frames.remove(thread_id);
+        self.tui_lines.remove(thread_id);
+        let sid = self
+            .workspace
+            .selected_thread()
+            .map(|t| t.grok_session.clone())
+            .unwrap_or_default();
+        let title = tui_window_title(
+            &self
+                .workspace
+                .selected_thread()
+                .map(|t| t.title.clone())
+                .unwrap_or_else(|| "Grok".into()),
+        );
+        let target = embed_grok(&self.workspace.project, &sid);
+        let grok = which_grok().unwrap_or_else(|| "grok".into());
+        let launch = TuiLaunch::hosted(
+            &host.id,
+            &host.path,
+            &self.workspace.project,
+            grok,
+            &target.args,
+            &title,
+        );
+        match spawn_grok_tui(&launch) {
+            Ok(child) => {
+                let pid = child.id();
+                self.hosted.insert(
+                    thread_id.to_owned(),
+                    HostedSession {
+                        child: Some(child),
+                        host_id: host.id.clone(),
+                        session_id: sid,
+                        title,
+                    },
+                );
+                if let Some(t) = self.workspace.selected_thread_mut() {
+                    t.tui.mark_running(Some(pid), "grok", host.label.clone());
+                    t.tui.note = format!(
+                        "Grok is in {}. Type there. This chat follows that session.",
+                        host.label
+                    );
+                    t.tui.scrollback.clear();
+                }
+                self.workspace
+                    .grok_tui
+                    .mark_running(Some(pid), "grok", host.label.clone());
+                self.workspace.grok_tui.note = format!(
+                    "Grok is in {}. Type there. This chat follows that session.",
+                    host.label
+                );
+                self.workspace.grok_tui.scrollback.clear();
+                if flip_center {
+                    self.focus = Focus::Composer;
+                }
+                self.workspace.push_notice(
+                    NoticeKind::Good,
+                    format!("Opened {} for this chat", host.label),
+                );
+                if self.workspace.settings.preferred_terminal.trim().is_empty() {
+                    self.workspace
+                        .settings
+                        .set_preferred_terminal(host.id.clone());
+                    self.persist_settings();
+                }
+            }
+            Err(err) => {
+                self.workspace.push_notice(
+                    NoticeKind::Warn,
+                    format!("{} failed ({err}). Using built-in.", host.label),
+                );
+                let sid = self
+                    .workspace
+                    .selected_thread()
+                    .map(|t| t.grok_session.clone())
+                    .unwrap_or_default();
+                let target = embed_grok(&self.workspace.project, &sid);
+                let args: Vec<&str> = target.args.iter().map(String::as_str).collect();
+                self.start_embedded_for(
+                    thread_id,
+                    &target.program,
+                    &args,
+                    &target.label,
+                    flip_center,
+                );
+            }
+        }
+    }
+
+    fn focus_hosted_window(&mut self) {
+        let Some(id) = self.selected_thread_id() else {
+            return;
+        };
+        let Some(h) = self.hosted.get(&id) else {
+            return;
+        };
+        let host_path = self
+            .tui_hosts
+            .iter()
+            .find(|x| x.id == h.host_id)
+            .map(|x| x.path.clone())
+            .unwrap_or_else(|| "wt.exe".into());
+        let launch = TuiLaunch::focus(&h.host_id, host_path, &h.title);
+        let _ = spawn_grok_tui(&launch);
+    }
+
+    fn kill_hosted(&mut self, thread_id: &str) {
+        let Some(mut h) = self.hosted.remove(thread_id) else {
+            return;
+        };
+        if let Some(mut child) = h.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if let Some(cmd) = stop_grok_session_command(&h.session_id) {
+            let _ = std::process::Command::new("powershell.exe")
+                .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &cmd])
+                .spawn();
+        }
+    }
+
+    fn apply_preferred_terminal(&mut self, id: String) {
+        self.workspace.settings.set_preferred_terminal(id);
+        self.persist_settings();
+        if let Some(tid) = self.selected_thread_id() {
+            if let Some(mut session) = self.embedded.remove(&tid) {
+                let _ = session.kill();
+            }
+            self.kill_hosted(&tid);
+            self.frames.remove(&tid);
+            self.tui_lines.remove(&tid);
+        }
+        self.workspace.grok_tui.mark_exited();
+        if let Some(t) = self.workspace.selected_thread_mut() {
+            t.tui.mark_exited();
+        }
+        let label = self
+            .resolved_tui_host()
+            .map(|h| h.label.clone())
+            .unwrap_or_else(|| "Built-in".into());
+        self.workspace
+            .push_notice(NoticeKind::Good, format!("Default terminal is {label}"));
+        if self.workspace.selected_center_mode() == CenterMode::GrokTui {
+            self.ensure_thread_grok();
+        }
     }
 
     fn start_embedded_for(
@@ -545,6 +767,7 @@ impl ShellView {
             if let Some(mut session) = self.embedded.remove(&id) {
                 let _ = session.kill();
             }
+            self.kill_hosted(&id);
             self.frames.remove(&id);
             self.tui_lines.remove(&id);
         }
@@ -552,9 +775,12 @@ impl ShellView {
             let _ = child.kill();
             let _ = child.wait();
         }
+        if let Some(t) = self.workspace.selected_thread_mut() {
+            t.tui.mark_exited();
+        }
         self.workspace.grok_tui.mark_exited();
         self.workspace
-            .push_notice(NoticeKind::Info, "In-app session stopped");
+            .push_notice(NoticeKind::Info, "Grok session stopped");
     }
 
     fn reload_diffs(&mut self) {
@@ -753,6 +979,7 @@ impl ShellView {
                 if let Some(mut session) = self.embedded.remove(&id) {
                     let _ = session.kill();
                 }
+                self.kill_hosted(&id);
                 self.frames.remove(&id);
                 self.tui_lines.remove(&id);
             }
@@ -807,6 +1034,7 @@ impl ShellView {
                             action,
                             ClientAction::ToggleSettings | ClientAction::OpenSettingsRemotes
                         ) {
+                            self.tui_hosts = detect_tui_hosts(&tui_host_candidates());
                             self.apply_theme();
                         }
                     }
@@ -1498,8 +1726,14 @@ impl ShellView {
             .selected_thread_id()
             .and_then(|id| self.embedded.get_mut(&id).map(|s| s.is_alive()))
             .unwrap_or(false);
+        let hosted_live = self.hosted_live();
+        let prefer_system = self
+            .resolved_tui_host()
+            .is_some_and(|h| !is_builtin_tui_host(&h.id));
         let busy = (self.pending_turn.is_some() || self.workspace.busy)
-            && !live_pty_takes_gui_send(pty_live);
+            && !live_pty_takes_gui_send(pty_live)
+            && !hosted_live
+            && !prefer_system;
         match plan_send(&self.workspace.draft, busy) {
             SendPlan::IgnoreEmpty => {
                 self.workspace.push_notice(NoticeKind::Warn, "draft empty");
@@ -1521,6 +1755,33 @@ impl ShellView {
             SendPlan::StartTurn(_) => {}
         }
         if busy {
+            return;
+        }
+        let mut hosted_live = self.hosted_live();
+        if !pty_live && !hosted_live && prefer_system {
+            self.ensure_hosted_for_send();
+            hosted_live = self.hosted_live();
+        }
+        let route = gui_send_route(pty_live, hosted_live);
+        if route == GuiSendRoute::HostedTerminal {
+            let text = self.workspace.draft.clone();
+            if text.trim().is_empty() {
+                return;
+            }
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+            self.workspace.draft.clear();
+            self.workspace.cursor = 0;
+            self.focus_hosted_window();
+            let label = self
+                .workspace
+                .selected_thread()
+                .map(|t| t.tui.surface.clone())
+                .unwrap_or_else(|| "the terminal".into());
+            self.workspace.push_notice(
+                NoticeKind::Info,
+                format!("Copied. Paste in {label} (Ctrl+V). Chat follows that session."),
+            );
+            self.persist_crash();
             return;
         }
         let Some(text) = self.workspace.send_draft() else {
@@ -1800,6 +2061,23 @@ impl ShellView {
                 self.workspace.grok_tui.mark_exited();
             }
         }
+        if let Some(id) = self.selected_thread_id() {
+            let mut handoff_or_dead = None;
+            if let Some(h) = self.hosted.get_mut(&id) {
+                if let Some(child) = h.child.as_mut() {
+                    if let Ok(Some(_)) = child.try_wait() {
+                        h.child = None;
+                        handoff_or_dead = Some(hosted_child_exit_is_handoff(&h.host_id));
+                    }
+                }
+            }
+            if handoff_or_dead == Some(false) {
+                if let Some(t) = self.workspace.selected_thread_mut() {
+                    t.tui.mark_exited();
+                }
+                self.workspace.grok_tui.mark_exited();
+            }
+        }
         self.sync_embedded_size();
         self.pull_grok_history();
         if let Some((path, rx)) = self.pending_diff.take() {
@@ -1985,6 +2263,9 @@ impl ShellView {
     }
 
     fn tui_keys_live(&self) -> bool {
+        if self.hosted_live() {
+            return false;
+        }
         pty_takes_keys(
             self.workspace.selected_center_mode() == CenterMode::GrokTui,
             self.overlay_blocks_pty(),
@@ -3341,13 +3622,21 @@ impl ShellView {
                     .as_ref()
                     .is_some_and(|t| t.tui.life == TuiLife::Running)
             {
+                let hosted = thread
+                    .as_ref()
+                    .is_some_and(|t| is_system_tui_surface(&t.tui.surface));
+                let note = if hosted {
+                    "Grok is in your default terminal. Chat follows that session. Send copies the draft and focuses the window."
+                } else {
+                    "Same grok as TUI. Send goes to that session. Flip TUI for the live pager."
+                };
                 div()
                     .id("tui-sync-note")
                     .px_6()
                     .py_1()
                     .text_size(Theme::text_caption())
                     .text_color(Theme::muted())
-                    .child("Same grok as TUI. Send goes to that session. Flip TUI for the live pager.")
+                    .child(note)
                     .into_any()
             } else {
                 div().id("no-tui-sync-note").into_any()
@@ -3630,7 +3919,13 @@ impl ShellView {
                 .selected_thread()
                 .map(|t| t.tui.life.label())
                 .unwrap_or("stopped");
-            format!("Grok  ·  {life}")
+            let surface = self
+                .workspace
+                .selected_thread()
+                .map(|t| t.tui.surface.clone())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "Grok".into());
+            format!("{surface}  ·  {life}")
         } else {
             self.workspace.model.clone()
         };
@@ -3700,7 +3995,126 @@ impl ShellView {
             )
     }
 
+    fn hosted_tui_card(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let surface = self
+            .workspace
+            .selected_thread()
+            .map(|t| t.tui.surface.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "Windows Terminal".into());
+        let life = self
+            .workspace
+            .selected_thread()
+            .map(|t| t.tui.life.label())
+            .unwrap_or("stopped");
+        let note = self
+            .workspace
+            .selected_thread()
+            .map(|t| t.tui.note.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| {
+                format!("Grok is in {surface}. Type there. This chat follows that session.")
+            });
+        let recent: Vec<(bool, String)> = self
+            .workspace
+            .selected_thread()
+            .map(|t| {
+                t.messages
+                    .iter()
+                    .rev()
+                    .take(6)
+                    .rev()
+                    .map(|m| (m.role == Role::User, m.text.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        div()
+            .id("grok-tui-host")
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .px_6()
+            .py_5()
+            .gap_3()
+            .child(
+                div()
+                    .text_size(Theme::text_title())
+                    .text_color(Theme::text())
+                    .child(format!("{surface}  ·  {life}")),
+            )
+            .child(
+                div()
+                    .text_size(Theme::text_body())
+                    .text_color(Theme::muted())
+                    .child(note),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .flex_wrap()
+                    .child(primary_btn("Focus", "wt", cx, |this, cx| {
+                        this.focus_hosted_window();
+                        cx.notify();
+                    }))
+                    .child(ghost_btn("Relaunch", "again", cx, |this, cx| {
+                        if let Some(id) = this.selected_thread_id() {
+                            this.kill_hosted(&id);
+                        }
+                        if let Some(t) = this.workspace.selected_thread_mut() {
+                            t.tui.mark_exited();
+                        }
+                        this.ensure_thread_grok();
+                        cx.notify();
+                    }))
+                    .child(ghost_btn("Stop", "tui", cx, |this, cx| {
+                        this.dispatch(ClientAction::StopGrokTui, cx);
+                    }))
+                    .child(ghost_btn("Terminal", "set", cx, |this, cx| {
+                        this.workspace.settings_section = SettingsSection::Terminal;
+                        this.dispatch(ClientAction::ToggleSettings, cx);
+                    })),
+            )
+            .child(
+                div()
+                    .mt_2()
+                    .text_size(Theme::text_caption())
+                    .text_color(Theme::faint())
+                    .child("Recent chat (from this grok session)"),
+            )
+            .children(if recent.is_empty() {
+                vec![div()
+                    .id("hosted-empty")
+                    .text_color(Theme::faint())
+                    .child("Nothing in Chat yet. Type in the terminal.")
+                    .into_any()]
+            } else {
+                recent
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (user, text))| {
+                        let shown: String = text.chars().take(240).collect();
+                        div()
+                            .id(SharedString::from(format!("hosted-msg-{i}")))
+                            .text_color(if user { Theme::text() } else { Theme::muted() })
+                            .child(format!("{}  {shown}", if user { "you" } else { "grok" }))
+                            .into_any()
+                    })
+                    .collect()
+            })
+            .into_any()
+    }
+
     fn grok_tui_host(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let hosted = self.hosted_live()
+            || self
+                .workspace
+                .selected_thread()
+                .is_some_and(|t| is_system_tui_surface(&t.tui.surface));
+        if hosted {
+            return self.hosted_tui_card(cx);
+        }
         let failed = self
             .workspace
             .selected_thread()
@@ -3892,6 +4306,14 @@ impl ShellView {
         let model = self.workspace.settings.default_model.clone();
         let models = self.workspace.models.clone();
         let remotes = self.remotes.clone();
+        let tui_hosts = self.tui_hosts.clone();
+        let preferred_term = self.workspace.settings.preferred_terminal.clone();
+        let resolved_host = resolve_tui_host(&tui_hosts, &preferred_term)
+            .map(|h| h.id.clone())
+            .unwrap_or_else(|| TUI_HOST_BUILTIN.to_owned());
+        let resolved_label = resolve_tui_host(&tui_hosts, &preferred_term)
+            .map(|h| h.label.clone())
+            .unwrap_or_else(|| "Built-in (Multiplexer)".into());
         let turns = self.workspace.usage_turns;
         let tokens = self.workspace.usage_tokens;
         let section = self.workspace.settings_section;
@@ -3908,6 +4330,9 @@ impl ShellView {
             SettingsSection::Bindings => "Chord table. Ctrl+P is search. Ctrl+Shift+P is palette.".into(),
             SettingsSection::Inspector => "Inspector customize later. Not shipped.".into(),
             SettingsSection::Session => format!("{turns} turns  {tokens} tok (local snapshot only)\nProject {project}"),
+            SettingsSection::Terminal => format!(
+                "Grok for this chat opens in your default terminal. Windows Terminal is the same pager you already use. Built-in is Multiplexer's last-frame view.\nCurrent: {resolved_label}"
+            ),
             SettingsSection::Remotes => remotes_serve_note().into(),
             SettingsSection::About => about_info(which_grok().as_deref()).lines(),
         };
@@ -4081,6 +4506,54 @@ impl ShellView {
                                     .px_2()
                                     .py_1()
                                     .child(format!("{}  ·  {}  ·  {}", r.label, r.kind, r.id))
+                                    .into_any()
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        Vec::new()
+                    })
+                    .children(if section == SettingsSection::Terminal {
+                        tui_hosts
+                            .into_iter()
+                            .map(|host| {
+                                let on = host.id == resolved_host;
+                                let pick = host.id.clone();
+                                let label = host.label.clone();
+                                let hint = if host.id == TUI_HOST_BUILTIN {
+                                    "last-frame inside Multiplexer".to_owned()
+                                } else {
+                                    host.path.clone()
+                                };
+                                div()
+                                    .id(SharedString::from(format!("set-term-{pick}")))
+                                    .mt_1()
+                                    .px_2()
+                                    .py_2()
+                                    .rounded_lg()
+                                    .bg(if on {
+                                        Theme::selection()
+                                    } else {
+                                        Theme::transparent()
+                                    })
+                                    .cursor_pointer()
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.apply_preferred_terminal(pick.clone());
+                                            cx.notify();
+                                        }),
+                                    )
+                                    .child(div().text_color(Theme::text()).child(if on {
+                                        format!("{label}  (selected)")
+                                    } else {
+                                        label
+                                    }))
+                                    .child(
+                                        div()
+                                            .text_size(Theme::text_caption())
+                                            .text_color(Theme::faint())
+                                            .child(hint),
+                                    )
                                     .into_any()
                             })
                             .collect::<Vec<_>>()

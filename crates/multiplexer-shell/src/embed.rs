@@ -60,6 +60,24 @@ pub fn live_pty_takes_gui_send(tui_alive: bool) -> bool {
     tui_alive
 }
 
+/// Where Chat Send should go when a grok is already live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuiSendRoute {
+    EmbeddedPty,
+    HostedTerminal,
+    Headless,
+}
+
+pub fn gui_send_route(pty_live: bool, hosted_live: bool) -> GuiSendRoute {
+    if pty_live {
+        GuiSendRoute::EmbeddedPty
+    } else if hosted_live {
+        GuiSendRoute::HostedTerminal
+    } else {
+        GuiSendRoute::Headless
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +153,9 @@ mod tests {
             live_pty_takes_gui_send(true),
             live_pty_takes_gui_send(false)
         );
+        assert_eq!(gui_send_route(true, true), GuiSendRoute::EmbeddedPty);
+        assert_eq!(gui_send_route(false, true), GuiSendRoute::HostedTerminal);
+        assert_eq!(gui_send_route(false, false), GuiSendRoute::Headless);
+        assert_ne!(gui_send_route(false, true), gui_send_route(true, false));
     }
 }

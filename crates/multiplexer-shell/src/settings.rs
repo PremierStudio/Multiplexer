@@ -14,18 +14,20 @@ pub enum SettingsSection {
     Bindings,
     Inspector,
     Session,
+    Terminal,
     Remotes,
     About,
 }
 
 impl SettingsSection {
-    pub fn all() -> [Self; 7] {
+    pub fn all() -> [Self; 8] {
         [
             Self::Appearance,
             Self::Models,
             Self::Bindings,
             Self::Inspector,
             Self::Session,
+            Self::Terminal,
             Self::Remotes,
             Self::About,
         ]
@@ -38,6 +40,7 @@ impl SettingsSection {
             Self::Bindings => "Bindings",
             Self::Inspector => "Inspector",
             Self::Session => "Session",
+            Self::Terminal => "Terminal",
             Self::Remotes => "Remotes",
             Self::About => "About",
         }
@@ -125,6 +128,10 @@ impl UiSettings {
 
     pub fn toggle_high_contrast(&mut self) {
         self.high_contrast = !self.high_contrast;
+    }
+
+    pub fn set_preferred_terminal(&mut self, id: impl Into<String>) {
+        self.preferred_terminal = id.into();
     }
 }
 
@@ -269,7 +276,11 @@ mod tests {
         assert!(raw.contains("grok-4.6"));
         assert!(!raw.to_lowercase().contains("secret"));
         assert!(!raw.contains("op://"));
-        s.preferred_terminal = "wt".into();
+        s.set_preferred_terminal("wt");
+        assert_eq!(s.preferred_terminal, "wt");
+        s.set_preferred_terminal("builtin");
+        assert_eq!(s.preferred_terminal, "builtin");
+        s.set_preferred_terminal("wt");
         let raw = settings_to_json(&s);
         let back = settings_from_json(&raw);
         assert_eq!(back.preferred_terminal, "wt");
@@ -341,8 +352,9 @@ mod tests {
 
     #[test]
     fn settings_section_labels() {
-        assert_eq!(SettingsSection::all().len(), 7);
+        assert_eq!(SettingsSection::all().len(), 8);
         assert_eq!(SettingsSection::Appearance.label(), "Appearance");
+        assert_eq!(SettingsSection::Terminal.label(), "Terminal");
         assert_eq!(SettingsSection::Remotes.label(), "Remotes");
         assert_eq!(SettingsSection::About.label(), "About");
         assert_ne!(

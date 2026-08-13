@@ -58,6 +58,79 @@ impl TuiLaunch {
         }
     }
 
+    /// Run `grok <grok_args>` inside a GUI terminal so the pager is native.
+    pub fn hosted(
+        host_id: &str,
+        host_program: impl Into<PathBuf>,
+        cwd: impl Into<PathBuf>,
+        grok: impl Into<PathBuf>,
+        grok_args: &[String],
+        title: &str,
+    ) -> Self {
+        let cwd = cwd.into();
+        let grok = grok.into();
+        let host_program = host_program.into();
+        let mut grok_cmd = vec![grok.as_os_str().to_os_string()];
+        for a in grok_args {
+            grok_cmd.push(OsString::from(a));
+        }
+        match host_id {
+            "wt" => {
+                let mut args = vec![
+                    OsString::from("-w"),
+                    OsString::from("new"),
+                    OsString::from("-d"),
+                    cwd.as_os_str().to_os_string(),
+                    OsString::from("--title"),
+                    OsString::from(title),
+                    OsString::from("--"),
+                ];
+                args.extend(grok_cmd);
+                Self {
+                    program: host_program,
+                    args,
+                    cwd,
+                    new_console: false,
+                }
+            }
+            "wezterm" => {
+                let mut args = vec![
+                    OsString::from("start"),
+                    OsString::from("--cwd"),
+                    cwd.as_os_str().to_os_string(),
+                    OsString::from("--"),
+                ];
+                args.extend(grok_cmd);
+                Self {
+                    program: host_program,
+                    args,
+                    cwd,
+                    new_console: false,
+                }
+            }
+            "alacritty" => {
+                let mut args = vec![
+                    OsString::from("--working-directory"),
+                    cwd.as_os_str().to_os_string(),
+                    OsString::from("-e"),
+                ];
+                args.extend(grok_cmd);
+                Self {
+                    program: host_program,
+                    args,
+                    cwd,
+                    new_console: false,
+                }
+            }
+            _ => Self {
+                program: grok,
+                args: grok_args.iter().map(OsString::from).collect(),
+                cwd,
+                new_console: true,
+            },
+        }
+    }
+
     /// Launch `grok` inside a detected system terminal. Never a Multiplexer PTY.
     pub fn system(
         id: &str,
@@ -132,6 +205,31 @@ impl TuiLaunch {
         }
     }
 
+    /// Bring the hosted grok window forward. `wt` uses the last window;
+    /// other hosts use `AppActivate` on the title we set at spawn.
+    pub fn focus(host_id: &str, host_program: impl Into<PathBuf>, title: &str) -> Self {
+        match host_id {
+            "wt" => Self {
+                program: host_program.into(),
+                args: vec![OsString::from("-w"), OsString::from("0")],
+                cwd: PathBuf::from("."),
+                new_console: false,
+            },
+            _ => Self {
+                program: PathBuf::from("powershell.exe"),
+                args: vec![
+                    OsString::from("-NoProfile"),
+                    OsString::from("-WindowStyle"),
+                    OsString::from("Hidden"),
+                    OsString::from("-Command"),
+                    OsString::from(powershell_app_activate(title)),
+                ],
+                cwd: PathBuf::from("."),
+                new_console: false,
+            },
+        }
+    }
+
     #[cfg(windows)]
     pub fn creation_flags(&self) -> u32 {
         if self.new_console {
@@ -140,6 +238,12 @@ impl TuiLaunch {
             CREATE_NEW_PROCESS_GROUP
         }
     }
+}
+
+/// PowerShell `AppActivate` argument. Single quotes are doubled.
+pub fn powershell_app_activate(title: &str) -> String {
+    let escaped = title.replace('\'', "''");
+    format!("(New-Object -ComObject WScript.Shell).AppActivate('{escaped}')")
 }
 
 /// Spawn the interactive Grok TUI. Caller owns the [`Child`].
@@ -191,6 +295,70 @@ mod tests {
         let cmd = TuiLaunch::system("cmd", r"C:\Windows\System32\cmd.exe", "C:/repo", "grok");
         assert!(cmd.new_console);
         assert_eq!(cmd.args[0], OsString::from("/K"));
+        let hosted = TuiLaunch::hosted(
+            "wt",
+            r"C:\wt.exe",
+            "C:/repo",
+            "grok",
+            &[
+                "--always-approve".into(),
+                "--trust".into(),
+                "--cwd".into(),
+                "C:/repo".into(),
+            ],
+            "Multiplexer",
+        );
+        assert_eq!(hosted.program, PathBuf::from(r"C:\wt.exe"));
+        assert!(hosted.args.iter().any(|a| a == "--"));
+        assert!(hosted.args.iter().any(|a| a == "--always-approve"));
+        assert!(hosted.args.iter().any(|a| a == "--title"));
+        assert!(!hosted.args.iter().any(|a| a == "-p"));
+        assert_ne!(hosted.args, launch.args);
+        let wez = TuiLaunch::hosted(
+            "wezterm",
+            "wezterm",
+            "C:/repo",
+            "grok",
+            &["--trust".into()],
+            "Mux",
+        );
+        assert_eq!(wez.args[0], OsString::from("start"));
+        assert!(wez.args.iter().any(|a| a == "--cwd"));
+        let ala = TuiLaunch::hosted(
+            "alacritty",
+            "alacritty",
+            "C:/repo",
+            "grok",
+            &["--trust".into()],
+            "Mux",
+        );
+        assert!(ala.args.iter().any(|a| a == "-e"));
+        let raw = TuiLaunch::hosted(
+            "conhost",
+            "x",
+            "C:/repo",
+            "grok",
+            &["--trust".into()],
+            "Mux",
+        );
+        assert!(raw.new_console);
+        assert_eq!(raw.program, PathBuf::from("grok"));
+        let focus_wt = TuiLaunch::focus("wt", r"C:\wt.exe", "Multiplexer · New chat");
+        assert_eq!(focus_wt.program, PathBuf::from(r"C:\wt.exe"));
+        assert_eq!(
+            focus_wt.args,
+            vec![OsString::from("-w"), OsString::from("0")]
+        );
+        let focus_wez = TuiLaunch::focus("wezterm", "wezterm", "O'Brien");
+        assert_eq!(focus_wez.program, PathBuf::from("powershell.exe"));
+        assert!(focus_wez
+            .args
+            .iter()
+            .any(|a| a.to_string_lossy().contains("O''Brien")));
+        assert_eq!(
+            powershell_app_activate("O'Brien"),
+            "(New-Object -ComObject WScript.Shell).AppActivate('O''Brien')"
+        );
         let ps = TuiLaunch::system(
             "powershell",
             r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
