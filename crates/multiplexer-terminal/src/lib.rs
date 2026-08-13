@@ -65,6 +65,11 @@ mod tests {
     fn visible_pty_text_strips_csi() {
         assert_eq!(visible_pty_text("\u{1b}[32mhello\u{1b}[0m\r\n"), "hello\n");
         assert_eq!(visible_pty_text("plain"), "plain");
+        assert_eq!(visible_pty_text(""), "");
+        assert_eq!(visible_pty_text("\r\r"), "");
+        assert_eq!(visible_pty_text("\u{1b}]0;title\u{7}ok"), "ok");
+        assert_eq!(visible_pty_text("a\u{1b}[1mb"), "ab");
         assert_ne!(visible_pty_text("\u{1b}[1mX"), "\u{1b}[1mX");
+        assert_ne!(visible_pty_text("hi\r\n"), "hi\r\n");
     }
 }

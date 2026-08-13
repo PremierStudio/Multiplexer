@@ -350,7 +350,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("mux-term-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let wt = dir.join("wt.exe");
+        let cmd = dir.join("cmd.exe");
         std::fs::write(&wt, b"x").unwrap();
+        std::fs::write(&cmd, b"x").unwrap();
         let missing = dir.join("nope.exe");
         let found = detect_terminals(&[
             (
@@ -361,28 +363,70 @@ mod tests {
             (
                 "cmd".into(),
                 "Command Prompt".into(),
+                cmd.to_string_lossy().into(),
+            ),
+            (
+                "missing".into(),
+                "Missing".into(),
                 missing.to_string_lossy().into(),
             ),
         ]);
-        assert_eq!(found.len(), 1);
+        assert_eq!(found.len(), 2);
         assert_eq!(found[0].id, "wt");
+        assert_eq!(found[1].id, "cmd");
+        assert_ne!(found[0].id, "cmd");
         assert_eq!(
             preferred_terminal(&found, "").map(|t| t.id.as_str()),
+            Some("wt")
+        );
+        assert_eq!(
+            preferred_terminal(&found, "   ").map(|t| t.id.as_str()),
             Some("wt")
         );
         assert_eq!(
             preferred_terminal(&found, "wt").map(|t| t.label.as_str()),
             Some("Windows Terminal")
         );
+        assert_eq!(
+            preferred_terminal(&found, "cmd").map(|t| t.id.as_str()),
+            Some("cmd")
+        );
+        assert_ne!(
+            preferred_terminal(&found, "cmd").map(|t| t.id.as_str()),
+            preferred_terminal(&found, "").map(|t| t.id.as_str())
+        );
+        assert_eq!(
+            preferred_terminal(&found, "missing").map(|t| t.id.as_str()),
+            Some("wt"),
+            "unknown want falls back to first"
+        );
         assert!(preferred_terminal(&[], "wt").is_none());
+        assert!(preferred_terminal(&[], "").is_none());
         assert!(windows_terminal_candidates()
             .iter()
             .any(|c| c.0 == "cmd" && c.1 == "Command Prompt"));
+        assert!(windows_terminal_candidates()
+            .iter()
+            .any(|c| c.0 == "powershell"));
+        assert!(!windows_terminal_candidates().iter().any(|c| c.0 == "wt"));
         assert!(macos_terminal_candidates().iter().any(|c| c.0 == "zsh"));
+        assert!(macos_terminal_candidates().iter().any(|c| c.1 == "zsh"));
+        assert!(!macos_terminal_candidates().iter().any(|c| c.0 == "iterm"));
         assert!(linux_terminal_candidates().iter().any(|c| c.0 == "bash"));
+        assert!(!linux_terminal_candidates()
+            .iter()
+            .any(|c| c.0 == "gnome-terminal"));
         assert!(default_terminal_candidates()
             .iter()
             .any(|c| c.0 == "cmd" || c.0 == "zsh" || c.0 == "bash"));
+        assert!(path_program("mux-no-such-binary-xyz").is_none());
+        let cargo = path_program("cargo");
+        assert!(
+            cargo.as_ref().is_some_and(|p| p.to_ascii_lowercase().contains("cargo")),
+            "cargo must be on PATH, got {cargo:?}"
+        );
+        assert_ne!(cargo, Some(String::new()));
+        assert_ne!(cargo, Some("xyzzy".into()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
