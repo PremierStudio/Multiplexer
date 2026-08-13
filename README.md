@@ -147,6 +147,13 @@ fmt → clippy (deny warnings) → unit + property → mutation → integration 
 
 The full testing strategy is in [`plan/15-testing-strategy.md`](plan/15-testing-strategy.md).
 
+**Desktop reload.** GPUI cannot swap code in a live window. Watch `apps/` and `crates/`, rebuild, and restart:
+
+```text
+pwsh -File scripts/hotreload.ps1
+cargo mux
+```
+
 ---
 
 ## Repository layout

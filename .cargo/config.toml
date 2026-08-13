@@ -1,0 +1,2 @@
+[alias]
+mux = "run -p multiplexer-desktop"
