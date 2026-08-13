@@ -75,6 +75,38 @@ impl Theme {
     pub fn ink() -> Hsla {
         Self::c(Self::tokens().ink)
     }
+
+    /// sRGB triple to GPUI. Used for VT cell paint (Windows Terminal Campbell).
+    pub fn srgb(rgb: (u8, u8, u8)) -> Hsla {
+        let (r, g, b) = rgb;
+        let r = f32::from(r) / 255.0;
+        let g = f32::from(g) / 255.0;
+        let b = f32::from(b) / 255.0;
+        let max = r.max(g.max(b));
+        let min = r.min(g.min(b));
+        let l = (max + min) / 2.0;
+        if (max - min).abs() < 1e-5 {
+            return hsla(0.0, 0.0, l, 1.0);
+        }
+        let d = max - min;
+        let s = if l > 0.5 {
+            d / (2.0 - max - min)
+        } else {
+            d / (max + min)
+        };
+        let h = if (max - r).abs() < 1e-5 {
+            let mut hue = (g - b) / d;
+            if g < b {
+                hue += 6.0;
+            }
+            hue / 6.0
+        } else if (max - g).abs() < 1e-5 {
+            ((b - r) / d + 2.0) / 6.0
+        } else {
+            ((r - g) / d + 4.0) / 6.0
+        };
+        hsla(h, s, l, 1.0)
+    }
     pub fn hairline() -> Hsla {
         Self::c(Self::tokens().hairline)
     }
@@ -293,6 +325,12 @@ mod tests {
         assert!(Theme::approval_fill().a <= 0.55);
         assert!(Theme::toast_fill(multiplexer_shell::NoticeKind::Danger).a <= 0.55);
         assert!(Theme::send_bg().h > 0.50);
+        let red = Theme::srgb((255, 0, 0));
+        assert!(red.s > 0.9);
+        assert!((red.h - 0.0).abs() < 0.02 || (red.h - 1.0).abs() < 0.02);
+        let gray = Theme::srgb((204, 204, 204));
+        assert!(gray.s < 0.05);
+        assert_ne!(Theme::srgb((255, 0, 0)), Theme::srgb((0, 255, 0)));
         assert!(Theme::bubble_user().a > 0.0);
         assert!(Theme::hover_fill().s < 0.12);
         assert_eq!(Theme::title_height(), px(36.0));

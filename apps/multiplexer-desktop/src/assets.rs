@@ -9,14 +9,15 @@ pub struct DesktopAssets;
 
 pub const UI_FONT: &str = "Geist";
 pub const MONO_FONT: &str = "Geist Mono";
-pub const TUI_FONT: &str = "Cascadia Mono";
+pub const TUI_FONT: &str = "Cascadia Code";
 
-/// Cascadia Mono if present (braille + box drawing). Geist Mono is not a
-/// terminal face: Grok's splash is U+2800 art and looks like tofu there.
-pub fn tui_font_candidates() -> &'static [&'static str] {
+/// Cascadia Code first (Windows Terminal default, ligatures). Mono is fallback.
+pub fn tui_font_candidates() -> &'static [(&'static str, &'static str)] {
     &[
-        r"C:\Windows\Fonts\CascadiaMono.ttf",
-        r"C:\Windows\Fonts\cascadiamono.ttf",
+        (r"C:\Windows\Fonts\CascadiaCode.ttf", "Cascadia Code"),
+        (r"C:\Windows\Fonts\cascadiacode.ttf", "Cascadia Code"),
+        (r"C:\Windows\Fonts\CascadiaMono.ttf", "Cascadia Mono"),
+        (r"C:\Windows\Fonts\cascadiamono.ttf", "Cascadia Mono"),
     ]
 }
 
@@ -152,11 +153,14 @@ mod tests {
         }
         assert_eq!(UI_FONT, "Geist");
         assert_eq!(MONO_FONT, "Geist Mono");
-        assert_eq!(TUI_FONT, "Cascadia Mono");
+        assert_eq!(TUI_FONT, "Cascadia Code");
         assert_ne!(UI_FONT, MONO_FONT);
         assert_ne!(TUI_FONT, MONO_FONT);
         assert!(tui_font_candidates()
             .iter()
-            .any(|p| p.ends_with("CascadiaMono.ttf")));
+            .any(|(p, family)| p.ends_with("CascadiaCode.ttf") && *family == "Cascadia Code"));
+        assert!(tui_font_candidates()
+            .iter()
+            .any(|(p, _)| p.ends_with("CascadiaMono.ttf")));
     }
 }

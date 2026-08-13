@@ -11,18 +11,82 @@ pub const ONESHOT_ROWS: u16 = 128;
 
 const TAB_STOP: usize = 8;
 
+/// SGR pen. `None` means the host default (WT-like gray on near-black).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CellStyle {
+    pub fg: Option<(u8, u8, u8)>,
+    pub bg: Option<(u8, u8, u8)>,
+    pub bold: bool,
+    pub dim: bool,
+    pub reverse: bool,
+}
+
+impl CellStyle {
+    pub fn resolved(self) -> ResolvedStyle {
+        let mut fg = self.fg.unwrap_or(DEFAULT_FG);
+        let mut bg = self.bg;
+        if self.dim {
+            fg = (fg.0 / 2, fg.1 / 2, fg.2 / 2);
+        }
+        if self.reverse {
+            let old = fg;
+            fg = bg.unwrap_or(DEFAULT_BG);
+            bg = Some(old);
+        }
+        ResolvedStyle {
+            fg,
+            bg,
+            bold: self.bold && !self.dim,
+        }
+    }
+}
+
+/// Colors after reverse / dim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedStyle {
+    pub fg: (u8, u8, u8),
+    pub bg: Option<(u8, u8, u8)>,
+    pub bold: bool,
+}
+
+pub const DEFAULT_FG: (u8, u8, u8) = (204, 204, 204);
+pub const DEFAULT_BG: (u8, u8, u8) = (12, 12, 12);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Cell {
+    ch: char,
+    style: CellStyle,
+}
+
+impl Cell {
+    fn blank() -> Self {
+        Self {
+            ch: ' ',
+            style: CellStyle::default(),
+        }
+    }
+}
+
+/// One run of same-style cells on a row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StyledRun {
+    pub text: String,
+    pub style: CellStyle,
+}
+
 /// Last painted screen of a PTY. Incomplete ESC sequences are held
 /// across [`PtyFrame::feed`] calls so a split CSI cannot leak.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PtyFrame {
     cols: usize,
     rows: usize,
-    cells: Vec<char>,
+    cells: Vec<Cell>,
     row: usize,
     col: usize,
     saved_row: usize,
     saved_col: usize,
     pending: String,
+    pen: CellStyle,
 }
 
 impl Default for PtyFrame {
@@ -39,12 +103,13 @@ impl PtyFrame {
         Self {
             cols,
             rows,
-            cells: vec![' '; cols * rows],
+            cells: vec![Cell::blank(); cols * rows],
             row: 0,
             col: 0,
             saved_row: 0,
             saved_col: 0,
             pending: String::new(),
+            pen: CellStyle::default(),
         }
     }
 
@@ -74,7 +139,7 @@ impl PtyFrame {
         if new_cols == self.cols && new_rows == self.rows {
             return;
         }
-        let mut next = vec![' '; new_cols * new_rows];
+        let mut next = vec![Cell::blank(); new_cols * new_rows];
         let copy_cols = self.cols.min(new_cols);
         let copy_rows = self.rows.min(new_rows);
         for r in 0..copy_rows {
@@ -130,7 +195,29 @@ impl PtyFrame {
             .map(|r| {
                 let start = r * self.cols;
                 let end = start + self.cols;
-                self.cells[start..end].iter().collect()
+                self.cells[start..end].iter().map(|c| c.ch).collect()
+            })
+            .collect()
+    }
+
+    /// Adjacent cells with the same pen become one run (GPUI paint).
+    #[must_use]
+    pub fn styled_rows(&self) -> Vec<Vec<StyledRun>> {
+        (0..self.rows)
+            .map(|r| {
+                let start = r * self.cols;
+                let row = &self.cells[start..start + self.cols];
+                let mut runs: Vec<StyledRun> = Vec::new();
+                for cell in row {
+                    match runs.last_mut() {
+                        Some(run) if run.style == cell.style => run.text.push(cell.ch),
+                        _ => runs.push(StyledRun {
+                            text: cell.ch.to_string(),
+                            style: cell.style,
+                        }),
+                    }
+                }
+                runs
             })
             .collect()
     }
@@ -138,7 +225,7 @@ impl PtyFrame {
     /// True when any cell is not a space. CSI-only frames stay blank.
     #[must_use]
     pub fn has_ink(&self) -> bool {
-        self.cells.iter().any(|ch| *ch != ' ')
+        self.cells.iter().any(|c| c.ch != ' ')
     }
 
     /// Trailing spaces and empty rows dropped so a blank screen stays empty.
@@ -278,6 +365,7 @@ impl PtyFrame {
                 self.row = self.saved_row;
                 self.col = self.saved_col;
             }
+            'm' => apply_sgr(&mut self.pen, &params),
             _ => {}
         }
     }
@@ -315,7 +403,10 @@ impl PtyFrame {
             self.index();
         }
         let i = self.row * self.cols + self.col;
-        self.cells[i] = ch;
+        self.cells[i] = Cell {
+            ch,
+            style: self.pen,
+        };
         self.col += 1;
     }
 
@@ -339,7 +430,7 @@ impl PtyFrame {
         self.cells.copy_within(self.cols.., 0);
         let start = (self.rows - 1) * self.cols;
         for cell in &mut self.cells[start..] {
-            *cell = ' ';
+            *cell = Cell::blank();
         }
     }
 
@@ -348,7 +439,7 @@ impl PtyFrame {
         let end = self.cells.len() - tail;
         self.cells.copy_within(0..end, tail);
         for cell in &mut self.cells[..self.cols] {
-            *cell = ' ';
+            *cell = Cell::blank();
         }
     }
 
@@ -369,14 +460,14 @@ impl PtyFrame {
     }
 
     fn clear_all(&mut self) {
-        self.cells.fill(' ');
+        self.cells.fill(Cell::blank());
     }
 
     fn erase_eol(&mut self) {
         let start = self.row * self.cols + self.col;
         let end = self.row * self.cols + self.cols;
         for cell in &mut self.cells[start..end] {
-            *cell = ' ';
+            *cell = Cell::blank();
         }
     }
 
@@ -384,7 +475,7 @@ impl PtyFrame {
         let start = self.row * self.cols;
         let end = start + self.col.min(self.cols - 1) + 1;
         for cell in &mut self.cells[start..end] {
-            *cell = ' ';
+            *cell = Cell::blank();
         }
     }
 
@@ -392,7 +483,7 @@ impl PtyFrame {
         let start = self.row * self.cols;
         let end = start + self.cols;
         for cell in &mut self.cells[start..end] {
-            *cell = ' ';
+            *cell = Cell::blank();
         }
     }
 
@@ -401,7 +492,7 @@ impl PtyFrame {
         let start = (self.row + 1) * self.cols;
         if start < self.cells.len() {
             for cell in &mut self.cells[start..] {
-                *cell = ' ';
+                *cell = Cell::blank();
             }
         }
     }
@@ -410,19 +501,119 @@ impl PtyFrame {
         let end = self.row * self.cols;
         if end > 0 {
             for cell in &mut self.cells[..end] {
-                *cell = ' ';
+                *cell = Cell::blank();
             }
         }
         self.erase_sol();
     }
 
     fn reset(&mut self) {
-        self.cells.fill(' ');
+        self.cells.fill(Cell::blank());
         self.row = 0;
         self.col = 0;
         self.saved_row = 0;
         self.saved_col = 0;
         self.pending.clear();
+        self.pen = CellStyle::default();
+    }
+}
+
+/// Windows Terminal Campbell palette (the default grok-in-WT look).
+pub fn ansi16(index: u8, bright: bool) -> (u8, u8, u8) {
+    let i = (index % 8) as usize;
+    if bright {
+        const BRIGHT: [(u8, u8, u8); 8] = [
+            (118, 118, 118),
+            (231, 72, 86),
+            (22, 198, 12),
+            (249, 241, 165),
+            (59, 120, 255),
+            (180, 0, 158),
+            (97, 214, 214),
+            (242, 242, 242),
+        ];
+        BRIGHT[i]
+    } else {
+        const NORMAL: [(u8, u8, u8); 8] = [
+            (12, 12, 12),
+            (197, 15, 31),
+            (19, 161, 14),
+            (193, 156, 0),
+            (0, 55, 218),
+            (136, 23, 152),
+            (58, 150, 221),
+            (204, 204, 204),
+        ];
+        NORMAL[i]
+    }
+}
+
+pub fn xterm256(n: u8) -> (u8, u8, u8) {
+    if n < 16 {
+        return ansi16(n % 8, n >= 8);
+    }
+    if n >= 232 {
+        let v = 8 + (n - 232) * 10;
+        return (v, v, v);
+    }
+    let n = n - 16;
+    let r = n / 36;
+    let g = (n / 6) % 6;
+    let b = n % 6;
+    let step = |c: u8| if c == 0 { 0 } else { 55 + 40 * c };
+    (step(r), step(g), step(b))
+}
+
+pub fn apply_sgr(style: &mut CellStyle, params: &[u16]) {
+    if params.is_empty() {
+        *style = CellStyle::default();
+        return;
+    }
+    let mut i = 0;
+    while i < params.len() {
+        match params[i] {
+            0 => *style = CellStyle::default(),
+            1 => style.bold = true,
+            2 => style.dim = true,
+            7 => style.reverse = true,
+            21 | 22 => {
+                style.bold = false;
+                style.dim = false;
+            }
+            27 => style.reverse = false,
+            30..=37 => style.fg = Some(ansi16((params[i] - 30) as u8, false)),
+            90..=97 => style.fg = Some(ansi16((params[i] - 90) as u8, true)),
+            40..=47 => style.bg = Some(ansi16((params[i] - 40) as u8, false)),
+            100..=107 => style.bg = Some(ansi16((params[i] - 100) as u8, true)),
+            39 => style.fg = None,
+            49 => style.bg = None,
+            38 | 48 => {
+                let fg = params[i] == 38;
+                if i + 2 < params.len() && params[i + 1] == 5 {
+                    let rgb = xterm256(params[i + 2] as u8);
+                    if fg {
+                        style.fg = Some(rgb);
+                    } else {
+                        style.bg = Some(rgb);
+                    }
+                    i += 2;
+                } else if i + 4 < params.len() && params[i + 1] == 2 {
+                    let rgb = (
+                        params[i + 2] as u8,
+                        params[i + 3] as u8,
+                        params[i + 4] as u8,
+                    );
+                    if fg {
+                        style.fg = Some(rgb);
+                    } else {
+                        style.bg = Some(rgb);
+                    }
+                    i += 4;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
     }
 }
 
@@ -1011,5 +1202,80 @@ mod tests {
         assert_eq!(f.display(), "ok");
         assert_ne!(f.display(), "1$tok");
         assert_ne!(f.display(), "P1$tok");
+    }
+
+    #[test]
+    fn sgr_keeps_campbell_colors_and_runs() {
+        let mut style = CellStyle::default();
+        apply_sgr(&mut style, &[31]);
+        assert_eq!(style.fg, Some(ansi16(1, false)));
+        apply_sgr(&mut style, &[0]);
+        assert_eq!(style, CellStyle::default());
+        apply_sgr(&mut style, &[1, 32]);
+        assert!(style.bold);
+        assert_eq!(style.fg, Some(ansi16(2, false)));
+        apply_sgr(&mut style, &[38, 5, 196]);
+        assert_eq!(style.fg, Some(xterm256(196)));
+        apply_sgr(&mut style, &[38, 2, 255, 80, 0]);
+        assert_eq!(style.fg, Some((255, 80, 0)));
+        apply_sgr(&mut style, &[7]);
+        let painted = style.resolved();
+        assert_eq!(painted.fg, DEFAULT_BG);
+        assert_eq!(painted.bg, Some((255, 80, 0)));
+        assert_ne!(ansi16(1, false), ansi16(1, true));
+        assert_ne!(xterm256(16), xterm256(231));
+        assert_eq!(xterm256(232), (8, 8, 8));
+        let mut f = frame(20, 2);
+        f.feed("\u{1b}[31mred\u{1b}[0m plain");
+        assert_eq!(f.display(), "red plain");
+        let rows = f.styled_rows();
+        assert!(rows[0].len() >= 2);
+        assert_eq!(rows[0][0].text.trim_end(), "red");
+        assert_eq!(rows[0][0].style.fg, Some(ansi16(1, false)));
+        assert!(rows[0]
+            .iter()
+            .any(|r| r.text.contains("plain") && r.style.fg.is_none()));
+        assert_ne!(rows[0][0].style, CellStyle::default());
+        let mut dim = CellStyle {
+            fg: Some((100, 50, 20)),
+            dim: true,
+            bold: true,
+            ..CellStyle::default()
+        };
+        assert_eq!(dim.resolved().fg, (50, 25, 10));
+        assert!(!dim.resolved().bold);
+        dim.dim = false;
+        assert!(dim.resolved().bold);
+        assert_eq!(ansi16(8, false), ansi16(0, false));
+        assert_ne!(ansi16(8, false), ansi16(1, false));
+        assert_eq!(xterm256(15), ansi16(7, true));
+        assert_eq!(xterm256(16), (0, 0, 0));
+        assert_eq!(xterm256(21), (0, 0, 255));
+        assert_eq!(xterm256(255), (238, 238, 238));
+        let mut pen = CellStyle {
+            fg: Some((1, 2, 3)),
+            bg: Some((4, 5, 6)),
+            bold: true,
+            dim: true,
+            reverse: true,
+        };
+        apply_sgr(&mut pen, &[2]);
+        assert!(pen.dim);
+        apply_sgr(&mut pen, &[21]);
+        assert!(!pen.bold);
+        assert!(!pen.dim);
+        apply_sgr(&mut pen, &[7]);
+        apply_sgr(&mut pen, &[27]);
+        assert!(!pen.reverse);
+        apply_sgr(&mut pen, &[91]);
+        assert_eq!(pen.fg, Some(ansi16(1, true)));
+        apply_sgr(&mut pen, &[41]);
+        assert_eq!(pen.bg, Some(ansi16(1, false)));
+        apply_sgr(&mut pen, &[101]);
+        assert_eq!(pen.bg, Some(ansi16(1, true)));
+        apply_sgr(&mut pen, &[39]);
+        assert!(pen.fg.is_none());
+        apply_sgr(&mut pen, &[49]);
+        assert!(pen.bg.is_none());
     }
 }

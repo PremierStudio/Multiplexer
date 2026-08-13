@@ -19,7 +19,8 @@ use article::render_article;
 use assets::{tui_font_candidates, DesktopAssets, MONO_FONT, TUI_FONT, UI_FONT};
 use gpui::{
     div, font, prelude::*, px, size, App, Application, Bounds, ClipboardItem, Context, CursorStyle,
-    FocusHandle, Focusable, KeyDownEvent, MouseButton, MouseMoveEvent, SharedString, Window,
+    FocusHandle, Focusable, FontWeight, KeyDownEvent, MouseButton, MouseMoveEvent, SharedString,
+    Window,
 };
 use inspector::tab_buttons;
 use multiplexer_checkpoint::{HiddenGitStore, ProcessGitExec};
@@ -59,8 +60,8 @@ use multiplexer_shell::{
     NOTICE_AUTO_MS, TERM_PROMPT, TUI_HOST_BUILTIN,
 };
 use multiplexer_terminal::{
-    caret_split, pty_grid_from_px, pty_input, pty_paste_bytes, pty_submit_line, EmbeddedSession,
-    ProcessCapture, PtyFrame, TerminalSpec,
+    caret_split, pty_grid_from_px, pty_input, pty_paste_bytes, pty_submit_line, CellStyle,
+    EmbeddedSession, ProcessCapture, PtyFrame, StyledRun, TerminalSpec, DEFAULT_BG,
 };
 use multiplexer_wire::codec::{decode_frame, encode_frame};
 use multiplexer_wire::jsonrpc::{Id, Message, Request};
@@ -717,7 +718,7 @@ impl ShellView {
             self.workspace.chrome.occupied_left() + self.workspace.chrome.occupied_right() + 24.0;
         let chrome_h = 36.0 + 28.0 + self.workspace.occupied_bottom() + 28.0 + 16.0;
         let (pw, ph) = tui_host_px(self.win_w, self.win_h, chrome_w, chrome_h);
-        pty_grid_from_px(pw, ph, 8.0, 18.0)
+        pty_grid_from_px(pw, ph, 8.4, 20.0)
     }
 
     fn sync_embedded_size(&mut self) {
@@ -3941,16 +3942,34 @@ impl ShellView {
             .map(|t| t.tui.note.clone())
             .unwrap_or_default();
         let frame_id = self.selected_thread_id();
-        let (lines, caret): (Vec<String>, Option<(u16, u16)>) = if failed {
-            (vec![note], None)
+        let (rows, caret): (Vec<Vec<StyledRun>>, Option<(u16, u16)>) = if failed {
+            (
+                vec![vec![StyledRun {
+                    text: note,
+                    style: CellStyle::default(),
+                }]],
+                None,
+            )
         } else if let Some(frame) = frame_id.and_then(|id| self.frames.get(&id)) {
             if frame.has_ink() {
-                (frame.lines(), Some(frame.caret()))
+                (frame.styled_rows(), Some(frame.caret()))
             } else {
-                (vec!["starting grok…".to_owned()], Some((0, 0)))
+                (
+                    vec![vec![StyledRun {
+                        text: "starting grok…".into(),
+                        style: CellStyle::default(),
+                    }]],
+                    Some((0, 0)),
+                )
             }
         } else {
-            (vec!["starting grok…".to_owned()], Some((0, 0)))
+            (
+                vec![vec![StyledRun {
+                    text: "starting grok…".into(),
+                    style: CellStyle::default(),
+                }]],
+                Some((0, 0)),
+            )
         };
         let tui_font = self.tui_font.clone();
         div()
@@ -3959,12 +3978,13 @@ impl ShellView {
             .min_h_0()
             .flex()
             .flex_col()
+            .bg(Theme::srgb(DEFAULT_BG))
             .child(
                 div()
                     .id("tui-scroll")
                     .flex_1()
                     .min_h_0()
-                    .px_1()
+                    .px_2()
                     .py_1()
                     .overflow_hidden()
                     .cursor_pointer()
@@ -3976,38 +3996,15 @@ impl ShellView {
                         }),
                     )
                     .font(font(tui_font))
-                    .text_size(px(13.0))
-                    .text_color(Theme::text())
-                    .children(lines.into_iter().enumerate().map(|(row, line)| {
-                        let show_caret = caret.is_some_and(|(_, r)| r as usize == row);
-                        if let Some((col, _)) = caret.filter(|_| show_caret) {
-                            let (before, ch, after) = caret_split(&line, col as usize);
-                            let mark = if ch == ' ' {
-                                "▌".to_owned()
-                            } else {
-                                ch.to_string()
-                            };
-                            div()
-                                .flex()
-                                .flex_row()
-                                .h(px(18.0))
-                                .child(div().whitespace_nowrap().child(before))
-                                .child(
-                                    div()
-                                        .whitespace_nowrap()
-                                        .bg(Theme::text())
-                                        .text_color(Theme::ink())
-                                        .child(mark),
-                                )
-                                .child(div().whitespace_nowrap().child(after))
-                        } else {
-                            let shown = if line.is_empty() {
-                                " ".to_owned()
-                            } else {
-                                line
-                            };
-                            div().whitespace_nowrap().h(px(18.0)).child(shown)
-                        }
+                    .text_size(px(14.0))
+                    .text_color(Theme::srgb((204, 204, 204)))
+                    .children(rows.into_iter().enumerate().map(|(row, runs)| {
+                        let caret_col = caret.filter(|(_, r)| *r as usize == row).map(|(c, _)| c);
+                        div()
+                            .flex()
+                            .flex_row()
+                            .h(px(20.0))
+                            .children(paint_tui_row(runs, caret_col))
                     })),
             )
             .into_any()
@@ -5194,18 +5191,66 @@ fn checkpoint_diff_text(frames: &[String]) -> Option<String> {
 
 static TUI_FAMILY: OnceLock<String> = OnceLock::new();
 
+fn paint_tui_run(text: String, mut style: CellStyle, invert: bool) -> gpui::AnyElement {
+    if invert {
+        style.reverse = !style.reverse;
+    }
+    let painted = style.resolved();
+    let mut el = div()
+        .whitespace_nowrap()
+        .text_color(Theme::srgb(painted.fg));
+    if let Some(bg) = painted.bg {
+        el = el.bg(Theme::srgb(bg));
+    }
+    if painted.bold {
+        el = el.font_weight(FontWeight::SEMIBOLD);
+    }
+    el.child(text).into_any()
+}
+
+fn paint_tui_row(runs: Vec<StyledRun>, caret_col: Option<u16>) -> Vec<gpui::AnyElement> {
+    let Some(caret) = caret_col else {
+        return runs
+            .into_iter()
+            .map(|run| paint_tui_run(run.text, run.style, false))
+            .collect();
+    };
+    let caret = caret as usize;
+    let mut col = 0;
+    let mut out = Vec::new();
+    for run in runs {
+        let len = run.text.chars().count();
+        let end = col + len;
+        if caret >= col && caret < end {
+            let split_at = caret - col;
+            let (before, ch, after) = caret_split(&run.text, split_at);
+            if !before.is_empty() {
+                out.push(paint_tui_run(before, run.style, false));
+            }
+            out.push(paint_tui_run(ch.to_string(), run.style, true));
+            if !after.is_empty() {
+                out.push(paint_tui_run(after, run.style, false));
+            }
+        } else {
+            out.push(paint_tui_run(run.text, run.style, false));
+        }
+        col = end;
+    }
+    out
+}
+
 fn install_tui_font(cx: &mut App) {
-    let mut cascadias = false;
-    for path in tui_font_candidates() {
+    let mut family = None;
+    for (path, name) in tui_font_candidates() {
         if let Ok(bytes) = std::fs::read(path) {
             if cx.text_system().add_fonts(vec![Cow::Owned(bytes)]).is_ok() {
-                cascadias = true;
+                family = Some((*name).to_owned());
                 break;
             }
         }
     }
-    if cascadias {
-        let _ = TUI_FAMILY.set(TUI_FONT.to_owned());
+    if let Some(name) = family {
+        let _ = TUI_FAMILY.set(name);
         std::env::set_var("GROK_FORCE_LEGACY_CONSOLE", "0");
     } else {
         let _ = TUI_FAMILY.set(MONO_FONT.to_owned());
@@ -5214,7 +5259,7 @@ fn install_tui_font(cx: &mut App) {
 }
 
 fn tui_family() -> SharedString {
-    SharedString::from(TUI_FAMILY.get().map(String::as_str).unwrap_or(MONO_FONT))
+    SharedString::from(TUI_FAMILY.get().map(String::as_str).unwrap_or(TUI_FONT))
 }
 
 fn main() {

@@ -16,7 +16,10 @@ mod spec;
 
 pub use capture::ProcessCapture;
 pub use error::TerminalError;
-pub use frame::{caret_split, render_pty_chunk, PtyFrame, ONESHOT_COLS, ONESHOT_ROWS};
+pub use frame::{
+    ansi16, apply_sgr, caret_split, render_pty_chunk, xterm256, CellStyle, PtyFrame, ResolvedStyle,
+    StyledRun, DEFAULT_BG, DEFAULT_FG, ONESHOT_COLS, ONESHOT_ROWS,
+};
 pub use hub::{TerminalHub, TerminalSnapshot, TerminalWatch};
 pub use id::TerminalId;
 pub use keys::{
