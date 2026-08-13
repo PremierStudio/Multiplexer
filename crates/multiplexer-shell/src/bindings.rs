@@ -85,7 +85,10 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         | ClientAction::RunGitStatus
         | ClientAction::RefreshFiles
         | ClientAction::RevealFile
-        | ClientAction::OpenExternal => HostCall::NeedsHost,
+        | ClientAction::OpenExternal
+        | ClientAction::SwitchWorktree
+        | ClientAction::RemoveWorktree
+        | ClientAction::KillTerm => HostCall::NeedsHost,
         ClientAction::Interrupt => match ctx.session_id.as_deref() {
             Some(session_id) => HostCall::Rpc {
                 method: "session.interrupt",

@@ -184,6 +184,13 @@ pub struct CheckpointRow {
     pub label: String,
 }
 
+/// One linked worktree card (path plus optional branch).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeCard {
+    pub path: String,
+    pub branch: Option<String>,
+}
+
 /// Min/max pixel widths for the Outlook rails.
 pub const LEFT_WIDTH_MIN: f32 = 180.0;
 pub const LEFT_WIDTH_MAX: f32 = 420.0;
@@ -372,6 +379,11 @@ pub struct Workspace {
     pub diff_rows: Vec<crate::diff_view::DiffRow>,
     pub diff_sort: crate::diff_view::DiffSort,
     pub last_turn_paths: Vec<String>,
+    pub selected_diff: Option<String>,
+    pub diff_text: String,
+    pub worktree_cards: Vec<WorktreeCard>,
+    pub hello_ok: bool,
+    pub ping_ok: bool,
     pub browser_url: String,
     next_id: u64,
     next_notice: u64,
@@ -437,6 +449,11 @@ impl Workspace {
             diff_rows: Vec::new(),
             diff_sort: crate::diff_view::DiffSort::LastTurn,
             last_turn_paths: Vec::new(),
+            selected_diff: None,
+            diff_text: String::new(),
+            worktree_cards: Vec::new(),
+            hello_ok: false,
+            ping_ok: false,
             browser_url: String::new(),
             next_id: 1,
             next_notice: 1,
@@ -840,10 +857,12 @@ impl Workspace {
             self.models.join(", ")
         };
         format!(
-            "Project\n{}\n\nModel\n{}\n\nConnection\n{}\n\nSession\n{}\n\nThreads\n{}\n\nModels\n{}\n\nTurns\n{}\n\nPalette\n{}\n\nHelp\n{}",
+            "Project\n{}\n\nModel\n{}\n\nConnection\n{}\n\nHandshake\nhello {} ping {}\n\nSession\n{}\n\nThreads\n{}\n\nModels\n{}\n\nTurns\n{}\n\nNote\nlocal snapshot only\n\nPalette\n{}\n\nHelp\n{}",
             self.project,
             self.model,
             self.connection.status_label(),
+            if self.hello_ok { "ok" } else { "no" },
+            if self.ping_ok { "ok" } else { "no" },
             session_id.unwrap_or("(none yet)"),
             self.threads.len(),
             models,
@@ -855,7 +874,7 @@ impl Workspace {
 
     pub fn resource_detail(&self) -> String {
         let mut out = String::from(
-            "CPU samples only. Reservation is a local flag. Process containment is not attached.\n\n",
+            "CPU samples only. Reservation is a local flag. Process containment is not attached.\nNo contained processes.\n\n",
         );
         if self.cores.is_empty() {
             out.push_str("Core samples: (waiting)\n");
@@ -929,9 +948,26 @@ impl Workspace {
     }
 
     pub fn git_detail(&self) -> String {
-        let mut out = String::from("Worktrees\n");
-        if self.worktrees.is_empty() {
+        let mut out =
+            crate::review::git_header(&self.project, &self.branch_label(), &self.git_status);
+        out.push_str("\n\nCreate\n");
+        out.push_str(&format!(
+            "path {}  branch {}  create_branch {}\n",
+            self.wt_path, self.wt_branch, self.wt_create_branch
+        ));
+        out.push_str("\nWorktrees\n");
+        if self.worktree_cards.is_empty() && self.worktrees.is_empty() {
             out.push_str("(none listed)");
+        } else if !self.worktree_cards.is_empty() {
+            for (i, wt) in self.worktree_cards.iter().enumerate() {
+                let mark = if self.selected_worktree == Some(i) {
+                    "*"
+                } else {
+                    " "
+                };
+                let br = wt.branch.as_deref().unwrap_or("(detached)");
+                out.push_str(&format!("{mark} {br}  {}\n", wt.path));
+            }
         } else {
             for (i, wt) in self.worktrees.iter().enumerate() {
                 let mark = if self.selected_worktree == Some(i) {
@@ -1114,6 +1150,7 @@ impl Workspace {
 
     pub fn start_mcp(&mut self, name: &str) -> bool {
         match self.mcp.iter_mut().find(|m| m.name == name) {
+            Some(row) if row.state == McpLife::Ready => false,
             Some(row) => {
                 row.state = McpLife::Ready;
                 true
@@ -1166,11 +1203,27 @@ impl Workspace {
     }
 
     pub fn files_visible(&self) -> Vec<String> {
-        self.files
-            .iter()
+        let shown = crate::workbench::filter_files(&self.files, &self.file_filter);
+        shown
+            .into_iter()
             .filter(|path| ancestors_expanded(self, path))
-            .cloned()
             .collect()
+    }
+
+    pub fn apply_handshake(&mut self, hello_ok: bool, ping_ok: bool) {
+        self.hello_ok = hello_ok;
+        self.ping_ok = ping_ok;
+        self.connection = crate::review::handshake_state(hello_ok, ping_ok);
+    }
+
+    pub fn select_diff(&mut self, path: impl Into<String>) -> bool {
+        let path = path.into();
+        if self.diff_rows.iter().any(|r| r.path == path) {
+            self.selected_diff = Some(path);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn select_model(&mut self, model: impl Into<String>) -> bool {
@@ -1202,6 +1255,8 @@ impl Workspace {
                 .map(str::to_owned)
             {
                 let _ = self.select_file(&path);
+            } else if let Some(path) = self.selected_diff.clone() {
+                self.selected_file = Some(path);
             }
         }
         let Some(path) = self.selected_file.clone() else {
@@ -1298,12 +1353,21 @@ impl Workspace {
 
     pub fn diff_detail(&self) -> String {
         if self.diff_rows.is_empty() {
-            return "No working-tree diffs. Reload after a Grok turn.".into();
+            return "No working-tree diffs. Reload after a Grok turn. Text only, no apply.".into();
         }
-        let mut out = format!("Sort {}\n\n", self.diff_sort.label());
+        let mut out = format!("Sort {}\nText only, no apply.\n\n", self.diff_sort.label());
         for row in self.visible_diffs() {
-            let mark = if row.last_turn { "*" } else { " " };
-            out.push_str(&format!("{mark} {}  {}\n", row.status, row.path));
+            let star = if row.last_turn { "*" } else { " " };
+            let sel = if self.selected_diff.as_deref() == Some(row.path.as_str()) {
+                ">"
+            } else {
+                " "
+            };
+            out.push_str(&format!("{sel}{star} {}  {}\n", row.status, row.path));
+        }
+        if !self.diff_text.is_empty() {
+            out.push_str("\nPreview\n");
+            out.push_str(&self.diff_text);
         }
         out
     }
@@ -2048,6 +2112,39 @@ mod tests {
         assert_eq!(ws.agent_rows().len(), before);
         assert_eq!(ws.agent_rows()[0].0, ws.threads[0].id);
         assert!(ws.select_thread_id(&ws.threads[0].id.clone()));
+    }
+
+    #[test]
+    fn handshake_and_diff_select_and_mcp_ready_is_noop() {
+        let mut ws = Workspace::new("C:/repo", "m");
+        ws.apply_handshake(true, true);
+        assert_eq!(ws.connection, crate::ConnectionState::Ready);
+        assert!(ws.session_detail(None).contains("hello ok"));
+        assert!(ws.session_detail(None).contains("local snapshot only"));
+        ws.apply_handshake(true, false);
+        assert_eq!(ws.connection, crate::ConnectionState::Connecting);
+        ws.set_git_status("## feat...origin/feat [ahead 1]\n M a.rs\n");
+        let git = ws.git_detail();
+        assert!(git.contains("feat"));
+        assert!(git.contains("dirty"));
+        assert!(git.contains("Create"));
+        ws.apply_porcelain(" M a.rs\n");
+        assert!(ws.select_diff("a.rs"));
+        assert_eq!(ws.selected_diff.as_deref(), Some("a.rs"));
+        assert!(!ws.select_diff("missing.rs"));
+        ws.diff_text = "diff --git a/a.rs".into();
+        assert!(ws.diff_detail().contains("Preview"));
+        assert!(ws.resource_detail().contains("No contained processes"));
+        ws.mcp.push(crate::workspace::McpRow {
+            name: "x".into(),
+            command: "npx".into(),
+            transport: "stdio".into(),
+            state: crate::workspace::McpLife::Ready,
+        });
+        assert!(!ws.start_mcp("x"));
+        ws.file_filter = "nope".into();
+        ws.set_files(vec!["src/a.rs".into()]);
+        assert!(ws.files_visible().is_empty());
     }
 
     #[test]

@@ -23,3 +23,5 @@ multiplexer-resman = { path = "../../crates/multiplexer-resman" }
 multiplexer-mcp = { path = "../../crates/multiplexer-mcp" }
 multiplexer-checkpoint = { path = "../../crates/multiplexer-checkpoint" }
 multiplexer-client = { path = "../../crates/multiplexer-client" }
+multiplexer-terminal = { path = "../../crates/multiplexer-terminal" }
+multiplexer-worktree = { path = "../../crates/multiplexer-worktree" }

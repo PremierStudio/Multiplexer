@@ -47,12 +47,27 @@ pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
             button("Reload", "Refresh worktrees", ClientAction::RefreshGit),
             button("Status", "Run git status", ClientAction::RunGitStatus),
             button(
-                "New WT",
-                "Hint a worktree path",
+                "Create",
+                "git.worktree.create",
                 ClientAction::CreateWorktree,
             ),
+            button(
+                "Switch",
+                "use selected worktree cwd",
+                ClientAction::SwitchWorktree,
+            ),
+            button(
+                "Remove",
+                "remove selected worktree",
+                ClientAction::RemoveWorktree,
+            ),
         ],
-        InspectorTab::Terminal | InspectorTab::Skills => Vec::new(),
+        InspectorTab::Terminal => vec![button(
+            "Kill",
+            "kill the running command",
+            ClientAction::KillTerm,
+        )],
+        InspectorTab::Skills => Vec::new(),
         InspectorTab::Files => vec![
             button("Reload", "rescan project tree", ClientAction::RefreshFiles),
             button("Reveal", "copy absolute path", ClientAction::RevealFile),
@@ -77,6 +92,11 @@ pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
                 ClientAction::SortDiffLastTurn,
             ),
             button("Name", "sort by file name", ClientAction::SortDiffFileName),
+            button(
+                "Mention",
+                "@ selected diff path",
+                ClientAction::InsertFileMention,
+            ),
         ],
         InspectorTab::Browser => vec![button("Open", "system browser", ClientAction::OpenBrowser)],
     }
@@ -170,7 +190,7 @@ mod tests {
         assert_eq!(inspector_body(&ws, None), ws.agents_detail());
         ws.inspector = InspectorTab::Diff;
         assert_eq!(inspector_body(&ws, None), ws.diff_detail());
-        assert_eq!(tab_buttons(InspectorTab::Diff).len(), 3);
+        assert_eq!(tab_buttons(InspectorTab::Diff).len(), 4);
         ws.inspector = InspectorTab::Browser;
         assert_eq!(inspector_body(&ws, None), ws.browser_detail());
         assert!(!tab_buttons(InspectorTab::Browser).is_empty());

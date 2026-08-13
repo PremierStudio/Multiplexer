@@ -63,6 +63,9 @@ pub enum ClientAction {
     RefreshFiles,
     RevealFile,
     OpenExternal,
+    SwitchWorktree,
+    RemoveWorktree,
+    KillTerm,
 }
 
 /// Apply a workspace-only layout action.
@@ -264,7 +267,10 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
         | ClientAction::RunGitStatus
         | ClientAction::RefreshFiles
         | ClientAction::RevealFile
-        | ClientAction::OpenExternal => false,
+        | ClientAction::OpenExternal
+        | ClientAction::SwitchWorktree
+        | ClientAction::RemoveWorktree
+        | ClientAction::KillTerm => false,
     }
 }
 
@@ -276,7 +282,7 @@ mod tests {
         Workspace::new("p", "m")
     }
 
-    fn host_noops() -> [ClientAction; 21] {
+    fn host_noops() -> [ClientAction; 24] {
         [
             ClientAction::Send,
             ClientAction::Interrupt,
@@ -299,6 +305,9 @@ mod tests {
             ClientAction::RefreshFiles,
             ClientAction::RevealFile,
             ClientAction::OpenExternal,
+            ClientAction::SwitchWorktree,
+            ClientAction::RemoveWorktree,
+            ClientAction::KillTerm,
         ]
     }
 
@@ -596,6 +605,7 @@ mod tests {
         ws.toggle_right_row("mcp:linear");
         assert!(apply_layout_action(&mut ws, ClientAction::StartMcp));
         assert_eq!(ws.mcp[0].state, crate::workspace::McpLife::Ready);
+        assert!(!apply_layout_action(&mut ws, ClientAction::StartMcp));
         assert!(apply_layout_action(&mut ws, ClientAction::StopMcp));
         assert_eq!(ws.mcp[0].state, crate::workspace::McpLife::Stopped);
         ws.toggle_right_row("mcp:linear");

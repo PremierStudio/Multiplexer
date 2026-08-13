@@ -25,20 +25,25 @@ use multiplexer_mcp::{
 use multiplexer_resman::sample_cores;
 use multiplexer_server::Server;
 use multiplexer_shell::{
-    apply_layout_action, auto_dismisses, bottom_height_from_mouse, default_browser_candidates,
-    default_settings_path, delete_forward, detect_browsers, detect_remotes, empty_state_tiles,
-    format_line, help_text, hit_action, insert_at, inspector_rows, is_tui_hatch, join_project_path,
-    merge_mcp, move_end, move_home, move_left, move_right, move_word_left, move_word_right,
-    palette_hits, parse_builtin, parse_slash, plan_send, read_settings, remotes_pill_label,
-    row_detail, search_workspace, status_from, status_line, title_overflow, visible_notices,
-    visible_tail, write_settings, BindingTable, BuiltinCmd, CenterMode, CheckpointRow, Chord,
+    activity_items, apply_layout_action, auto_dismisses, bottom_height_from_mouse, cap_text,
+    context_strip, default_browser_candidates, default_settings_path, delete_forward,
+    detect_browsers, detect_remotes, empty_state_tiles, format_line, git_diff_line, help_text,
+    hit_action, insert_at, inspector_rows, is_tui_hatch, join_project_path, merge_cores, merge_mcp,
+    move_end, move_home, move_left, move_right, move_word_left, move_word_right, palette_hits,
+    parse_builtin, parse_slash, plan_send, read_settings, remotes_pill_label, row_detail,
+    search_workspace, status_from, status_line, title_overflow, visible_notices, visible_tail,
+    working_copy, write_settings, BindingTable, BuiltinCmd, CenterMode, CheckpointRow, Chord,
     ChromeGlyph, ClientAction, CoreRow, EmptyStateSpec, InspectorTab, LeftSection, ListRowSpec,
     McpRow, NoticeKind, PaletteState, RemoteRow, Role, SearchKind, SendPlan, SettingsSection,
-    SlashCommand, TermLineKind, TuiLife, Workspace, NOTICE_AUTO_MS, TERM_PROMPT,
+    SlashCommand, TermLineKind, TuiLife, Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS,
+    TERM_PROMPT,
 };
+use multiplexer_terminal::ProcessCapture;
 use multiplexer_wire::codec::{decode_frame, encode_frame};
 use multiplexer_wire::jsonrpc::{Id, Message, Request};
 use multiplexer_wire::methods;
+use multiplexer_wire::protocol::PROTOCOL_VERSION;
+use multiplexer_worktree::{reminder_from_list, Worktree};
 use serde_json::{json, Value};
 use theme::Theme;
 
@@ -78,6 +83,9 @@ struct ShellView {
     win_w: f32,
     bindings: BindingTable,
     notice_born: Vec<(u64, Instant)>,
+    capture: Option<ProcessCapture>,
+    pending_diff: Option<(String, Receiver<CommandResult>)>,
+    turn_started: Option<Instant>,
 }
 
 impl ShellView {
@@ -92,7 +100,7 @@ impl ShellView {
             workspace.model = workspace.settings.default_model.clone();
         }
         workspace.set_models(vec!["grok".into(), "grok-4.6".into(), "fake".into()]);
-        workspace.cores = sample_cores(&[0, 1])
+        workspace.cores = sample_cores(&[])
             .into_iter()
             .map(|c| CoreRow {
                 index: c.index,
@@ -164,8 +172,12 @@ impl ShellView {
             win_w: 1360.0,
             bindings,
             notice_born: Vec::new(),
+            capture: None,
+            pending_diff: None,
+            turn_started: None,
         };
         view.apply_theme();
+        view.handshake();
         view.bootstrap_catalogs();
         view.refresh_worktrees();
         view.refresh_reminder();
@@ -374,7 +386,18 @@ impl ShellView {
             if let Ok(i) = rest.parse::<usize>() {
                 self.workspace.selected_worktree = Some(i);
             }
+        } else if let Some(path) = id.strip_prefix("diff:") {
+            if path != "empty" && self.workspace.select_diff(path) {
+                self.load_diff_preview(path);
+            }
         }
+    }
+
+    fn load_diff_preview(&mut self, path: &str) {
+        let line = git_diff_line(path);
+        let rx = spawn_command(windows_cmd(&line, PathBuf::from(&self.workspace.project)));
+        self.pending_diff = Some((path.to_owned(), rx));
+        self.workspace.diff_text = format!("loading {path}…");
     }
 
     fn activate_palette(&mut self, cx: &mut Context<Self>) {
@@ -536,6 +559,9 @@ impl ShellView {
             ClientAction::RefreshFiles => self.reload_files(),
             ClientAction::RevealFile => self.reveal_file(cx),
             ClientAction::OpenExternal => self.open_external(),
+            ClientAction::SwitchWorktree => self.switch_worktree(),
+            ClientAction::RemoveWorktree => self.remove_worktree(),
+            ClientAction::KillTerm => self.kill_capture(),
             ClientAction::StartMcp | ClientAction::StopMcp => {
                 if !apply_layout_action(&mut self.workspace, action) {
                     self.workspace
@@ -546,6 +572,39 @@ impl ShellView {
                 let _ = apply_layout_action(&mut self.workspace, other);
             }
         }
+    }
+
+    fn jump_activity(&mut self, id: &str, cx: &mut Context<Self>) {
+        if id == "act:reminder" {
+            self.dispatch(ClientAction::OpenGitTab, cx);
+        } else if id == "act:busy" {
+            self.focus = Focus::Composer;
+            cx.notify();
+        } else if id.starts_with("act:notice:") {
+            let _ = self.workspace.dismiss_newest_notice();
+            cx.notify();
+        } else if id.starts_with("act:log:") || id == "act:empty" {
+            self.dispatch(ClientAction::SelectTab(InspectorTab::Activity), cx);
+            self.focus = Focus::Terminal;
+        } else if id.starts_with("act:approval:") {
+            cx.notify();
+        } else {
+            self.dispatch(ClientAction::SelectTab(InspectorTab::Activity), cx);
+        }
+    }
+
+    fn handshake(&mut self) {
+        let hello = self.server.handle_frame(&rpc(
+            "hello",
+            methods::SYSTEM_HELLO,
+            json!({ "protocol_version": PROTOCOL_VERSION }),
+        ));
+        let ping = self
+            .server
+            .handle_frame(&rpc("ping", methods::SYSTEM_PING, json!({})));
+        let hello_ok = first_error(&hello).is_none() && !hello.is_empty();
+        let ping_ok = first_error(&ping).is_none() && !ping.is_empty();
+        self.workspace.apply_handshake(hello_ok, ping_ok);
     }
 
     fn persist_settings(&mut self) {
@@ -603,6 +662,10 @@ impl ShellView {
     }
 
     fn interrupt(&mut self) {
+        if self.capture.is_some() {
+            self.kill_capture();
+            return;
+        }
         if let Some(sid) = &self.session_id {
             let _ = self.server.handle_frame(&rpc(
                 "int",
@@ -616,14 +679,22 @@ impl ShellView {
     }
 
     fn refresh_cores(&mut self) {
-        self.workspace.cores = sample_cores(&(0..8).collect::<Vec<_>>())
+        let reserved: Vec<usize> = self
+            .workspace
+            .cores
+            .iter()
+            .filter(|c| c.reserved)
+            .map(|c| c.index)
+            .collect();
+        let incoming: Vec<CoreRow> = sample_cores(&reserved)
             .into_iter()
             .map(|c| CoreRow {
                 index: c.index,
                 usage: c.usage,
-                reserved: c.reserved || c.index < 2,
+                reserved: c.reserved,
             })
             .collect();
+        self.workspace.cores = merge_cores(&self.workspace.cores, incoming);
         self.last_core_sample = Instant::now();
         self.term_meta("cores resampled");
     }
@@ -706,9 +777,10 @@ impl ShellView {
             methods::GIT_WORKTREES,
             json!({ "cwd": self.workspace.project }),
         ));
-        let paths = worktree_paths(&frames);
-        if let Some(path) = paths.into_iter().nth(1) {
-            self.workspace.set_reminder("existing", path);
+        let trees = worktree_records(&frames);
+        let branch = self.workspace.branch_label();
+        if let Some(r) = reminder_from_list(&trees, &branch) {
+            self.workspace.set_reminder(r.branch, r.path);
         }
     }
 
@@ -718,8 +790,62 @@ impl ShellView {
             methods::GIT_WORKTREES,
             json!({ "cwd": self.workspace.project }),
         ));
-        self.workspace.worktrees = worktree_paths(&frames);
+        let cards = worktree_cards(&frames);
+        self.workspace.worktrees = cards.iter().map(|c| c.path.clone()).collect();
+        self.workspace.worktree_cards = cards;
         self.term_meta(&format!("worktrees {}", self.workspace.worktrees.len()));
+        self.refresh_reminder();
+    }
+
+    fn switch_worktree(&mut self) {
+        let Some(i) = self.workspace.selected_worktree else {
+            self.workspace
+                .push_notice(NoticeKind::Warn, "select a worktree first");
+            return;
+        };
+        let Some(path) = self.workspace.worktrees.get(i).cloned() else {
+            self.workspace
+                .push_notice(NoticeKind::Warn, "select a worktree first");
+            return;
+        };
+        self.workspace.project = path.clone();
+        self.reload_files();
+        self.reload_diffs();
+        self.workspace
+            .push_notice(NoticeKind::Info, format!("cwd {path}"));
+    }
+
+    fn remove_worktree(&mut self) {
+        let Some(i) = self.workspace.selected_worktree else {
+            self.workspace
+                .push_notice(NoticeKind::Warn, "select a worktree first");
+            return;
+        };
+        let Some(path) = self.workspace.worktrees.get(i).cloned() else {
+            self.workspace
+                .push_notice(NoticeKind::Warn, "select a worktree first");
+            return;
+        };
+        if i == 0 {
+            self.workspace
+                .push_notice(NoticeKind::Warn, "refuse removing the primary worktree");
+            return;
+        }
+        self.run_shell(&format!("git worktree remove \"{path}\""));
+        self.workspace.selected_worktree = None;
+        self.workspace
+            .push_notice(NoticeKind::Info, format!("remove requested for {path}"));
+    }
+
+    fn kill_capture(&mut self) {
+        if let Some(mut cap) = self.capture.take() {
+            let _ = cap.kill();
+            self.workspace
+                .push_notice(NoticeKind::Info, "command killed");
+        } else {
+            self.workspace
+                .push_notice(NoticeKind::Info, "no running command");
+        }
     }
 
     fn create_checkpoint(&mut self) {
@@ -880,6 +1006,8 @@ impl ShellView {
         });
         self.pending_turn = Some(rx);
         self.ignore_turn = false;
+        self.turn_started = Some(Instant::now());
+        self.workspace.busy = true;
         self.term_meta("grok -p running in background");
     }
 
@@ -938,9 +1066,58 @@ impl ShellView {
 
     fn run_terminal_draft(&mut self) {
         let Some(line) = self.workspace.take_term_draft() else {
+            self.workspace
+                .push_notice(NoticeKind::Warn, "command empty");
             return;
         };
-        self.run_shell(&line);
+        if self.capture.is_some() {
+            self.workspace
+                .push_notice(NoticeKind::Warn, "a command is already running");
+            return;
+        }
+        self.term_line(TermLineKind::Input, &line);
+        if let Some(builtin) = parse_builtin(&line) {
+            self.run_builtin(builtin);
+            return;
+        }
+        match ProcessCapture::spawn(
+            "cmd.exe",
+            &["/C", &line],
+            PathBuf::from(&self.workspace.project).as_path(),
+        ) {
+            Ok(cap) => {
+                self.capture = Some(cap);
+                self.term_meta("command running (killable)");
+            }
+            Err(err) => {
+                self.term_line(TermLineKind::Error, &err.to_string());
+            }
+        }
+    }
+
+    fn run_builtin(&mut self, builtin: BuiltinCmd) {
+        match builtin {
+            BuiltinCmd::Clear => self.workspace.terminal_log.clear(),
+            BuiltinCmd::Help => {
+                self.term_meta(help_text());
+            }
+            BuiltinCmd::Cores => {
+                let _ = self.workspace.select_inspector(InspectorTab::Resources);
+            }
+            BuiltinCmd::Mcp => {
+                let _ = self.workspace.select_inspector(InspectorTab::Mcp);
+            }
+            BuiltinCmd::Git => {
+                let _ = self.workspace.select_inspector(InspectorTab::Git);
+            }
+            BuiltinCmd::Checkpoint => {
+                let _ = self.workspace.select_inspector(InspectorTab::Checkpoints);
+            }
+            BuiltinCmd::Skills => {
+                let _ = self.workspace.select_inspector(InspectorTab::Skills);
+            }
+            BuiltinCmd::Unknown => self.term_meta("unknown builtin"),
+        }
     }
 
     fn run_shell(&mut self, line: &str) {
@@ -992,20 +1169,40 @@ impl ShellView {
         if self.workspace.inspector == InspectorTab::Resources
             && self.last_core_sample.elapsed() > Duration::from_millis(1500)
         {
-            self.workspace.cores = sample_cores(&[0, 1])
-                .into_iter()
-                .map(|c| CoreRow {
-                    index: c.index,
-                    usage: c.usage,
-                    reserved: c.reserved,
-                })
-                .collect();
-            self.last_core_sample = Instant::now();
+            self.refresh_cores();
+        }
+        if let Some(cap) = self.capture.as_mut() {
+            for line in cap.try_read() {
+                multiplexer_shell::push_capped(
+                    &mut self.workspace.terminal_log,
+                    format_line(TermLineKind::Output, &line),
+                );
+            }
+        }
+        if let Some((path, rx)) = self.pending_diff.take() {
+            match rx.try_recv() {
+                Ok(out) => {
+                    let body = if out.ok { out.stdout } else { out.stderr };
+                    self.workspace.diff_text = cap_text(&body, DIFF_TEXT_CAP);
+                    if self.workspace.diff_text.trim().is_empty() {
+                        self.workspace.diff_text =
+                            format!("(no unstaged diff for {path}; untracked or cached only)");
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.pending_diff = Some((path, rx));
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.workspace.diff_text = format!("diff worker dropped for {path}");
+                }
+            }
         }
         if let Some(rx) = &self.pending_turn {
             match rx.try_recv() {
                 Ok(out) => {
                     self.pending_turn = None;
+                    self.workspace.busy = false;
+                    self.turn_started = None;
                     if self.ignore_turn {
                         self.ignore_turn = false;
                     } else if out.ok {
@@ -1018,6 +1215,7 @@ impl ShellView {
                         let estimate = ((text.chars().count() / 4) as u64).max(1);
                         self.workspace.usage_tokens =
                             self.workspace.usage_tokens.saturating_add(estimate);
+                        self.workspace.usage_turns = self.workspace.usage_turns.saturating_add(1);
                         self.workspace.push_notice(
                             multiplexer_shell::NoticeKind::Good,
                             format!("turn complete · ~{estimate} tok"),
@@ -1037,6 +1235,8 @@ impl ShellView {
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.pending_turn = None;
+                    self.workspace.busy = false;
+                    self.turn_started = None;
                     if !self.ignore_turn {
                         self.workspace.mark_error("grok worker dropped");
                     }
@@ -1131,6 +1331,8 @@ impl ShellView {
         self.age_notices();
         if self.pending_turn.is_some()
             || self.pending_cmd.is_some()
+            || self.capture.is_some()
+            || self.pending_diff.is_some()
             || self.workspace.grok_tui.life == TuiLife::Running
             || self
                 .workspace
@@ -1600,7 +1802,7 @@ impl ShellView {
         let selected = self.workspace.selected;
         let threads = self.workspace.threads.clone();
         let files = self.workspace.files_visible();
-        let activity = self.workspace.terminal_log.clone();
+        let activity = activity_items(&self.workspace);
         let icons = div()
             .w(px(44.0))
             .h_full()
@@ -1797,22 +1999,19 @@ impl ShellView {
             }
             LeftSection::Activity => activity
                 .into_iter()
-                .rev()
-                .take(20)
-                .enumerate()
-                .map(|(i, line)| {
+                .map(|item| {
+                    let jump = item.id.clone();
                     list_row(
-                        format!("act-{i}"),
+                        item.id.clone(),
                         ChromeGlyph::Activity.mark(),
-                        line,
-                        "",
+                        item.title,
+                        item.hint,
                         "",
                         false,
                         false,
                         cx,
-                        |this, cx| {
-                            this.focus = Focus::Terminal;
-                            cx.notify();
+                        move |this, cx| {
+                            this.jump_activity(&jump, cx);
                         },
                     )
                 })
@@ -1967,6 +2166,26 @@ impl ShellView {
             .min_h_0()
             .overflow_hidden()
             .child(self.center_mode_bar(cx))
+            .child(
+                div()
+                    .px_4()
+                    .pt_2()
+                    .text_color(Theme::faint())
+                    .child(format!(
+                        "{}  ·  {}  ·  headless · grok -p",
+                        thread
+                            .as_ref()
+                            .map(|t| t.title.as_str())
+                            .unwrap_or("New chat"),
+                        self.workspace.model
+                    )),
+            )
+            .child(
+                div()
+                    .px_4()
+                    .text_color(Theme::muted())
+                    .child(context_strip()),
+            )
             .child(if tui {
                 self.grok_tui_host(cx)
             } else {
@@ -1977,11 +2196,12 @@ impl ShellView {
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .children(match thread {
+                    .children(match thread.as_ref() {
                         Some(t) if t.messages.is_empty() => vec![empty_center()],
                         Some(t) => t
                             .messages
-                            .into_iter()
+                            .iter()
+                            .cloned()
                             .map(|m| {
                                 let user = m.role == Role::User;
                                 let row = if user {
@@ -2010,13 +2230,25 @@ impl ShellView {
                                                 } else {
                                                     Theme::good()
                                                 })
-                                                .child(if user { "You" } else { "Agent" }),
+                                                .child(if user { "You" } else { "Grok" }),
                                         )
                                         .child(div().child(m.text)),
                                 )
                             })
                             .collect(),
                         None => vec![empty_center()],
+                    })
+                    .child(if self.workspace.busy {
+                        let secs = self
+                            .turn_started
+                            .map(|t| t.elapsed().as_secs())
+                            .unwrap_or(0);
+                        div()
+                            .text_color(Theme::accent())
+                            .child(working_copy(secs))
+                            .into_any()
+                    } else {
+                        div().into_any()
                     })
                     .into_any()
             })
@@ -2030,7 +2262,9 @@ impl ShellView {
                     .flex()
                     .flex_col()
                     .gap_2()
-                    .child(
+                    .child(if thread.as_ref().is_some_and(|t| !t.messages.is_empty()) {
+                        div().into_any()
+                    } else {
                         div()
                             .flex()
                             .gap_2()
@@ -2056,8 +2290,9 @@ impl ShellView {
                             }))
                             .child(chip("Copy last", cx, |this, cx| {
                                 this.copy_last_message(cx);
-                            })),
-                    )
+                            }))
+                            .into_any()
+                    })
                     .child(
                         div()
                             .flex()
@@ -2635,6 +2870,10 @@ impl ShellView {
                 }))
                 .child(ghost_btn("Clear", "cls", cx, |this, cx| {
                     this.workspace.terminal_log.clear();
+                    cx.notify();
+                }))
+                .child(ghost_btn("Kill", "Ctrl+.", cx, |this, cx| {
+                    this.kill_capture();
                     cx.notify();
                 })),
         )
@@ -3288,14 +3527,49 @@ fn first_error(frames: &[String]) -> Option<String> {
     None
 }
 
-fn worktree_paths(frames: &[String]) -> Vec<String> {
+fn worktree_cards(frames: &[String]) -> Vec<WorktreeCard> {
     for f in frames {
         if let Ok(Message::Response(r)) = decode_frame(f) {
             if let Some(arr) = r.result.get("worktrees").and_then(Value::as_array) {
                 return arr
                     .iter()
-                    .filter_map(|row| row.get("path").and_then(Value::as_str))
-                    .map(str::to_owned)
+                    .filter_map(|row| {
+                        let path = row.get("path").and_then(Value::as_str)?;
+                        Some(WorktreeCard {
+                            path: path.to_owned(),
+                            branch: row.get("branch").and_then(Value::as_str).map(str::to_owned),
+                        })
+                    })
+                    .collect();
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn worktree_records(frames: &[String]) -> Vec<Worktree> {
+    for f in frames {
+        if let Ok(Message::Response(r)) = decode_frame(f) {
+            if let Some(arr) = r.result.get("worktrees").and_then(Value::as_array) {
+                return arr
+                    .iter()
+                    .filter_map(|row| {
+                        let path = row.get("path").and_then(Value::as_str)?;
+                        Some(Worktree {
+                            path: path.to_owned(),
+                            head: row.get("head").and_then(Value::as_str).map(str::to_owned),
+                            branch: row.get("branch").and_then(Value::as_str).map(str::to_owned),
+                            detached: row
+                                .get("detached")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false),
+                            locked: row.get("locked").and_then(Value::as_bool).unwrap_or(false),
+                            prunable: row
+                                .get("prunable")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false),
+                        })
+                    })
                     .collect();
             }
         }

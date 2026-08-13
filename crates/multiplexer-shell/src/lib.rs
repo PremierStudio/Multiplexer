@@ -20,6 +20,7 @@ mod notices;
 mod overlay;
 mod palette;
 mod remote;
+mod review;
 mod search;
 mod settings;
 mod slash;
@@ -55,6 +56,10 @@ pub use palette::{
     default_items, filter_items, hit_action, palette_hits, pane_items, PaletteItem, PaletteState,
 };
 pub use remote::{detect_remotes, RemoteRow};
+pub use review::{
+    cap_text, context_strip, git_ahead_behind, git_diff_line, git_dirty, git_header,
+    handshake_state, merge_cores, working_copy, DIFF_TEXT_CAP,
+};
 pub use search::{search_workspace, SearchHit, SearchKind};
 pub use settings::{
     default_settings_path, read_settings, settings_from_json, settings_to_json, write_settings,
@@ -77,9 +82,9 @@ pub use workbench::{
 };
 pub use workspace::{
     ChatMessage, CheckpointRow, ChromeLayout, CoreRow, InspectorTab, LeftSection, McpLife, McpRow,
-    RailVis, Role, Thread, Workspace, BOTTOM_HEIGHT_COLLAPSED, BOTTOM_HEIGHT_EXPANDED,
-    BOTTOM_HEIGHT_OPEN_MIN, LEFT_WIDTH_MAX, LEFT_WIDTH_MIN, RAIL_COLLAPSED, RIGHT_WIDTH_MAX,
-    RIGHT_WIDTH_MIN,
+    RailVis, Role, Thread, Workspace, WorktreeCard, BOTTOM_HEIGHT_COLLAPSED,
+    BOTTOM_HEIGHT_EXPANDED, BOTTOM_HEIGHT_OPEN_MIN, LEFT_WIDTH_MAX, LEFT_WIDTH_MIN, RAIL_COLLAPSED,
+    RIGHT_WIDTH_MAX, RIGHT_WIDTH_MIN,
 };
 
 use multiplexer_layout::{LayoutForest, LayoutNode, PaneId};
