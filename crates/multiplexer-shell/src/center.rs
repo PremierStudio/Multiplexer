@@ -75,10 +75,7 @@ impl GrokTuiHost {
     pub fn push_output(&mut self, chunk: &str) {
         self.scrollback.push_str(chunk);
         const CAP: usize = 64 * 1024;
-        if self.scrollback.len() > CAP {
-            let cut = self.scrollback.len() - CAP;
-            self.scrollback = self.scrollback[cut..].to_owned();
-        }
+        self.scrollback = keep_tail(&self.scrollback, CAP);
     }
 
     pub fn mark_running(
@@ -117,6 +114,18 @@ impl GrokTuiHost {
             self.note
         )
     }
+}
+
+/// Keep the last `max` bytes of `text`, never splitting a UTF-8 character.
+pub fn keep_tail(text: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
+    if text.len() <= max {
+        return text.to_owned();
+    }
+    let cut = text.floor_char_boundary(text.len() - max);
+    text[cut..].to_owned()
 }
 
 #[cfg(test)]
@@ -169,5 +178,28 @@ mod tests {
         assert!(s.contains("Windows Terminal"));
         assert_eq!(host.life, TuiLife::Running);
         assert!(host.pid.is_none());
+    }
+
+    #[test]
+    fn keep_tail_does_not_split_multibyte_chars() {
+        assert_eq!(keep_tail("hello", 10), "hello");
+        assert_eq!(keep_tail("abcdef", 3), "def");
+        assert_eq!(keep_tail("", 8), "");
+        assert_eq!(keep_tail("abc", 0), "");
+        let braille = "⠀";
+        assert_eq!(braille.len(), 3);
+        let text = format!("{}{}", braille.repeat(20), "z".repeat(8));
+        let tail = keep_tail(&text, 10);
+        assert!(tail.is_char_boundary(0));
+        assert!(tail.ends_with("zzzzzzzz"));
+        assert!(tail.starts_with(braille));
+        assert!(!text.is_char_boundary(text.len() - 10));
+        assert_eq!(keep_tail(braille, 1), braille);
+        assert_ne!(keep_tail(braille, 1), "");
+        let mut host = GrokTuiHost::idle(".");
+        host.scrollback = "⠀".repeat(22_000);
+        host.push_output("more");
+        assert!(host.scrollback.is_char_boundary(0));
+        assert!(host.scrollback.len() <= 64 * 1024);
     }
 }

@@ -50,7 +50,7 @@ pub use catalog::{
     format_ram, merge_models, open_external_program, parse_model_keys, parse_tailscale_dns,
     remotes_serve_note, slash_arg,
 };
-pub use center::{CenterMode, GrokTuiHost, TuiLife};
+pub use center::{keep_tail, CenterMode, GrokTuiHost, TuiLife};
 pub use chrome_geom::{bottom_height_from_mouse, remotes_pill_label, title_overflow, tui_host_px};
 pub use composer::{
     clamp_cursor, delete_back, delete_forward, insert_at, move_end, move_home, move_left,
