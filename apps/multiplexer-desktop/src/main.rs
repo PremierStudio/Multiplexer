@@ -60,7 +60,10 @@ use multiplexer_worktree::{reminder_from_list, Worktree};
 use rows::{inspector_row_el, list_row};
 use serde_json::{json, Value};
 use theme::Theme;
-use widgets::{chip, click_pill, empty_center, ghost_btn, glass_bar, glass_pane, icon_btn};
+use widgets::{
+    chip, click_pill, empty_center, ghost_btn, glass_bar, glass_pane, icon_btn, primary_btn,
+    rail_icon,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DragRail {
@@ -2234,18 +2237,28 @@ impl ShellView {
                     ),
             )
             .child(div().flex_1())
-            .child(self.mode_chip(
-                "Chat",
-                self.workspace.center_mode == CenterMode::Gui,
-                cx,
-                |this, cx| this.dispatch(ClientAction::SetCenterGui, cx),
-            ))
-            .child(self.mode_chip(
-                "TUI",
-                self.workspace.center_mode == CenterMode::GrokTui,
-                cx,
-                |this, cx| this.dispatch(ClientAction::SetCenterTui, cx),
-            ))
+            .child(
+                div()
+                    .h(px(28.0))
+                    .px_1()
+                    .rounded_lg()
+                    .bg(Theme::raised())
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(self.mode_chip(
+                        "Chat",
+                        self.workspace.center_mode == CenterMode::Gui,
+                        cx,
+                        |this, cx| this.dispatch(ClientAction::SetCenterGui, cx),
+                    ))
+                    .child(self.mode_chip(
+                        "TUI",
+                        self.workspace.center_mode == CenterMode::GrokTui,
+                        cx,
+                        |this, cx| this.dispatch(ClientAction::SetCenterTui, cx),
+                    )),
+            )
             .child(if hide("turns_pill") {
                 div().into_any()
             } else {
@@ -2328,144 +2341,142 @@ impl ShellView {
             .h_full()
             .flex()
             .flex_col()
+            .items_center()
             .gap_1()
             .py_2()
             .bg(Theme::ink())
             .children(LeftSection::all().into_iter().map(|s| {
                 let on = section == s;
-                div()
-                    .id(SharedString::from(s.rail_label()))
-                    .h(px(36.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .bg(Theme::transparent())
-                    .text_color(if on { Theme::text() } else { Theme::muted() })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, _, cx| {
-                            this.dispatch(ClientAction::SelectLeftSection(s), cx);
-                        }),
-                    )
-                    .child(s.glyph())
+                rail_icon(s.glyph(), s.rail_label(), on, cx, move |this, cx| {
+                    this.dispatch(ClientAction::SelectLeftSection(s), cx);
+                })
             }));
         let rail = glass_pane()
             .w(px(w))
             .h_full()
             .flex()
             .overflow_hidden()
-            .bg(Theme::ink())
+            .bg(Theme::rail())
             .border_r_1();
         if !open {
             return rail.child(icons).into_any();
         }
-        let list =
-            div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .min_w_0()
-                .min_h_0()
-                .overflow_hidden()
-                .bg(Theme::ink())
-                .child(
-                    div()
-                        .px_3()
-                        .pt_3()
-                        .pb_2()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            div()
-                                .id("new_thread")
-                                .flex_1()
-                                .h(px(28.0))
-                                .px_1()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .text_color(Theme::text())
-                                .cursor_pointer()
-                                .hover(|s| s.text_color(Theme::muted()))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.dispatch(ClientAction::NewThread, cx);
-                                    }),
-                                )
-                                .child(ChromeGlyph::Plus.mark())
-                                .child("New session"),
-                        )
-                        .child(icon_btn(
-                            ChromeGlyph::Close.mark(),
-                            "Hide left",
-                            cx,
-                            |this, cx| {
-                                this.dispatch(ClientAction::HideLeft, cx);
-                            },
-                        )),
-                )
-                .child(
-                    div()
-                        .px_3()
-                        .pb_1()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .text_size(Theme::text_caption())
-                        .text_color(Theme::faint())
-                        .child(if section == LeftSection::Threads {
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_1()
-                                .child(div().text_color(Theme::faint()).child(format!(
-                                    "recent   ·   {}",
-                                    self.workspace.branch_label()
-                                )))
-                                .child(
-                                    div()
-                                        .id("chat_filter")
-                                        .text_color(if self.focus == Focus::ChatFilter {
-                                            Theme::text()
-                                        } else {
-                                            Theme::faint()
-                                        })
-                                        .cursor_pointer()
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            cx.listener(|this, _, _, cx| {
-                                                this.focus = Focus::ChatFilter;
-                                                cx.notify();
-                                            }),
-                                        )
-                                        .child(if self.workspace.chat_filter.is_empty() {
-                                            SharedString::from("Search chats")
-                                        } else {
-                                            SharedString::from(self.workspace.chat_filter.clone())
+        let list = div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .min_h_0()
+            .overflow_hidden()
+            .bg(Theme::rail())
+            .child(
+                div()
+                    .px_3()
+                    .pt_3()
+                    .pb_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("new_thread")
+                            .flex_1()
+                            .h(px(32.0))
+                            .px_3()
+                            .rounded_lg()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .bg(Theme::raised())
+                            .text_color(Theme::text())
+                            .cursor_pointer()
+                            .hover(|s| s.bg(Theme::selection()))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.dispatch(ClientAction::NewThread, cx);
+                                }),
+                            )
+                            .child(ChromeGlyph::Plus.mark())
+                            .child("New session"),
+                    )
+                    .child(icon_btn(
+                        ChromeGlyph::Close.mark(),
+                        "Hide left",
+                        cx,
+                        |this, cx| {
+                            this.dispatch(ClientAction::HideLeft, cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .px_3()
+                    .pb_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(Theme::text_caption())
+                    .text_color(Theme::faint())
+                    .child(if section == LeftSection::Threads {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .w_full()
+                            .child(
+                                div()
+                                    .id("chat_filter")
+                                    .h(px(30.0))
+                                    .px_3()
+                                    .rounded_lg()
+                                    .flex()
+                                    .items_center()
+                                    .bg(Theme::ink())
+                                    .text_color(if self.focus == Focus::ChatFilter {
+                                        Theme::text()
+                                    } else {
+                                        Theme::faint()
+                                    })
+                                    .cursor_pointer()
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.focus = Focus::ChatFilter;
+                                            cx.notify();
                                         }),
-                                )
-                                .into_any()
-                        } else {
-                            div()
-                                .id("sec-Chats")
-                                .cursor_pointer()
-                                .hover(|s| s.text_color(Theme::text()))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.dispatch(
-                                            ClientAction::SelectLeftSection(LeftSection::Threads),
-                                            cx,
-                                        );
+                                    )
+                                    .child(if self.workspace.chat_filter.is_empty() {
+                                        SharedString::from("Search chats")
+                                    } else {
+                                        SharedString::from(self.workspace.chat_filter.clone())
                                     }),
-                                )
-                                .child(format!("← Chats · {}", section.rail_label()))
-                                .into_any()
-                        }),
-                );
+                            )
+                            .child(
+                                div()
+                                    .text_size(Theme::text_caption())
+                                    .text_color(Theme::faint())
+                                    .child("recent"),
+                            )
+                            .into_any()
+                    } else {
+                        div()
+                            .id("sec-Chats")
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(Theme::text()))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.dispatch(
+                                        ClientAction::SelectLeftSection(LeftSection::Threads),
+                                        cx,
+                                    );
+                                }),
+                            )
+                            .child(format!("← Chats · {}", section.rail_label()))
+                            .into_any()
+                    }),
+            );
         let items: Vec<gpui::AnyElement> = match section {
             LeftSection::Threads => {
                 let branch = self.workspace.branch_label();
@@ -2484,8 +2495,11 @@ impl ShellView {
                     out.push(
                         div()
                             .id(SharedString::from(format!("thr-{i}")))
-                            .h(px(36.0))
+                            .mx_2()
+                            .mb_px()
+                            .h(px(48.0))
                             .px_3()
+                            .rounded_lg()
                             .flex()
                             .items_center()
                             .overflow_hidden()
@@ -2494,6 +2508,7 @@ impl ShellView {
                             } else {
                                 Theme::transparent()
                             })
+                            .hover(|s| s.bg(Theme::selection()))
                             .text_color(Theme::text())
                             .cursor_pointer()
                             .on_mouse_down(
@@ -2544,12 +2559,12 @@ impl ShellView {
                 if !archived.is_empty() {
                     out.push(
                         div()
-                            .px_3()
-                            .pt_3()
+                            .px_4()
+                            .pt_4()
                             .pb_1()
                             .text_size(Theme::text_caption())
                             .text_color(Theme::faint())
-                            .child("Archived")
+                            .child("archived")
                             .into_any(),
                     );
                     for i in archived {
@@ -2559,8 +2574,11 @@ impl ShellView {
                         out.push(
                             div()
                                 .id(SharedString::from(format!("thr-{i}")))
-                                .h(px(32.0))
+                                .mx_2()
+                                .mb_px()
+                                .h(px(36.0))
                                 .px_3()
+                                .rounded_lg()
                                 .flex()
                                 .items_center()
                                 .gap_2()
@@ -2570,6 +2588,7 @@ impl ShellView {
                                 } else {
                                     Theme::transparent()
                                 })
+                                .hover(|s| s.bg(Theme::selection()))
                                 .text_color(Theme::muted())
                                 .cursor_pointer()
                                 .on_mouse_down(
@@ -2754,32 +2773,26 @@ impl ShellView {
             .h_full()
             .flex()
             .flex_col()
+            .items_center()
             .gap_1()
             .py_2()
             .overflow_y_scroll()
             .children(InspectorTab::rail_order().into_iter().map(|t| {
                 let on = tab == t;
-                div()
-                    .id(SharedString::from(format!("rtab-{}", t.label())))
-                    .h(px(32.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .bg(Theme::transparent())
-                    .text_color(if on { Theme::text() } else { Theme::muted() })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, _, cx| {
-                            if this.workspace.chrome.right_open() && this.workspace.inspector == t {
-                                this.workspace.chrome.toggle_right();
-                            } else {
-                                this.dispatch(ClientAction::SelectTab(t), cx);
-                            }
-                            cx.notify();
-                        }),
-                    )
-                    .child(t.glyph())
+                rail_icon(
+                    t.glyph(),
+                    format!("rtab-{}", t.label()),
+                    on,
+                    cx,
+                    move |this, cx| {
+                        if this.workspace.chrome.right_open() && this.workspace.inspector == t {
+                            this.workspace.chrome.toggle_right();
+                        } else {
+                            this.dispatch(ClientAction::SelectTab(t), cx);
+                        }
+                        cx.notify();
+                    },
+                )
             }));
         let rail = glass_pane()
             .w(px(w))
@@ -2800,12 +2813,18 @@ impl ShellView {
             .overflow_hidden()
             .child(
                 div()
-                    .px_2()
-                    .py_1()
+                    .px_3()
+                    .py_2()
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(div().flex_1().text_color(Theme::faint()).child(tab.label()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(Theme::text_body())
+                            .text_color(Theme::text())
+                            .child(tab.label()),
+                    )
                     .child(icon_btn(
                         ChromeGlyph::Close.mark(),
                         "Hide right",
@@ -2819,8 +2838,14 @@ impl ShellView {
                 let q = self.workspace.file_filter.clone();
                 div()
                     .id("files_filter")
+                    .mx_3()
+                    .mb_2()
+                    .h(px(30.0))
                     .px_3()
-                    .py_1()
+                    .rounded_lg()
+                    .flex()
+                    .items_center()
+                    .bg(Theme::raised())
                     .text_color(if self.focus == Focus::FileFilter {
                         Theme::text()
                     } else {
@@ -2911,8 +2936,11 @@ impl ShellView {
                 let on = selected.as_deref() == Some(path.as_str());
                 div()
                     .id(SharedString::from(format!("diff:{path}")))
+                    .mx_2()
+                    .mb_px()
                     .px_3()
-                    .h(px(28.0))
+                    .h(px(30.0))
+                    .rounded_lg()
                     .flex()
                     .items_center()
                     .gap_2()
@@ -2921,6 +2949,7 @@ impl ShellView {
                     } else {
                         Theme::transparent()
                     })
+                    .hover(|s| s.bg(Theme::selection()))
                     .cursor_pointer()
                     .on_mouse_down(
                         MouseButton::Left,
@@ -3020,8 +3049,6 @@ impl ShellView {
             .px_3()
             .pb_3()
             .pt_2()
-            .border_t_1()
-            .border_color(Theme::hairline())
             .flex()
             .flex_col()
             .gap_2()
@@ -3034,7 +3061,11 @@ impl ShellView {
             .child(
                 div()
                     .id("commit-draft")
-                    .min_h(px(44.0))
+                    .min_h(px(72.0))
+                    .px_3()
+                    .py_2()
+                    .rounded_lg()
+                    .bg(Theme::raised())
                     .cursor_pointer()
                     .text_color(if draft.is_empty() {
                         Theme::faint()
@@ -3058,8 +3089,8 @@ impl ShellView {
                 div()
                     .flex()
                     .items_center()
-                    .gap_3()
-                    .child(ghost_btn("Commit", "enter", cx, |this, cx| {
+                    .gap_2()
+                    .child(primary_btn("Commit", "enter", cx, |this, cx| {
                         this.commit_working_tree();
                         cx.notify();
                     }))
@@ -3115,11 +3146,11 @@ impl ShellView {
                                     .justify_center()
                                     .child(if user {
                                         div()
-                                            .max_w(px(640.0))
+                                            .max_w(px(560.0))
                                             .px_4()
-                                            .py_2()
+                                            .py_3()
                                             .rounded_xl()
-                                            .bg(Theme::surface())
+                                            .bg(Theme::raised())
                                             .text_color(Theme::text())
                                             .child(m.text)
                                             .into_any()
@@ -3146,11 +3177,10 @@ impl ShellView {
                                     .id("changes-card")
                                     .w_full()
                                     .max_w(px(720.0))
-                                    .px_3()
-                                    .py_2()
-                                    .border_1()
-                                    .border_color(Theme::hairline())
+                                    .px_4()
+                                    .py_3()
                                     .rounded_xl()
+                                    .bg(Theme::raised())
                                     .cursor_pointer()
                                     .on_mouse_down(
                                         MouseButton::Left,
@@ -3256,16 +3286,16 @@ impl ShellView {
                                     } else {
                                         Theme::hairline()
                                     })
-                                    .bg(Theme::surface())
-                                    .px_3()
+                                    .bg(Theme::raised())
+                                    .px_4()
                                     .py_3()
                                     .flex()
                                     .flex_col()
-                                    .gap_2()
+                                    .gap_3()
                                     .child(
                                         div()
                                             .id("composer")
-                                            .min_h(px(44.0))
+                                            .min_h(px(56.0))
                                             .cursor_pointer()
                                             .text_color(if self.workspace.draft.is_empty() {
                                                 Theme::faint()
@@ -3292,8 +3322,14 @@ impl ShellView {
                                             .gap_2()
                                             .child(
                                                 div()
+                                                    .h(px(22.0))
+                                                    .px_2()
+                                                    .rounded_lg()
+                                                    .flex()
+                                                    .items_center()
+                                                    .bg(Theme::selection())
                                                     .text_size(Theme::text_caption())
-                                                    .text_color(Theme::faint())
+                                                    .text_color(Theme::muted())
                                                     .child(self.workspace.model.clone()),
                                             )
                                             .child(div().flex_1())
@@ -3308,17 +3344,28 @@ impl ShellView {
                                             .child(
                                                 div()
                                                     .id("send-circle")
-                                                    .h(px(28.0))
-                                                    .px_2()
+                                                    .w(px(32.0))
+                                                    .h(px(32.0))
+                                                    .rounded_lg()
                                                     .flex()
                                                     .items_center()
+                                                    .justify_center()
+                                                    .bg(
+                                                        if self.workspace.draft.trim().is_empty()
+                                                            || self.workspace.busy
+                                                        {
+                                                            Theme::selection()
+                                                        } else {
+                                                            Theme::text()
+                                                        },
+                                                    )
                                                     .text_color(
                                                         if self.workspace.draft.trim().is_empty()
                                                             || self.workspace.busy
                                                         {
                                                             Theme::faint()
                                                         } else {
-                                                            Theme::text()
+                                                            Theme::ink()
                                                         },
                                                     )
                                                     .cursor_pointer()
@@ -3329,7 +3376,7 @@ impl ShellView {
                                                             cx.notify();
                                                         }),
                                                     )
-                                                    .child("Send"),
+                                                    .child(ChromeGlyph::Play.mark()),
                                             ),
                                     ),
                             ),
@@ -3347,18 +3394,18 @@ impl ShellView {
     ) -> impl IntoElement {
         div()
             .id(SharedString::from(format!("center-{label}")))
-            .h(px(28.0))
-            .px_1()
+            .h(px(22.0))
+            .px_2()
+            .rounded_lg()
             .flex()
             .items_center()
             .cursor_pointer()
-            .bg(Theme::transparent())
-            .border_b_1()
-            .border_color(if on {
-                Theme::text()
+            .bg(if on {
+                Theme::selection()
             } else {
                 Theme::transparent()
             })
+            .text_size(Theme::text_caption())
             .text_color(if on { Theme::text() } else { Theme::faint() })
             .on_mouse_down(
                 MouseButton::Left,
@@ -3489,7 +3536,7 @@ impl ShellView {
                 div()
                     .flex()
                     .gap_3()
-                    .child(ghost_btn("Open here", "launch", cx, |this, cx| {
+                    .child(primary_btn("Open here", "launch", cx, |this, cx| {
                         this.launch_grok_tui();
                         cx.notify();
                     }))

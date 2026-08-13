@@ -16,10 +16,12 @@ mod tests {
     #[test]
     fn dark_page_is_cool_near_black() {
         let t = ThemeTokens::dark();
-        assert!(t.bg.l < 0.12, "page light {}", t.bg.l);
+        assert!(t.bg.l < 0.08, "page light {}", t.bg.l);
         assert!(t.ink.a > 0.95);
         assert!(t.accent.h > 0.50, "accent is cool blue, not orange");
         assert!(t.selection.s < 0.12, "selection is gray, not a color wash");
+        assert!(t.surface.l > t.bg.l, "rails lift off the page");
+        assert!(t.selection.l > t.surface.l, "selected row is brighter zinc");
         assert!(t.text.l > 0.70);
         assert_eq!(t.mode, ThemeMode::Dark);
         assert!(t.glass_ultra.a <= t.glass.a);

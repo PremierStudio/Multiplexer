@@ -25,14 +25,19 @@ pub fn list_row(
     let menu_id = id.clone();
     div()
         .id(SharedString::from(id))
-        .h(px(32.0))
+        .mx_2()
+        .mb_px()
+        .min_h(px(40.0))
         .px_3()
+        .py_1()
+        .rounded_lg()
         .overflow_hidden()
         .bg(if selected {
             Theme::selection()
         } else {
             Theme::transparent()
         })
+        .hover(|s| s.bg(Theme::selection()))
         .cursor_pointer()
         .on_mouse_down(
             MouseButton::Left,
@@ -99,15 +104,19 @@ pub fn inspector_row_el(
     let body = if !detail.is_empty() { detail } else { meta };
     div()
         .id(SharedString::from(id.clone()))
-        .min_h(px(32.0))
+        .mx_2()
+        .mb_px()
+        .min_h(px(36.0))
         .px_3()
         .py_1()
+        .rounded_lg()
         .overflow_hidden()
         .bg(if selected {
             Theme::selection()
         } else {
             Theme::transparent()
         })
+        .hover(|s| s.bg(Theme::selection()))
         .cursor_pointer()
         .on_mouse_down(
             MouseButton::Left,

@@ -51,7 +51,8 @@ fn render_block(block: ArticleBlock) -> gpui::AnyElement {
             .mt_1()
             .px_3()
             .py_2()
-            .bg(Theme::selection())
+            .rounded_lg()
+            .bg(Theme::raised())
             .text_size(Theme::text_caption())
             .text_color(Theme::muted())
             .child(if lang.is_empty() {
@@ -73,8 +74,9 @@ fn render_inlines(text: &str) -> gpui::Div {
                 InlineSpan::Text(t) => div().child(t).into_any(),
                 InlineSpan::Code(t) => div()
                     .px_1()
-                    .bg(Theme::selection())
-                    .text_color(Theme::text())
+                    .rounded_lg()
+                    .bg(Theme::raised())
+                    .text_color(Theme::good())
                     .child(t)
                     .into_any(),
                 InlineSpan::Strong(t) => div().text_color(Theme::text()).child(t).into_any(),

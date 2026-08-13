@@ -114,6 +114,12 @@ impl Theme {
     pub fn surface() -> Hsla {
         Self::c(Self::tokens().surface)
     }
+    pub fn raised() -> Hsla {
+        Self::c(Self::tokens().surface_raised)
+    }
+    pub fn rail() -> Hsla {
+        Self::c(Self::tokens().surface)
+    }
     pub fn transparent() -> Hsla {
         Self::c(Self::tokens().hairline.with_alpha(0.0))
     }
@@ -202,6 +208,8 @@ impl Theme {
             Self::accent(),
             Self::send_bg(),
             Self::surface(),
+            Self::raised(),
+            Self::rail(),
             Self::wash(),
             Self::wash_soft(),
             Self::bubble_user(),
@@ -256,7 +264,8 @@ mod tests {
         assert!(g.a > 0.90);
         assert!(Theme::accent().h > 0.50);
         Theme::set_mode(multiplexer_theme::ThemeMode::Dark);
-        assert!(Theme::tokens().bg.l < 0.12);
+        assert!(Theme::tokens().bg.l < 0.08);
+        assert!(Theme::tokens().surface.l > Theme::tokens().bg.l);
     }
 
     #[test]

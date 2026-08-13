@@ -178,8 +178,7 @@ impl EmptyStateSpec {
     pub fn chat() -> Self {
         Self {
             title: "What should we build?".into(),
-            body: "Send a grok -p turn, list a worktree, or inspect inventory and CPU samples."
-                .into(),
+            body: "Send a grok -p turn, or switch to TUI for a system shell.".into(),
             action: "New chat".into(),
         }
     }
