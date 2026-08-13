@@ -60,6 +60,9 @@ pub const REQUIRED_IDS: &[&str] = &[
     "stop",
     "command_palette",
     "help",
+    "run",
+    "layout_reset",
+    "settings",
     "new_thread",
     "select_thread",
     "delete_thread",
@@ -88,6 +91,7 @@ pub const REQUIRED_IDS: &[&str] = &[
     "run_git_status",
     "term_run",
     "term_clear",
+    "toggle_bottom",
     "palette_filter",
     "palette_run",
     "help_close",
@@ -127,6 +131,9 @@ const CONTROLS: &[ControlSpec] = &[
         Some("ctrl-k"),
     ),
     spec("help", Surface::TitleBar, "Help", Some("f1")),
+    spec("run", Surface::TitleBar, "Run", None),
+    spec("layout_reset", Surface::TitleBar, "Reset layout", None),
+    spec("settings", Surface::TitleBar, "Settings", Some("f2")),
     spec("new_thread", Surface::LeftRail, "New", Some("ctrl-n")),
     spec("select_thread", Surface::LeftRail, "Select thread", None),
     spec("delete_thread", Surface::LeftRail, "Delete thread", None),
@@ -175,6 +182,12 @@ const CONTROLS: &[ControlSpec] = &[
     spec("run_git_status", Surface::RightRail, "Run git status", None),
     spec("term_run", Surface::TermStrip, "Run", None),
     spec("term_clear", Surface::TermStrip, "Clear", None),
+    spec(
+        "toggle_bottom",
+        Surface::TermStrip,
+        "Toggle terminal",
+        Some("ctrl-`"),
+    ),
     spec("palette_filter", Surface::Palette, "Filter", None),
     spec("palette_run", Surface::Palette, "Run command", None),
     spec("help_close", Surface::HelpOverlay, "Close", Some("escape")),
@@ -196,6 +209,8 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("ctrl-v", "paste"),
     ("shift-enter", "newline"),
     ("f1", "help"),
+    ("ctrl-`", "toggle_bottom"),
+    ("f2", "settings"),
 ];
 
 fn is_live_text(s: &str) -> bool {
@@ -260,9 +275,9 @@ mod tests {
             assert_eq!(spec.action, *required);
             assert!(spec.is_live(), "{required} is dead");
         }
-        assert_eq!(REQUIRED_IDS.len(), 39);
+        assert_eq!(REQUIRED_IDS.len(), 43);
         assert_eq!(have.len(), REQUIRED_IDS.len());
-        assert_eq!(all_controls().len(), 39);
+        assert_eq!(all_controls().len(), 43);
 
         let required_once = [
             "chats_toggle",
@@ -270,6 +285,9 @@ mod tests {
             "stop",
             "command_palette",
             "help",
+            "run",
+            "layout_reset",
+            "settings",
             "new_thread",
             "select_thread",
             "delete_thread",
@@ -297,6 +315,7 @@ mod tests {
             "run_git_status",
             "term_run",
             "term_clear",
+            "toggle_bottom",
             "palette_filter",
             "palette_run",
             "help_close",
@@ -308,7 +327,7 @@ mod tests {
         for id in required_once {
             assert!(have.contains(&id), "checklist id missing: {id}");
         }
-        assert_eq!(required_once.len(), 39);
+        assert_eq!(required_once.len(), 43);
     }
 
     #[test]
@@ -319,6 +338,9 @@ mod tests {
             ("stop", Surface::TitleBar),
             ("command_palette", Surface::TitleBar),
             ("help", Surface::TitleBar),
+            ("run", Surface::TitleBar),
+            ("layout_reset", Surface::TitleBar),
+            ("settings", Surface::TitleBar),
             ("new_thread", Surface::LeftRail),
             ("select_thread", Surface::LeftRail),
             ("delete_thread", Surface::LeftRail),
@@ -347,6 +369,7 @@ mod tests {
             ("run_git_status", Surface::RightRail),
             ("term_run", Surface::TermStrip),
             ("term_clear", Surface::TermStrip),
+            ("toggle_bottom", Surface::TermStrip),
             ("palette_filter", Surface::Palette),
             ("palette_run", Surface::Palette),
             ("help_close", Surface::HelpOverlay),
@@ -449,12 +472,12 @@ mod tests {
             assert!(!on.is_empty(), "{surface:?} must have at least one control");
             assert!(on.iter().all(|c| c.surface == surface));
         }
-        assert_eq!(controls_on(Surface::TitleBar).len(), 5);
+        assert_eq!(controls_on(Surface::TitleBar).len(), 8);
         assert_eq!(controls_on(Surface::LeftRail).len(), 3);
         assert_eq!(controls_on(Surface::Center).len(), 5);
         assert_eq!(controls_on(Surface::Composer).len(), 3);
         assert_eq!(controls_on(Surface::RightRail).len(), 15);
-        assert_eq!(controls_on(Surface::TermStrip).len(), 2);
+        assert_eq!(controls_on(Surface::TermStrip).len(), 3);
         assert_eq!(controls_on(Surface::Palette).len(), 2);
         assert_eq!(controls_on(Surface::HelpOverlay).len(), 1);
         assert_eq!(controls_on(Surface::ApprovalCard).len(), 2);
@@ -484,7 +507,7 @@ mod tests {
 
     #[test]
     fn shortcut_map_has_required_bindings() {
-        assert_eq!(shortcut_map().len(), 11);
+        assert_eq!(shortcut_map().len(), 13);
         assert_eq!(shortcut_action("enter"), Some("send"));
         assert_eq!(shortcut_action("escape"), Some("close_overlay"));
         assert_eq!(shortcut_action("ctrl-k"), Some("command_palette"));
@@ -496,6 +519,8 @@ mod tests {
         assert_eq!(shortcut_action("ctrl-v"), Some("paste"));
         assert_eq!(shortcut_action("shift-enter"), Some("newline"));
         assert_eq!(shortcut_action("f1"), Some("help"));
+        assert_eq!(shortcut_action("ctrl-`"), Some("toggle_bottom"));
+        assert_eq!(shortcut_action("f2"), Some("settings"));
         assert_eq!(shortcut_action("ctrl-shift-k"), None);
         assert_eq!(
             shortcut_action("enter"),
@@ -522,7 +547,7 @@ mod tests {
                 "{key} maps to {action}, which is not a control action"
             );
         }
-        assert_eq!(keys.len(), 11);
+        assert_eq!(keys.len(), 13);
     }
 
     #[test]
@@ -570,6 +595,9 @@ mod tests {
             "Inspector"
         );
         assert_eq!(control_by_id("stop").unwrap().label, "Stop");
+        assert_eq!(control_by_id("run").unwrap().label, "Run");
+        assert_eq!(control_by_id("layout_reset").unwrap().label, "Reset layout");
+        assert_eq!(control_by_id("settings").unwrap().label, "Settings");
         assert_eq!(control_by_id("new_thread").unwrap().label, "New");
         assert_eq!(
             control_by_id("chip_what").unwrap().label,
@@ -584,6 +612,10 @@ mod tests {
             "Git status"
         );
         assert_eq!(control_by_id("chip_test").unwrap().label, "Run the tests");
+        assert_eq!(
+            control_by_id("toggle_bottom").unwrap().label,
+            "Toggle terminal"
+        );
         assert_eq!(control_by_id("send").unwrap().label, "Send");
         assert_eq!(control_by_id("dismiss").unwrap().label, "Dismiss");
         assert_eq!(control_by_id("tab_session").unwrap().label, "Session");

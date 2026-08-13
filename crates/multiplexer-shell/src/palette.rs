@@ -37,6 +37,12 @@ pub fn default_items() -> Vec<PaletteItem> {
             action: ClientAction::ToggleRight,
         },
         PaletteItem {
+            id: "toggle-terminal",
+            label: "Toggle terminal",
+            hint: "Ctrl+`",
+            action: ClientAction::ToggleBottom,
+        },
+        PaletteItem {
             id: "send",
             label: "Send",
             hint: "Enter",
@@ -306,6 +312,7 @@ mod tests {
             ("new-chat", "Ctrl+N", ClientAction::NewThread),
             ("toggle-chats", "Ctrl+[", ClientAction::ToggleLeft),
             ("toggle-inspector", "Ctrl+]", ClientAction::ToggleRight),
+            ("toggle-terminal", "Ctrl+`", ClientAction::ToggleBottom),
             ("send", "Enter", ClientAction::Send),
             ("stop", "Ctrl+.", ClientAction::Interrupt),
             ("checkpoint", "Ctrl+S", ClientAction::CreateCheckpoint),
@@ -337,6 +344,10 @@ mod tests {
         unique.sort_unstable();
         unique.dedup();
         assert_eq!(ids.len(), unique.len(), "duplicate palette ids: {ids:?}");
+        let term = require("toggle-terminal");
+        assert_eq!(term.label, "Toggle terminal");
+        assert_eq!(term.hint, "Ctrl+`");
+        assert_eq!(term.action, ClientAction::ToggleBottom);
     }
 
     #[test]

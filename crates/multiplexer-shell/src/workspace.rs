@@ -884,6 +884,31 @@ impl Workspace {
             .collect()
     }
 
+    /// Branch for the title pill. Reminder label is not a branch name.
+    pub fn branch_label(&self) -> String {
+        for line in self.git_status.lines() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("## ") {
+                let name = rest.split("...").next().unwrap_or(rest).trim();
+                if !name.is_empty() {
+                    return name.to_owned();
+                }
+            }
+            if let Some(rest) = t.strip_prefix("On branch ") {
+                return rest.trim().to_owned();
+            }
+        }
+        "no-branch".into()
+    }
+
+    pub fn reset_outlook_chrome(&mut self) {
+        self.chrome = ChromeLayout::default();
+        self.bottom_open = false;
+        self.bottom_height = BOTTOM_HEIGHT_COLLAPSED;
+        self.left_section = LeftSection::Threads;
+        self.right_expanded_id = None;
+    }
+
     pub fn agents_detail(&self) -> String {
         let mut out = String::from("Local threads only. Subagent spawn is not wired.\n\n");
         for (id, title, status, n) in self.agent_rows() {
@@ -1166,6 +1191,31 @@ mod tests {
         ws.set_draft("see");
         assert!(ws.insert_file_mention());
         assert!(ws.draft.contains("`@src/lib.rs`"));
+    }
+
+    #[test]
+    fn branch_label_uses_git_status_else_no_branch() {
+        let mut ws = Workspace::new("p", "m");
+        assert_eq!(ws.branch_label(), "no-branch");
+        ws.set_reminder("existing", "C:/wt");
+        assert_eq!(ws.branch_label(), "no-branch");
+        ws.set_git_status("## feat/ui...origin/feat/ui\n");
+        assert_eq!(ws.branch_label(), "feat/ui");
+        ws.set_git_status("On branch main\n");
+        assert_eq!(ws.branch_label(), "main");
+    }
+
+    #[test]
+    fn reset_outlook_chrome_reopens_rails_and_collapses_bottom() {
+        let mut ws = Workspace::new("p", "m");
+        ws.chrome.left_open = false;
+        ws.toggle_bottom();
+        ws.select_left_section(LeftSection::Files);
+        ws.reset_outlook_chrome();
+        assert!(ws.chrome.left_open && ws.chrome.right_open);
+        assert!(!ws.bottom_open);
+        assert_eq!(ws.bottom_height, BOTTOM_HEIGHT_COLLAPSED);
+        assert_eq!(ws.left_section, LeftSection::Threads);
     }
 
     #[test]

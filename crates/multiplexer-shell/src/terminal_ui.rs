@@ -54,6 +54,7 @@ pub enum BuiltinCmd {
     Mcp,
     Git,
     Checkpoint,
+    Skills,
     Unknown,
 }
 
@@ -78,14 +79,14 @@ pub fn parse_builtin(line: &str) -> Option<BuiltinCmd> {
         "mcp" => Some(BuiltinCmd::Mcp),
         "git" => Some(BuiltinCmd::Git),
         "points" | "checkpoint" => Some(BuiltinCmd::Checkpoint),
-        "skills" => Some(BuiltinCmd::Unknown),
+        "skills" => Some(BuiltinCmd::Skills),
         _ => None,
     }
 }
 
 /// Static help copy for the `help` / `?` builtin.
 pub fn help_text() -> &'static str {
-    "Type a shell command and Enter. Builtins: clear, help, cores, mcp."
+    "Type a shell command and Enter. Builtins: clear, help, cores, mcp, git, points, skills."
 }
 
 #[cfg(test)]
@@ -156,7 +157,7 @@ mod tests {
         assert_eq!(parse_builtin("git"), Some(BuiltinCmd::Git));
         assert_eq!(parse_builtin("points"), Some(BuiltinCmd::Checkpoint));
         assert_eq!(parse_builtin("checkpoint"), Some(BuiltinCmd::Checkpoint));
-        assert_eq!(parse_builtin("skills"), Some(BuiltinCmd::Unknown));
+        assert_eq!(parse_builtin("skills"), Some(BuiltinCmd::Skills));
         assert_eq!(parse_builtin("  clear  "), Some(BuiltinCmd::Clear));
         assert_eq!(parse_builtin("CLEAR"), Some(BuiltinCmd::Clear));
         assert_eq!(parse_builtin("ls"), None);
@@ -165,11 +166,12 @@ mod tests {
         assert_eq!(parse_builtin("mcp list"), None);
         assert_ne!(parse_builtin("help"), Some(BuiltinCmd::Clear));
         assert_ne!(parse_builtin("cores"), Some(BuiltinCmd::Mcp));
-        assert!(help_text()
-            .contains("Type a shell command and Enter. Builtins: clear, help, cores, mcp."));
+        assert!(help_text().contains("git"));
+        assert!(help_text().contains("points"));
+        assert!(help_text().contains("clear, help, cores, mcp, git, points"));
         assert_eq!(
             help_text(),
-            "Type a shell command and Enter. Builtins: clear, help, cores, mcp."
+            "Type a shell command and Enter. Builtins: clear, help, cores, mcp, git, points, skills."
         );
     }
 

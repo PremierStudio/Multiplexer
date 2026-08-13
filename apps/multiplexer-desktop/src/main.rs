@@ -560,10 +560,21 @@ impl ShellView {
                     self.term_meta(help_text());
                     self.workspace.toggle_help();
                 }
-                BuiltinCmd::Cores => self.workspace.inspector = InspectorTab::Resources,
-                BuiltinCmd::Mcp => self.workspace.inspector = InspectorTab::Mcp,
-                BuiltinCmd::Git => self.workspace.inspector = InspectorTab::Git,
-                BuiltinCmd::Checkpoint => self.workspace.inspector = InspectorTab::Checkpoints,
+                BuiltinCmd::Cores => {
+                    let _ = self.workspace.select_inspector(InspectorTab::Resources);
+                }
+                BuiltinCmd::Mcp => {
+                    let _ = self.workspace.select_inspector(InspectorTab::Mcp);
+                }
+                BuiltinCmd::Git => {
+                    let _ = self.workspace.select_inspector(InspectorTab::Git);
+                }
+                BuiltinCmd::Checkpoint => {
+                    let _ = self.workspace.select_inspector(InspectorTab::Checkpoints);
+                }
+                BuiltinCmd::Skills => {
+                    let _ = self.workspace.select_inspector(InspectorTab::Skills);
+                }
                 BuiltinCmd::Unknown => self.term_meta("unknown builtin"),
             }
             return;
@@ -719,6 +730,11 @@ impl ShellView {
             self.dispatch(ClientAction::ToggleSettings, cx);
             return;
         }
+        if key == "l" && mods.control && mods.shift {
+            self.workspace.reset_outlook_chrome();
+            cx.notify();
+            return;
+        }
         if key == "[" && mods.control {
             self.dispatch(ClientAction::ToggleLeft, cx);
             return;
@@ -737,7 +753,7 @@ impl ShellView {
             cx.notify();
             return;
         }
-        if key == "`" && mods.control {
+        if (key == "`" || key == "oem_3") && mods.control {
             self.dispatch(ClientAction::ToggleBottom, cx);
             return;
         }
@@ -800,6 +816,15 @@ impl ShellView {
             self.workspace.cursor = move_end(&self.workspace.draft, self.workspace.cursor);
         } else if key == "tab" {
             self.focus = Focus::Terminal;
+        } else if let Some(ch) = event.keystroke.key_char.as_deref() {
+            if !mods.control && !mods.alt {
+                for c in ch.chars() {
+                    if c == '\n' || c == '\r' {
+                        continue;
+                    }
+                    self.workspace.type_char(c);
+                }
+            }
         } else if key == "space" {
             self.workspace.type_char(' ');
         } else if key.len() == 1 {
@@ -965,14 +990,7 @@ impl ShellView {
                 short_path(&self.workspace.project),
                 ChromeGlyph::Folder.mark(),
             ))
-            .child(pill(
-                self.workspace
-                    .reminder
-                    .as_ref()
-                    .map(|(b, _)| b.as_str())
-                    .unwrap_or("main"),
-                ChromeGlyph::Git.mark(),
-            ))
+            .child(pill(self.workspace.branch_label(), ChromeGlyph::Git.mark()))
             .child(
                 div()
                     .id("model-pill")
@@ -1000,15 +1018,10 @@ impl ShellView {
                     },
                 ))
             } else {
-                div().child(icon_btn(
-                    ChromeGlyph::Play.mark(),
-                    "Idle",
-                    cx,
-                    |this, cx| {
-                        this.term_meta("start a turn from the composer");
-                        cx.notify();
-                    },
-                ))
+                div().child(icon_btn(ChromeGlyph::Play.mark(), "Run", cx, |this, cx| {
+                    this.send();
+                    cx.notify();
+                }))
             })
             .child(icon_btn(
                 ChromeGlyph::Palette.mark(),
@@ -1446,10 +1459,35 @@ impl ShellView {
                                         SharedString::from(draft)
                                     }),
                             )
-                            .child(ghost_btn("Send", "↵", cx, |this, cx| {
-                                this.send();
-                                cx.notify();
-                            })),
+                            .child(
+                                div()
+                                    .id("send-circle")
+                                    .w(px(36.0))
+                                    .h(px(36.0))
+                                    .rounded_full()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .bg(
+                                        if self.workspace.draft.trim().is_empty()
+                                            || self.workspace.busy
+                                        {
+                                            Theme::send_bg()
+                                        } else {
+                                            Theme::accent()
+                                        },
+                                    )
+                                    .text_color(Theme::text())
+                                    .cursor_pointer()
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.send();
+                                            cx.notify();
+                                        }),
+                                    )
+                                    .child(ChromeGlyph::Play.mark()),
+                            ),
                     )
                     .child(if let Some(cmd) = slash {
                         div()
