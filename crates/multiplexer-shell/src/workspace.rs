@@ -402,6 +402,7 @@ pub struct Workspace {
     pub settings_section: crate::settings::SettingsSection,
     pub recent_commands: Vec<String>,
     pub file_filter: String,
+    pub chat_filter: String,
     pub commit_draft: String,
     pub thread_drafts: Vec<(String, String, usize)>,
     pub file_expanded: Vec<String>,
@@ -514,6 +515,7 @@ impl Workspace {
             settings_section: crate::settings::SettingsSection::Appearance,
             recent_commands: Vec::new(),
             file_filter: String::new(),
+            chat_filter: String::new(),
             commit_draft: String::new(),
             thread_drafts: Vec::new(),
             file_expanded: Vec::new(),
@@ -1516,17 +1518,68 @@ impl Workspace {
     }
 
     pub fn archive_selected(&mut self) -> bool {
-        match self.selected_thread_mut() {
-            Some(t) => {
-                if t.archived {
-                    false
-                } else {
-                    t.archived = true;
-                    true
-                }
-            }
-            None => false,
+        let idx = self.selected;
+        if !self.archive_at(idx) {
+            return false;
         }
+        if let Some(next) = self.visible_chats().into_iter().next() {
+            let _ = self.select(next);
+        }
+        true
+    }
+
+    pub fn archive_at(&mut self, idx: usize) -> bool {
+        match self.threads.get_mut(idx) {
+            Some(t) if !t.archived => {
+                t.archived = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    pub fn unarchive_selected(&mut self) -> bool {
+        self.unarchive_at(self.selected)
+    }
+
+    pub fn unarchive_at(&mut self, idx: usize) -> bool {
+        match self.threads.get_mut(idx) {
+            Some(t) if t.archived => {
+                t.archived = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Live chats: pinned first, then the rest. Archived are excluded.
+    pub fn visible_chats(&self) -> Vec<usize> {
+        self.chat_indices(false)
+    }
+
+    /// Archived chats, oldest first.
+    pub fn archived_chats(&self) -> Vec<usize> {
+        self.chat_indices(true)
+    }
+
+    fn chat_indices(&self, archived: bool) -> Vec<usize> {
+        let q = self.chat_filter.trim().to_ascii_lowercase();
+        let mut idxs: Vec<usize> = self
+            .threads
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.archived == archived)
+            .filter(|(_, t)| {
+                q.is_empty()
+                    || t.title.to_ascii_lowercase().contains(&q)
+                    || t.id.to_ascii_lowercase().contains(&q)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        if !archived {
+            idxs.sort_by_key(|&i| (!self.threads[i].pinned, i));
+        }
+        idxs
     }
 
     pub fn apply_layout_persist(&mut self, snap: &crate::persist::LayoutPersist) {
@@ -2619,7 +2672,25 @@ mod tests {
         assert!(ws.archive_selected());
         assert!(ws.threads[0].archived);
         assert!(ws.agent_rows().is_empty());
+        assert!(ws.visible_chats().is_empty());
+        assert_eq!(ws.archived_chats(), vec![0]);
         assert!(!ws.archive_selected());
+        assert!(ws.unarchive_selected());
+        assert!(!ws.threads[0].archived);
+        assert_eq!(ws.visible_chats(), vec![0]);
+        assert!(ws.archived_chats().is_empty());
+        assert!(!ws.unarchive_selected());
+        ws.new_thread();
+        ws.threads[0].pinned = true;
+        ws.threads[0].title = "alpha".into();
+        ws.threads[1].title = "beta".into();
+        assert_eq!(ws.visible_chats(), vec![0, 1]);
+        ws.chat_filter = "bet".into();
+        assert_eq!(ws.visible_chats(), vec![1]);
+        ws.chat_filter.clear();
+        assert!(ws.archive_at(1));
+        assert_eq!(ws.archived_chats(), vec![1]);
+        assert!(ws.unarchive_at(1));
         ws.threads.clear();
         assert!(!ws.pin_selected());
         assert!(!ws.mark_selected_unread());

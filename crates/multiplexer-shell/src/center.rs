@@ -6,7 +6,7 @@ pub enum CenterMode {
     /// Headless transcript (`grok -p`). Not the Grok pager.
     #[default]
     Gui,
-    /// Host for the interactive Grok TUI (new console, not a GPUI rewrite).
+    /// Host for the interactive Grok TUI (in-app session, not a GPUI pager rewrite).
     GrokTui,
 }
 
@@ -26,7 +26,7 @@ impl CenterMode {
     }
 }
 
-/// Supervised Grok pager process (new console). Not an in-pane VT emulator.
+/// Supervised Grok pager process. Output is hosted in-app when ConPTY is live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TuiLife {
     #[default]
@@ -56,6 +56,7 @@ pub struct GrokTuiHost {
     pub cwd: String,
     pub note: String,
     pub surface: String,
+    pub scrollback: String,
 }
 
 impl GrokTuiHost {
@@ -65,8 +66,18 @@ impl GrokTuiHost {
             pid: None,
             program: "grok".into(),
             cwd: cwd.into(),
-            note: "Grok owns the agent TUI. Multiplexer hosts it in a real console. In-pane ConPTY is later.".into(),
-            surface: "new console".into(),
+            note: "Grok owns the agent TUI. Multiplexer hosts the session in-app.".into(),
+            surface: "in-app".into(),
+            scrollback: String::new(),
+        }
+    }
+
+    pub fn push_output(&mut self, chunk: &str) {
+        self.scrollback.push_str(chunk);
+        const CAP: usize = 64 * 1024;
+        if self.scrollback.len() > CAP {
+            let cut = self.scrollback.len() - CAP;
+            self.scrollback = self.scrollback[cut..].to_owned();
         }
     }
 
@@ -123,21 +134,23 @@ mod tests {
     }
 
     #[test]
-    fn host_lifecycle_is_supervised_not_embedded() {
+    fn host_lifecycle_is_supervised() {
         let mut host = GrokTuiHost::idle("C:/repo");
         assert_eq!(host.life, TuiLife::Stopped);
         assert!(host.pid.is_none());
-        assert!(host.note.contains("real console"));
+        assert!(host.note.contains("in-app"));
         assert!(host.summary().contains("stopped"));
+        assert!(host.scrollback.is_empty());
 
-        host.mark_running(Some(4242), "grok", "new console");
+        host.mark_running(Some(4242), "grok", "in-app");
         assert_eq!(host.life, TuiLife::Running);
         assert_eq!(host.pid, Some(4242));
         assert!(host.summary().contains("4242"));
         assert!(host.summary().contains("running"));
-        assert!(host.summary().contains("new console"));
-        assert!(!host.summary().to_ascii_lowercase().contains("embedded"));
+        assert!(host.summary().contains("in-app"));
         assert!(!host.summary().contains("in-pane pager"));
+        host.push_output("hello from grok\n");
+        assert!(host.scrollback.contains("hello from grok"));
 
         host.mark_exited();
         assert_eq!(host.life, TuiLife::Exited);
@@ -146,19 +159,14 @@ mod tests {
         host.mark_failed("grok not on PATH");
         assert_eq!(host.life, TuiLife::Failed);
         assert!(host.note.contains("PATH"));
-        assert_ne!(
-            host.note,
-            "Grok owns the agent TUI. Multiplexer hosts it in a real console. In-pane ConPTY is later."
-        );
     }
 
     #[test]
-    fn summary_names_surface_not_embedded() {
+    fn summary_names_surface() {
         let mut host = GrokTuiHost::idle("C:/repo");
         host.mark_running(None, "grok", "Windows Terminal");
         let s = host.summary();
         assert!(s.contains("Windows Terminal"));
-        assert!(!s.contains("embedded"));
         assert_eq!(host.life, TuiLife::Running);
         assert!(host.pid.is_none());
     }

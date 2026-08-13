@@ -35,16 +35,17 @@ use multiplexer_shell::{
     delete_forward, detect_browsers, detect_remotes, first_run_completed,
     first_run_keychain_notice, format_line, git_diff_line, help_text, hit_action, insert_at,
     inspector_rows, is_tui_hatch, join_project_path, journal_from_workspace, leaf_name, menu_for,
-    merge_cores, merge_mcp, merge_models, move_end, move_home, move_left, move_right,
-    move_word_left, move_word_right, open_external_program, palette_hits, parse_builtin,
-    parse_deep_link, parse_model_keys, parse_slash, plan_send, read_crash_journal, read_layout,
-    read_settings, remotes_pill_label, remotes_serve_note, row_detail, search_workspace, slash_arg,
-    status_from, status_line, status_mark, thread_leaf_title, title_overflow, visible_notices,
-    visible_tail, working_copy, write_crash_journal, write_first_run_done, write_layout,
-    write_settings, BindingTable, BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph,
-    ClientAction, CoreRow, FocusRegion, InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind,
-    PaletteState, RemoteRow, Role, SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand,
-    TermLineKind, TuiLife, Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
+    menu_for_thread, merge_cores, merge_mcp, merge_models, move_end, move_home, move_left,
+    move_right, move_word_left, move_word_right, open_external_program, palette_hits,
+    parse_builtin, parse_deep_link, parse_model_keys, parse_slash, plan_send, read_crash_journal,
+    read_layout, read_settings, remotes_pill_label, remotes_serve_note, row_detail,
+    search_workspace, slash_arg, status_from, status_line, status_mark, thread_leaf_title,
+    title_overflow, visible_notices, visible_tail, working_copy, write_crash_journal,
+    write_first_run_done, write_layout, write_settings, BindingTable, BuiltinCmd, CenterMode,
+    CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow, FocusRegion, InspectorTab,
+    LeftSection, McpRow, MenuKind, NoticeKind, PaletteState, RemoteRow, Role, SearchKind, SendPlan,
+    SettingsSection, SkillItem, SlashCommand, TermLineKind, TuiLife, Workspace, WorktreeCard,
+    DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
 };
 use multiplexer_terminal::ProcessCapture;
 use multiplexer_wire::codec::{decode_frame, encode_frame};
@@ -72,6 +73,8 @@ enum Focus {
     Search,
     FileFilter,
     Commit,
+    ChatFilter,
+    Tui,
 }
 
 pub(crate) struct ShellView {
@@ -96,6 +99,7 @@ pub(crate) struct ShellView {
     bindings: BindingTable,
     notice_born: Vec<(u64, Instant)>,
     capture: Option<ProcessCapture>,
+    embedded_tui: Option<ProcessCapture>,
     pending_diff: Option<(String, Receiver<CommandResult>)>,
     turn_started: Option<Instant>,
 }
@@ -195,6 +199,7 @@ impl ShellView {
             bindings,
             notice_born: Vec::new(),
             capture: None,
+            embedded_tui: None,
             pending_diff: None,
             turn_started: None,
         };
@@ -279,7 +284,16 @@ impl ShellView {
 
     pub(crate) fn open_row_menu(&mut self, id: &str) {
         let mut menu = if id.starts_with("thr-") || id.starts_with("agent-") {
-            Some(menu_for(MenuKind::Thread, id))
+            let idx = id
+                .strip_prefix("thr-")
+                .and_then(|s| s.parse().ok())
+                .or_else(|| {
+                    id.strip_prefix("agent-")
+                        .and_then(|tid| self.workspace.threads.iter().position(|t| t.id == tid))
+                })
+                .unwrap_or(self.workspace.selected);
+            let archived = self.workspace.threads.get(idx).is_some_and(|t| t.archived);
+            Some(menu_for_thread(id, archived))
         } else if id.starts_with("file:") || id.starts_with("file-") {
             Some(menu_for(MenuKind::File, id))
         } else if id.starts_with("mcp:") {
@@ -353,52 +367,57 @@ impl ShellView {
     }
 
     fn launch_grok_tui(&mut self) {
-        if self.workspace.grok_tui.life == TuiLife::Running && self.grok_tui.is_some() {
-            self.workspace
-                .push_notice(NoticeKind::Info, "Grok TUI already running");
+        if self.workspace.grok_tui.life == TuiLife::Running
+            && (self.embedded_tui.is_some() || self.grok_tui.is_some())
+        {
+            let _ = self.workspace.set_center_mode(CenterMode::GrokTui);
+            self.focus = Focus::Tui;
             return;
         }
         let _ = self.workspace.set_center_mode(CenterMode::GrokTui);
-        let launch = TuiLaunch::prefer_wt(&self.workspace.project, "grok", Self::wt_available());
-        match spawn_grok_tui(&launch) {
-            Ok(child) => {
-                let wt = launch
-                    .program
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.eq_ignore_ascii_case("wt.exe"));
-                if wt {
-                    drop(child);
-                    self.grok_tui = None;
-                    self.workspace
-                        .grok_tui
-                        .mark_running(None, "grok", "Windows Terminal");
-                    self.workspace.push_notice(
-                        NoticeKind::Good,
-                        "Grok TUI launched in Windows Terminal. Multiplexer does not own the grok pid.",
-                    );
-                } else {
-                    let pid = child.id();
-                    self.workspace
-                        .grok_tui
-                        .mark_running(Some(pid), "grok", "new console");
-                    self.grok_tui = Some(child);
-                    self.workspace
-                        .push_notice(NoticeKind::Good, format!("Grok TUI launched (pid {pid})"));
-                    self.term_meta(&format!("grok tui pid {pid}"));
-                }
-            }
-            Err(err) => {
+        let cwd = std::path::PathBuf::from(&self.workspace.project);
+        match ProcessCapture::spawn("grok", &[], &cwd) {
+            Ok(cap) => {
+                self.embedded_tui = Some(cap);
+                self.workspace.grok_tui.mark_running(None, "grok", "in-app");
                 self.workspace
                     .grok_tui
-                    .mark_failed(format!("spawn failed: {err}"));
+                    .push_output("starting grok session…\n");
+                self.focus = Focus::Tui;
                 self.workspace
-                    .push_notice(NoticeKind::Danger, format!("Grok TUI: {err}"));
+                    .push_notice(NoticeKind::Good, "Grok session hosted in-app.");
+            }
+            Err(pipe_err) => {
+                let launch =
+                    TuiLaunch::prefer_wt(&self.workspace.project, "grok", Self::wt_available());
+                match spawn_grok_tui(&launch) {
+                    Ok(child) => {
+                        let pid = child.id();
+                        self.grok_tui = Some(child);
+                        self.workspace
+                            .grok_tui
+                            .mark_running(Some(pid), "grok", "new console");
+                        self.workspace.push_notice(
+                            NoticeKind::Warn,
+                            format!("In-app spawn failed ({pipe_err}). Grok opened in a console."),
+                        );
+                    }
+                    Err(err) => {
+                        self.workspace
+                            .grok_tui
+                            .mark_failed(format!("spawn failed: {err}"));
+                        self.workspace
+                            .push_notice(NoticeKind::Danger, format!("Grok TUI: {err}"));
+                    }
+                }
             }
         }
     }
 
     fn stop_grok_tui(&mut self) {
+        if let Some(mut cap) = self.embedded_tui.take() {
+            let _ = cap.kill();
+        }
         if let Some(mut child) = self.grok_tui.take() {
             let _ = child.kill();
             let _ = child.wait();
@@ -597,6 +616,15 @@ impl ShellView {
                 let changed = apply_layout_action(&mut self.workspace, action);
                 match action {
                     ClientAction::NewThread => self.session_id = None,
+                    ClientAction::SetCenterTui | ClientAction::ToggleCenterMode => {
+                        if self.workspace.center_mode == CenterMode::GrokTui {
+                            self.launch_grok_tui();
+                            self.focus = Focus::Tui;
+                        }
+                    }
+                    ClientAction::SetCenterGui => {
+                        self.focus = Focus::Composer;
+                    }
                     ClientAction::TogglePalette
                     | ClientAction::ClosePalette
                     | ClientAction::CloseOverlay
@@ -1532,6 +1560,11 @@ impl ShellView {
                 );
             }
         }
+        if let Some(cap) = self.embedded_tui.as_mut() {
+            for line in cap.try_read() {
+                self.workspace.grok_tui.push_output(&format!("{line}\n"));
+            }
+        }
         if let Some((path, rx)) = self.pending_diff.take() {
             match rx.try_recv() {
                 Ok(out) => {
@@ -1686,6 +1719,7 @@ impl ShellView {
             || self.pending_cmd.is_some()
             || self.capture.is_some()
             || self.pending_diff.is_some()
+            || self.embedded_tui.is_some()
             || self.workspace.grok_tui.life == TuiLife::Running
             || self
                 .workspace
@@ -1743,16 +1777,23 @@ impl ShellView {
         if let Some(action) = bound {
             let tui_running = self.workspace.center_mode == CenterMode::GrokTui
                 && self.workspace.grok_tui.life == TuiLife::Running;
-            if tui_running && !is_tui_hatch(action) {
+            if self.focus == Focus::Tui {
+                if is_tui_hatch(action) {
+                    self.dispatch_bound(action, cx);
+                    return;
+                }
+            } else {
+                if tui_running && !is_tui_hatch(action) {
+                    return;
+                }
+                if matches!(action, ClientAction::Send) && mods.shift {
+                    self.insert_text("\n");
+                    cx.notify();
+                    return;
+                }
+                self.dispatch_bound(action, cx);
                 return;
             }
-            if matches!(action, ClientAction::Send) && mods.shift {
-                self.insert_text("\n");
-                cx.notify();
-                return;
-            }
-            self.dispatch_bound(action, cx);
-            return;
         }
 
         if self.workspace.pending.is_some()
@@ -1778,6 +1819,45 @@ impl ShellView {
         }
 
         if self.workspace.help_open || self.workspace.settings_open {
+            cx.notify();
+            return;
+        }
+
+        if self.focus == Focus::ChatFilter {
+            if key == "backspace" {
+                self.workspace.chat_filter.pop();
+            } else if key == "space" {
+                self.workspace.chat_filter.push(' ');
+            } else if let Some(ch) = event.keystroke.key_char.as_deref() {
+                if !mods.control && !mods.alt {
+                    for c in ch.chars() {
+                        if c == '\n' || c == '\r' {
+                            continue;
+                        }
+                        self.workspace.chat_filter.push(c);
+                    }
+                }
+            }
+            cx.notify();
+            return;
+        }
+
+        if self.focus == Focus::Tui {
+            if let Some(cap) = self.embedded_tui.as_mut() {
+                if key == "enter" {
+                    let _ = cap.write_bytes(b"\r");
+                } else if key == "backspace" {
+                    let _ = cap.write_bytes(b"\x7f");
+                } else if key == "tab" {
+                    let _ = cap.write_bytes(b"\t");
+                } else if let Some(ch) = event.keystroke.key_char.as_deref() {
+                    if !mods.control {
+                        let _ = cap.write_bytes(ch.as_bytes());
+                    }
+                } else if key == "space" {
+                    let _ = cap.write_bytes(b" ");
+                }
+            }
             cx.notify();
             return;
         }
@@ -1930,6 +2010,16 @@ impl ShellView {
         }
         if self.focus == Focus::FileFilter {
             self.workspace.file_filter.push_str(text);
+            return;
+        }
+        if self.focus == Focus::ChatFilter {
+            self.workspace.chat_filter.push_str(text);
+            return;
+        }
+        if self.focus == Focus::Tui {
+            if let Some(cap) = self.embedded_tui.as_mut() {
+                let _ = cap.write_bytes(text.as_bytes());
+            }
             return;
         }
         if self.focus == Focus::Commit {
@@ -2226,7 +2316,6 @@ impl ShellView {
         }
         let section = self.workspace.left_section;
         let selected = self.workspace.selected;
-        let threads = self.workspace.threads.clone();
         let files = self.workspace.files_visible();
         let activity = activity_items(&self.workspace);
         let icons = div()
@@ -2266,119 +2355,259 @@ impl ShellView {
         if !open {
             return rail.child(icons).into_any();
         }
-        let list = div()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .min_h_0()
-            .overflow_hidden()
-            .bg(Theme::ink())
-            .child(
-                div()
-                    .px_3()
-                    .pt_3()
-                    .pb_2()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id("new_thread")
-                            .flex_1()
-                            .h(px(28.0))
-                            .px_1()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .text_color(Theme::text())
-                            .cursor_pointer()
-                            .hover(|s| s.text_color(Theme::muted()))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _, cx| {
-                                    this.dispatch(ClientAction::NewThread, cx);
-                                }),
-                            )
-                            .child(ChromeGlyph::Plus.mark())
-                            .child("New session"),
-                    )
-                    .child(icon_btn(
-                        ChromeGlyph::Close.mark(),
-                        "Hide left",
-                        cx,
-                        |this, cx| {
-                            this.dispatch(ClientAction::HideLeft, cx);
-                        },
-                    )),
-            )
-            .child(
-                div()
-                    .px_3()
-                    .pb_1()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .text_size(Theme::text_caption())
-                    .text_color(Theme::faint())
-                    .child(if section == LeftSection::Threads {
-                        div().child("recent").into_any()
-                    } else {
-                        div()
-                            .id("sec-Chats")
-                            .cursor_pointer()
-                            .hover(|s| s.text_color(Theme::text()))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, _, cx| {
-                                    this.dispatch(
-                                        ClientAction::SelectLeftSection(LeftSection::Threads),
-                                        cx,
-                                    );
-                                }),
-                            )
-                            .child(format!("← Chats · {}", section.rail_label()))
-                            .into_any()
-                    }),
-            );
-        let items: Vec<gpui::AnyElement> = match section {
-            LeftSection::Threads => threads
-                .into_iter()
-                .enumerate()
-                .map(|(i, t)| {
-                    let title = thread_leaf_title(&t.title, &t.id);
-                    let on = i == selected;
+        let list =
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .min_w_0()
+                .min_h_0()
+                .overflow_hidden()
+                .bg(Theme::ink())
+                .child(
                     div()
-                        .id(SharedString::from(format!("thr-{i}")))
-                        .h(px(32.0))
                         .px_3()
+                        .pt_3()
+                        .pb_2()
                         .flex()
                         .items_center()
-                        .overflow_hidden()
-                        .bg(if on {
-                            Theme::selection()
-                        } else {
-                            Theme::transparent()
-                        })
-                        .text_color(Theme::text())
-                        .cursor_pointer()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, _, _, cx| {
-                                this.dispatch(ClientAction::SelectThread(i), cx);
-                            }),
-                        )
+                        .gap_2()
                         .child(
                             div()
+                                .id("new_thread")
                                 .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .child(title),
+                                .h(px(28.0))
+                                .px_1()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .text_color(Theme::text())
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(Theme::muted()))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.dispatch(ClientAction::NewThread, cx);
+                                    }),
+                                )
+                                .child(ChromeGlyph::Plus.mark())
+                                .child("New session"),
                         )
-                        .into_any()
-                })
-                .collect(),
+                        .child(icon_btn(
+                            ChromeGlyph::Close.mark(),
+                            "Hide left",
+                            cx,
+                            |this, cx| {
+                                this.dispatch(ClientAction::HideLeft, cx);
+                            },
+                        )),
+                )
+                .child(
+                    div()
+                        .px_3()
+                        .pb_1()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_size(Theme::text_caption())
+                        .text_color(Theme::faint())
+                        .child(if section == LeftSection::Threads {
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(div().text_color(Theme::faint()).child(format!(
+                                    "recent   ·   {}",
+                                    self.workspace.branch_label()
+                                )))
+                                .child(
+                                    div()
+                                        .id("chat_filter")
+                                        .text_color(if self.focus == Focus::ChatFilter {
+                                            Theme::text()
+                                        } else {
+                                            Theme::faint()
+                                        })
+                                        .cursor_pointer()
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(|this, _, _, cx| {
+                                                this.focus = Focus::ChatFilter;
+                                                cx.notify();
+                                            }),
+                                        )
+                                        .child(if self.workspace.chat_filter.is_empty() {
+                                            SharedString::from("Search chats")
+                                        } else {
+                                            SharedString::from(self.workspace.chat_filter.clone())
+                                        }),
+                                )
+                                .into_any()
+                        } else {
+                            div()
+                                .id("sec-Chats")
+                                .cursor_pointer()
+                                .hover(|s| s.text_color(Theme::text()))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.dispatch(
+                                            ClientAction::SelectLeftSection(LeftSection::Threads),
+                                            cx,
+                                        );
+                                    }),
+                                )
+                                .child(format!("← Chats · {}", section.rail_label()))
+                                .into_any()
+                        }),
+                );
+        let items: Vec<gpui::AnyElement> = match section {
+            LeftSection::Threads => {
+                let branch = self.workspace.branch_label();
+                let mut out = Vec::new();
+                for i in self.workspace.visible_chats() {
+                    let t = &self.workspace.threads[i];
+                    let title = thread_leaf_title(&t.title, &t.id);
+                    let on = i == selected;
+                    let mark = if t.pinned {
+                        "●"
+                    } else if t.unread {
+                        "○"
+                    } else {
+                        ""
+                    };
+                    out.push(
+                        div()
+                            .id(SharedString::from(format!("thr-{i}")))
+                            .h(px(36.0))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .overflow_hidden()
+                            .bg(if on {
+                                Theme::selection()
+                            } else {
+                                Theme::transparent()
+                            })
+                            .text_color(Theme::text())
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.dispatch(ClientAction::SelectThread(i), cx);
+                                }),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.open_row_menu(&format!("thr-{i}"));
+                                    cx.notify();
+                                }),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .gap_1()
+                                            .overflow_hidden()
+                                            .whitespace_nowrap()
+                                            .child(if mark.is_empty() {
+                                                SharedString::from(title.clone())
+                                            } else {
+                                                SharedString::from(format!("{mark}  {title}"))
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(Theme::text_caption())
+                                            .text_color(Theme::faint())
+                                            .overflow_hidden()
+                                            .whitespace_nowrap()
+                                            .child(branch.clone()),
+                                    ),
+                            )
+                            .into_any(),
+                    );
+                }
+                let archived = self.workspace.archived_chats();
+                if !archived.is_empty() {
+                    out.push(
+                        div()
+                            .px_3()
+                            .pt_3()
+                            .pb_1()
+                            .text_size(Theme::text_caption())
+                            .text_color(Theme::faint())
+                            .child("Archived")
+                            .into_any(),
+                    );
+                    for i in archived {
+                        let t = &self.workspace.threads[i];
+                        let title = thread_leaf_title(&t.title, &t.id);
+                        let on = i == selected;
+                        out.push(
+                            div()
+                                .id(SharedString::from(format!("thr-{i}")))
+                                .h(px(32.0))
+                                .px_3()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .overflow_hidden()
+                                .bg(if on {
+                                    Theme::selection()
+                                } else {
+                                    Theme::transparent()
+                                })
+                                .text_color(Theme::muted())
+                                .cursor_pointer()
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.dispatch(ClientAction::SelectThread(i), cx);
+                                    }),
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Right,
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.open_row_menu(&format!("thr-{i}"));
+                                        cx.notify();
+                                    }),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .child(title),
+                                )
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!("unarchive-{i}")))
+                                        .text_color(Theme::text())
+                                        .cursor_pointer()
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(move |this, _, _, cx| {
+                                                let _ = this.workspace.select(i);
+                                                this.dispatch(ClientAction::UnarchiveThread, cx);
+                                            }),
+                                        )
+                                        .child("Unarchive"),
+                                )
+                                .into_any(),
+                        );
+                    }
+                }
+                out
+            }
             LeftSection::Agents => {
                 let rows = self.workspace.agent_rows();
                 if rows.is_empty() {
@@ -3073,32 +3302,37 @@ impl ShellView {
 
     fn grok_tui_host(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let host = self.workspace.grok_tui.clone();
+        let body = if host.scrollback.is_empty() {
+            host.summary()
+        } else {
+            host.scrollback.clone()
+        };
         div()
             .id("grok-tui-host")
             .flex_1()
             .min_h_0()
-            .p_6()
             .flex()
             .flex_col()
-            .items_center()
-            .justify_center()
-            .gap_3()
             .child(
                 div()
-                    .text_size(Theme::text_body())
-                    .text_color(Theme::text())
-                    .child("Grok TUI host"),
-            )
-            .child(
-                div()
-                    .max_w(px(560.0))
-                    .text_color(Theme::muted())
-                    .child(host.summary()),
-            )
-            .child(
-                div()
+                    .px_3()
+                    .py_1()
                     .flex()
+                    .items_center()
                     .gap_2()
+                    .border_b_1()
+                    .border_color(Theme::hairline())
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(Theme::text_caption())
+                            .text_color(Theme::faint())
+                            .child(format!(
+                                "Grok session  ·  {}  ·  {}",
+                                host.life.label(),
+                                host.surface
+                            )),
+                    )
                     .child(ghost_btn("Launch", "console", cx, |this, cx| {
                         this.launch_grok_tui();
                         cx.notify();
@@ -3106,19 +3340,26 @@ impl ShellView {
                     .child(ghost_btn("Stop", "kill", cx, |this, cx| {
                         this.stop_grok_tui();
                         cx.notify();
-                    }))
-                    .child(ghost_btn("Changes", "g d", cx, |this, cx| {
-                        this.dispatch(ClientAction::SelectTab(InspectorTab::Diff), cx);
-                    }))
-                    .child(ghost_btn("Browser", "g b", cx, |this, cx| {
-                        this.dispatch(ClientAction::SelectTab(InspectorTab::Browser), cx);
                     })),
             )
             .child(
                 div()
-                    .text_size(Theme::text_caption())
-                    .text_color(Theme::faint())
-                    .child("Launches interactive grok (no -p) in Windows Terminal or a new console. In-pane ConPTY is later."),
+                    .id("tui-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .px_3()
+                    .py_2()
+                    .overflow_y_scroll()
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.focus = Focus::Tui;
+                            cx.notify();
+                        }),
+                    )
+                    .text_color(Theme::text())
+                    .child(body),
             )
             .into_any()
     }

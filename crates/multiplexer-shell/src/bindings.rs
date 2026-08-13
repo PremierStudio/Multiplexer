@@ -79,6 +79,7 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         | ClientAction::PinThread
         | ClientAction::MarkUnread
         | ClientAction::ArchiveThread
+        | ClientAction::UnarchiveThread
         | ClientAction::OpenAbout => HostCall::Local,
         ClientAction::CreateWorktree => worktree_create_call(ctx),
         ClientAction::Send
@@ -395,6 +396,8 @@ mod tests {
             ClientAction::ToggleSearch,
             ClientAction::CloseOverlay,
             ClientAction::ResetOutlook,
+            ClientAction::ArchiveThread,
+            ClientAction::UnarchiveThread,
         ] {
             assert_eq!(host_call(action, &ctx), HostCall::Local, "{action:?}");
             assert_ne!(host_call(action, &ctx), HostCall::NeedsHost, "{action:?}");

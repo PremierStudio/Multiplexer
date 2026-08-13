@@ -79,6 +79,18 @@ impl ProcessCapture {
         queue.drain(..).collect()
     }
 
+    /// Write raw bytes to the child stdin (no extra newline).
+    pub fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), TerminalError> {
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| TerminalError::Io("stdin closed".into()))?;
+        stdin
+            .write_all(bytes)
+            .and_then(|_| stdin.flush())
+            .map_err(|err| TerminalError::Io(format!("write: {err}")))
+    }
+
     /// Write `line` plus a trailing newline to the child stdin.
     pub fn write_line(&mut self, line: &str) -> Result<(), TerminalError> {
         let stdin = self

@@ -82,6 +82,7 @@ pub enum ClientAction {
     PinThread,
     MarkUnread,
     ArchiveThread,
+    UnarchiveThread,
     CopyThreadId,
     OpenAbout,
 }
@@ -256,6 +257,7 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
         ClientAction::PinThread => ws.pin_selected(),
         ClientAction::MarkUnread => ws.mark_selected_unread(),
         ClientAction::ArchiveThread => ws.archive_selected(),
+        ClientAction::UnarchiveThread => ws.unarchive_selected(),
         ClientAction::OpenAbout => {
             ws.settings_section = crate::settings::SettingsSection::About;
             ws.open_overlay(crate::overlay::OverlayKind::Settings);
@@ -432,6 +434,10 @@ mod tests {
         assert_eq!(ws.settings_section, crate::settings::SettingsSection::About);
         assert!(apply_layout_action(&mut ws, ClientAction::PinThread));
         assert!(ws.threads[0].pinned);
+        assert!(apply_layout_action(&mut ws, ClientAction::ArchiveThread));
+        assert!(ws.threads[0].archived);
+        assert!(apply_layout_action(&mut ws, ClientAction::UnarchiveThread));
+        assert!(!ws.threads[0].archived);
     }
 
     #[test]

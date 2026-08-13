@@ -32,17 +32,34 @@ pub fn menu_for(kind: MenuKind, target: impl Into<String>) -> OpenMenu {
     }
 }
 
+pub fn menu_for_thread(target: impl Into<String>, archived: bool) -> OpenMenu {
+    OpenMenu {
+        kind: MenuKind::Thread,
+        target: target.into(),
+        items: thread_items(archived),
+    }
+}
+
+pub fn thread_items(archived: bool) -> Vec<MenuItem> {
+    let archive = if archived {
+        item("unarchive", "Unarchive", ClientAction::UnarchiveThread)
+    } else {
+        item("archive", "Archive", ClientAction::ArchiveThread)
+    };
+    vec![
+        item("open", "Open", ClientAction::SelectThread(0)),
+        item("pin", "Pin", ClientAction::PinThread),
+        item("unread", "Mark unread", ClientAction::MarkUnread),
+        item("copy-id", "Copy id", ClientAction::CopyThreadId),
+        archive,
+        item("delete", "Delete", ClientAction::DeleteThread),
+        item("stop", "Stop", ClientAction::Interrupt),
+    ]
+}
+
 pub fn items(kind: MenuKind) -> Vec<MenuItem> {
     match kind {
-        MenuKind::Thread => vec![
-            item("open", "Open", ClientAction::SelectThread(0)),
-            item("pin", "Pin", ClientAction::PinThread),
-            item("unread", "Mark unread", ClientAction::MarkUnread),
-            item("copy-id", "Copy id", ClientAction::CopyThreadId),
-            item("archive", "Archive", ClientAction::ArchiveThread),
-            item("delete", "Delete", ClientAction::DeleteThread),
-            item("stop", "Stop", ClientAction::Interrupt),
-        ],
+        MenuKind::Thread => thread_items(false),
         MenuKind::File => vec![
             item("mention", "Mention", ClientAction::InsertFileMention),
             item("reveal", "Reveal", ClientAction::RevealFile),
@@ -78,8 +95,14 @@ mod tests {
         assert!(ids.contains(&"pin"));
         assert!(ids.contains(&"delete"));
         assert!(ids.contains(&"copy-id"));
+        assert!(ids.contains(&"archive"));
+        assert!(!ids.contains(&"unarchive"));
         assert!(!ids.contains(&"apply"));
         assert_eq!(m.kind, MenuKind::Thread);
+        let archived = menu_for_thread("thr-1", true);
+        let aids: Vec<_> = archived.items.iter().map(|i| i.id).collect();
+        assert!(aids.contains(&"unarchive"));
+        assert!(!aids.contains(&"archive"));
     }
 
     #[test]

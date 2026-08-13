@@ -63,7 +63,9 @@ pub use icons::{BrandIcon, ChromeGlyph};
 pub use inspector_model::{inspector_rows, row_detail};
 pub use integrations::{filter_tiles, integration_tiles, TileSpec};
 pub use keymap::{action_from_id, action_id, is_tui_hatch, BindingTable, Chord};
-pub use menus::{items as menu_items, menu_for, MenuItem, MenuKind, OpenMenu};
+pub use menus::{
+    items as menu_items, menu_for, menu_for_thread, thread_items, MenuItem, MenuKind, OpenMenu,
+};
 pub use notices::{
     auto_dismisses, dismiss_newest, dismiss_notice, push_notice, visible_notices, Notice,
     NoticeKind, NOTICE_AUTO_MS, NOTICE_CAP, NOTICE_PAINT,

@@ -157,6 +157,7 @@ pub const REQUIRED_IDS: &[&str] = &[
     "pin_thread",
     "mark_unread",
     "archive_thread",
+    "unarchive_thread",
 ];
 
 const fn spec(
@@ -403,6 +404,12 @@ const CONTROLS: &[ControlSpec] = &[
     spec("pin_thread", Surface::LeftRail, "Pin thread", None),
     spec("mark_unread", Surface::LeftRail, "Mark unread", None),
     spec("archive_thread", Surface::LeftRail, "Archive thread", None),
+    spec(
+        "unarchive_thread",
+        Surface::LeftRail,
+        "Unarchive thread",
+        None,
+    ),
 ];
 
 /// Global chords. Escape is `close_overlay` (palette, help, search, settings).
@@ -500,9 +507,9 @@ mod tests {
             assert_eq!(spec.action, *required);
             assert!(spec.is_live(), "{required} is dead");
         }
-        assert_eq!(REQUIRED_IDS.len(), 98);
+        assert_eq!(REQUIRED_IDS.len(), 99);
         assert_eq!(have.len(), REQUIRED_IDS.len());
-        assert_eq!(all_controls().len(), 98);
+        assert_eq!(all_controls().len(), 99);
 
         let required_once = [
             "chats_toggle",
@@ -664,6 +671,7 @@ mod tests {
             ("pin_thread", Surface::LeftRail),
             ("mark_unread", Surface::LeftRail),
             ("archive_thread", Surface::LeftRail),
+            ("unarchive_thread", Surface::LeftRail),
         ];
         for (id, surface) in pin {
             let spec = control_by_id(id).unwrap_or_else(|| panic!("missing {id}"));
@@ -763,7 +771,7 @@ mod tests {
             assert!(on.iter().all(|c| c.surface == surface));
         }
         assert_eq!(controls_on(Surface::TitleBar).len(), 18);
-        assert_eq!(controls_on(Surface::LeftRail).len(), 11);
+        assert_eq!(controls_on(Surface::LeftRail).len(), 12);
         assert_eq!(controls_on(Surface::Center).len(), 9);
         assert_eq!(controls_on(Surface::Composer).len(), 3);
         assert_eq!(controls_on(Surface::RightRail).len(), 34);
