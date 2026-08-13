@@ -19,24 +19,25 @@ use multiplexer_client::{
     ListOptions, TuiLaunch, TurnRequest, TurnResult,
 };
 use multiplexer_mcp::{
-    list_dir_entry_names, load_user_mcp_inventory, merge_skill_rows, parse_skill_names,
-    skill_dir_candidates,
+    list_dir_entry_names, load_user_mcp_inventory, merge_skill_rows, parse_hooks_tomlish,
+    parse_skill_names, skill_dir_candidates,
 };
 use multiplexer_resman::sample_cores;
 use multiplexer_server::Server;
 use multiplexer_shell::{
     activity_items, apply_layout_action, auto_dismisses, bottom_height_from_mouse, cap_text,
     context_strip, default_browser_candidates, default_settings_path, delete_forward,
-    detect_browsers, detect_remotes, empty_state_tiles, format_line, git_diff_line, help_text,
-    hit_action, insert_at, inspector_rows, is_tui_hatch, join_project_path, merge_cores, merge_mcp,
-    move_end, move_home, move_left, move_right, move_word_left, move_word_right, palette_hits,
-    parse_builtin, parse_slash, plan_send, read_settings, remotes_pill_label, row_detail,
-    search_workspace, status_from, status_line, title_overflow, visible_notices, visible_tail,
-    working_copy, write_settings, BindingTable, BuiltinCmd, CenterMode, CheckpointRow, Chord,
-    ChromeGlyph, ClientAction, CoreRow, EmptyStateSpec, InspectorTab, LeftSection, ListRowSpec,
-    McpRow, NoticeKind, PaletteState, RemoteRow, Role, SearchKind, SendPlan, SettingsSection,
-    SlashCommand, TermLineKind, TuiLife, Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS,
-    TERM_PROMPT,
+    detect_browsers, detect_remotes, empty_state_tiles, format_line, git_diff_line,
+    help_text, hit_action, insert_at, inspector_rows, is_tui_hatch, join_project_path, merge_cores,
+    merge_mcp, merge_models, move_end, move_home, move_left, move_right, move_word_left,
+    move_word_right, open_external_program, palette_hits, parse_builtin, parse_model_keys,
+    parse_slash, plan_send, read_settings, remotes_pill_label,
+    remotes_serve_note, row_detail, search_workspace, slash_arg, status_from, status_line,
+    title_overflow, visible_notices, visible_tail, working_copy, write_settings, BindingTable,
+    BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow,
+    EmptyStateSpec, InspectorTab, LeftSection, ListRowSpec, McpRow, NoticeKind, PaletteState,
+    RemoteRow, Role, SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand, TermLineKind,
+    TuiLife, Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
 };
 use multiplexer_terminal::ProcessCapture;
 use multiplexer_wire::codec::{decode_frame, encode_frame};
@@ -60,6 +61,7 @@ enum Focus {
     Terminal,
     Palette,
     Search,
+    FileFilter,
 }
 
 struct ShellView {
@@ -179,6 +181,7 @@ impl ShellView {
         view.apply_theme();
         view.handshake();
         view.bootstrap_catalogs();
+        view.refresh_skills();
         view.refresh_worktrees();
         view.refresh_reminder();
         view.run_shell("git status --short --branch");
@@ -219,10 +222,11 @@ impl ShellView {
         let models = self
             .server
             .handle_frame(&rpc("ml", methods::MODEL_LIST, json!({})));
-        if let Some(list) = models_from(&models) {
-            if !list.is_empty() {
-                self.workspace.set_models(list);
-            }
+        let rpc_models = models_from(&models).unwrap_or_default();
+        let cfg_models = load_config_models();
+        let merged = merge_models(&cfg_models, &rpc_models);
+        if !merged.is_empty() {
+            self.workspace.set_models(merged);
         }
         let usage = self
             .server
@@ -390,6 +394,14 @@ impl ShellView {
             if path != "empty" && self.workspace.select_diff(path) {
                 self.load_diff_preview(path);
             }
+        } else if let Some(idx) = id.strip_prefix("core:") {
+            if let Ok(i) = idx.parse::<usize>() {
+                let _ = self.workspace.toggle_core_reserved(i);
+            }
+        } else if let Some(name) = id.strip_prefix("mcp:") {
+            if name != "empty" {
+                self.workspace.remember_mcp(name);
+            }
         }
     }
 
@@ -525,6 +537,24 @@ impl ShellView {
                                 .push_notice(NoticeKind::Warn, "select a file first");
                         }
                     }
+                    ClientAction::MentionMcp => {
+                        if changed {
+                            self.workspace
+                                .push_notice(NoticeKind::Info, "mentioned @mcp (text only)");
+                        } else {
+                            self.workspace
+                                .push_notice(NoticeKind::Warn, "select an MCP row first");
+                        }
+                    }
+                    ClientAction::ToggleSkill => {
+                        if !changed {
+                            self.workspace
+                                .push_notice(NoticeKind::Warn, "select a skill first");
+                        }
+                    }
+                    ClientAction::SelectTab(InspectorTab::Checkpoints) => {
+                        self.refresh_checkpoints();
+                    }
                     _ => {}
                 }
             }
@@ -562,6 +592,9 @@ impl ShellView {
             ClientAction::SwitchWorktree => self.switch_worktree(),
             ClientAction::RemoveWorktree => self.remove_worktree(),
             ClientAction::KillTerm => self.kill_capture(),
+            ClientAction::RefreshSkills => self.refresh_skills(),
+            ClientAction::DetectBrowsers => self.detect_browser_notice(),
+            ClientAction::CreateSkill => self.create_skill(),
             ClientAction::StartMcp | ClientAction::StopMcp => {
                 if !apply_layout_action(&mut self.workspace, action) {
                     self.workspace
@@ -764,10 +797,17 @@ impl ShellView {
             return;
         };
         let abs = join_project_path(&self.workspace.project, &rel);
-        self.run_shell(&format!("start \"\" \"{}\"", abs.display()));
+        let visual = std::env::var("VISUAL").ok();
+        let editor = std::env::var("EDITOR").ok();
+        let prog = open_external_program(visual.as_deref(), editor.as_deref());
+        if prog == "start" {
+            self.run_shell(&format!("start \"\" \"{}\"", abs.display()));
+        } else {
+            self.run_shell(&format!("{prog} \"{}\"", abs.display()));
+        }
         self.workspace.push_notice(
             NoticeKind::Info,
-            format!("opened {} (system app)", abs.display()),
+            format!("opened {} ({prog})", abs.display()),
         );
     }
 
@@ -795,6 +835,112 @@ impl ShellView {
         self.workspace.worktree_cards = cards;
         self.term_meta(&format!("worktrees {}", self.workspace.worktrees.len()));
         self.refresh_reminder();
+    }
+
+    fn refresh_skills(&mut self) {
+        let cwd = self.workspace.project.clone();
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_default();
+        let cands = skill_dir_candidates(&home, &cwd);
+        let user = list_dir_entry_names(&cands[0].0);
+        let project = list_dir_entry_names(&cands[1].0);
+        let user_names: Vec<&str> = user.iter().map(String::as_str).collect();
+        let project_names: Vec<&str> = project.iter().map(String::as_str).collect();
+        let rows = merge_skill_rows(
+            &parse_skill_names(&user_names),
+            &parse_skill_names(&project_names),
+        );
+        let items: Vec<SkillItem> = rows
+            .into_iter()
+            .map(|r| {
+                let preview = skill_preview(&cands, &r.name, &r.source);
+                SkillItem {
+                    name: r.name,
+                    source: r.source,
+                    enabled: true,
+                    preview,
+                }
+            })
+            .collect();
+        self.workspace.set_skill_items(items);
+        let hooks_path = PathBuf::from(&cwd).join(".grok").join("hooks.toml");
+        if let Ok(text) = std::fs::read_to_string(hooks_path) {
+            self.workspace.hooks = parse_hooks_tomlish(&text)
+                .into_iter()
+                .map(|h| (h.name, h.when))
+                .collect();
+        } else {
+            self.workspace.hooks.clear();
+        }
+        self.workspace.push_notice(
+            NoticeKind::Info,
+            format!(
+                "skills {}  hooks {}",
+                self.workspace.skill_items.len(),
+                self.workspace.hooks.len()
+            ),
+        );
+    }
+
+    fn create_skill(&mut self) {
+        let name = self
+            .workspace
+            .draft
+            .split_whitespace()
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("new-skill");
+        let dir = PathBuf::from(&self.workspace.project)
+            .join(".grok")
+            .join("skills")
+            .join(name);
+        if let Err(err) = std::fs::create_dir_all(&dir) {
+            self.workspace
+                .push_notice(NoticeKind::Warn, format!("create skill: {err}"));
+            return;
+        }
+        let path = dir.join("SKILL.md");
+        let body = format!("# {name}\n\nLocal skill stub. Not loaded into grok.\n");
+        if let Err(err) = std::fs::write(&path, body) {
+            self.workspace
+                .push_notice(NoticeKind::Warn, format!("write skill: {err}"));
+            return;
+        }
+        self.refresh_skills();
+        self.workspace
+            .push_notice(NoticeKind::Good, format!("wrote {}", path.display()));
+    }
+
+    fn detect_browser_notice(&mut self) {
+        let found = detect_browsers(&default_browser_candidates());
+        if found.is_empty() {
+            self.workspace.push_notice(
+                NoticeKind::Info,
+                "no browsers at well-known paths (CDP later)",
+            );
+        } else {
+            let names: Vec<_> = found.iter().map(|(n, _)| n.as_str()).collect();
+            self.workspace.push_notice(
+                NoticeKind::Info,
+                format!("detected {} (CDP later)", names.join(", ")),
+            );
+        }
+    }
+
+    fn refresh_checkpoints(&mut self) {
+        let sid = self
+            .session_id
+            .clone()
+            .unwrap_or_else(|| "local".to_owned());
+        let frames = self.server.handle_frame(&rpc(
+            "cpl",
+            methods::CHECKPOINT_LIST,
+            json!({ "session_id": sid }),
+        ));
+        if let Some(rows) = checkpoints_from(&frames) {
+            self.workspace.checkpoints = rows;
+        }
     }
 
     fn switch_worktree(&mut self) {
@@ -870,6 +1016,7 @@ impl ShellView {
             self.workspace.select_checkpoint(Some(id));
             self.term_meta("checkpoint created");
         }
+        self.refresh_checkpoints();
     }
 
     fn revert_checkpoint(&mut self) {
@@ -892,6 +1039,7 @@ impl ShellView {
             NoticeKind::Info,
             format!("pointer set to {id}; files unchanged"),
         );
+        self.refresh_checkpoints();
     }
 
     fn respond_approval(&mut self, decision: &str) {
@@ -982,9 +1130,10 @@ impl ShellView {
                 return;
             }
             SendPlan::Slash(cmd) => {
+                let arg = slash_arg(&self.workspace.draft);
                 self.workspace.draft.clear();
                 self.workspace.cursor = 0;
-                self.handle_slash(cmd, cx);
+                self.handle_slash(cmd, arg, cx);
                 return;
             }
             SendPlan::StartTurn(_) => {}
@@ -1011,7 +1160,7 @@ impl ShellView {
         self.term_meta("grok -p running in background");
     }
 
-    fn handle_slash(&mut self, cmd: SlashCommand, cx: &mut Context<Self>) {
+    fn handle_slash(&mut self, cmd: SlashCommand, arg: Option<String>, cx: &mut Context<Self>) {
         match cmd {
             SlashCommand::New => {
                 self.workspace.new_thread();
@@ -1033,8 +1182,17 @@ impl ShellView {
                 self.dispatch(ClientAction::TogglePalette, cx);
             }
             SlashCommand::Model => {
-                self.workspace.cycle_model();
-                self.term_meta(&format!("model {}", self.workspace.model));
+                if let Some(id) = arg {
+                    if self.workspace.select_model(&id) {
+                        self.term_meta(&format!("model {id}"));
+                    } else {
+                        self.workspace
+                            .push_notice(NoticeKind::Warn, format!("unknown model {id}"));
+                    }
+                } else {
+                    self.workspace.cycle_model();
+                    self.term_meta(&format!("model {}", self.workspace.model));
+                }
             }
             SlashCommand::Search => {
                 self.dispatch(ClientAction::ToggleSearch, cx);
@@ -1043,6 +1201,9 @@ impl ShellView {
                 self.dispatch(ClientAction::ToggleSettings, cx);
             }
             SlashCommand::Files => {
+                if let Some(q) = arg {
+                    self.workspace.set_file_filter(q);
+                }
                 self.dispatch(ClientAction::OpenProjectFiles, cx);
             }
             SlashCommand::Agents => {
@@ -1076,6 +1237,24 @@ impl ShellView {
             return;
         }
         self.term_line(TermLineKind::Input, &line);
+        let lower = line.trim().to_ascii_lowercase();
+        if lower == "pwd" {
+            let cwd = self.workspace.term_cwd.clone();
+            self.term_meta(&cwd);
+            return;
+        }
+        if lower == "cd" || lower.starts_with("cd ") {
+            let rest = line.trim()[2..].trim();
+            if rest.is_empty() || rest == "~" {
+                self.workspace.term_cwd = self.workspace.project.clone();
+            } else {
+                let next = PathBuf::from(&self.workspace.term_cwd).join(rest);
+                self.workspace.term_cwd = next.display().to_string();
+            }
+            let cwd = self.workspace.term_cwd.clone();
+            self.term_meta(&cwd);
+            return;
+        }
         if let Some(builtin) = parse_builtin(&line) {
             self.run_builtin(builtin);
             return;
@@ -1083,7 +1262,7 @@ impl ShellView {
         match ProcessCapture::spawn(
             "cmd.exe",
             &["/C", &line],
-            PathBuf::from(&self.workspace.project).as_path(),
+            PathBuf::from(&self.workspace.term_cwd).as_path(),
         ) {
             Ok(cap) => {
                 self.capture = Some(cap);
@@ -1421,6 +1600,25 @@ impl ShellView {
             return;
         }
 
+        if self.focus == Focus::FileFilter {
+            if key == "backspace" {
+                self.workspace.file_filter.pop();
+            } else if key == "space" {
+                self.workspace.file_filter.push(' ');
+            } else if let Some(ch) = event.keystroke.key_char.as_deref() {
+                if !mods.control && !mods.alt {
+                    for c in ch.chars() {
+                        if c == '\n' || c == '\r' {
+                            continue;
+                        }
+                        self.workspace.file_filter.push(c);
+                    }
+                }
+            }
+            cx.notify();
+            return;
+        }
+
         if self.focus == Focus::Terminal {
             self.terminal_key(key, mods.control, cx);
             return;
@@ -1515,6 +1713,10 @@ impl ShellView {
         if self.workspace.search_open {
             self.workspace.search_query.push_str(text);
             self.workspace.search_selected = 0;
+            return;
+        }
+        if self.focus == Focus::FileFilter {
+            self.workspace.file_filter.push_str(text);
             return;
         }
         self.workspace.cursor = insert_at(&mut self.workspace.draft, self.workspace.cursor, text);
@@ -1932,7 +2134,7 @@ impl ShellView {
                                 ChromeGlyph::Agent.mark(),
                                 title,
                                 format!("{status} · {n} msgs"),
-                                "local",
+                                "local threads only",
                                 i == selected,
                                 status == "running",
                                 cx,
@@ -2116,7 +2318,42 @@ impl ShellView {
                         },
                     )),
             )
-            .child(
+            .child(if tab == InspectorTab::Files {
+                let q = self.workspace.file_filter.clone();
+                div()
+                    .id("files_filter")
+                    .mx_2()
+                    .mb_1()
+                    .px_2()
+                    .py_1()
+                    .rounded_lg()
+                    .bg(hsla(0.0, 0.0, 1.0, 0.06))
+                    .border_1()
+                    .border_color(if self.focus == Focus::FileFilter {
+                        Theme::accent()
+                    } else {
+                        Theme::hairline()
+                    })
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.focus = Focus::FileFilter;
+                            cx.notify();
+                        }),
+                    )
+                    .child(if q.is_empty() {
+                        SharedString::from("Filter files…")
+                    } else {
+                        SharedString::from(q)
+                    })
+                    .into_any()
+            } else {
+                div().into_any()
+            })
+            .child(if buttons.is_empty() {
+                div().into_any()
+            } else {
                 div()
                     .px_2()
                     .flex()
@@ -2127,8 +2364,9 @@ impl ShellView {
                         ghost_btn(b.label, b.hint, cx, move |this, cx| {
                             this.dispatch(action, cx);
                         })
-                    })),
-            )
+                    }))
+                    .into_any()
+            })
             .child(
                 div()
                     .id("right-scroll")
@@ -2600,7 +2838,7 @@ impl ShellView {
             SettingsSection::Bindings => "Chord table. Ctrl+P is search. Ctrl+Shift+P is palette.".into(),
             SettingsSection::Inspector => "Inspector customize later. Not shipped.".into(),
             SettingsSection::Session => format!("{turns} turns  {tokens} tok (local snapshot only)\nProject {project}"),
-            SettingsSection::Remotes => "Detect only. Tailscale Serve later.".into(),
+            SettingsSection::Remotes => remotes_serve_note().into(),
         };
         div()
             .id("settings")
@@ -3648,6 +3886,56 @@ fn remotes_from(frames: &[String]) -> Option<Vec<RemoteRow>> {
                             id: row.get("id")?.as_str()?.to_owned(),
                             kind: row.get("kind")?.as_str()?.to_owned(),
                             label: row.get("label")?.as_str()?.to_owned(),
+                        })
+                    })
+                    .collect(),
+            );
+        }
+    }
+    None
+}
+
+fn load_config_models() -> Vec<String> {
+    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME"));
+    let Ok(home) = home else {
+        return Vec::new();
+    };
+    let path = PathBuf::from(home).join(".grok").join("config.toml");
+    match std::fs::read_to_string(path) {
+        Ok(text) => parse_model_keys(&text),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn skill_preview(cands: &[(String, &str)], name: &str, source: &str) -> String {
+    let dir = cands
+        .iter()
+        .find(|(_, src)| *src == source)
+        .map(|(p, _)| p.as_str())
+        .unwrap_or("");
+    let path = PathBuf::from(dir).join(name).join("SKILL.md");
+    let alt = PathBuf::from(dir).join(format!("{name}.md"));
+    let text = std::fs::read_to_string(&path).or_else(|_| std::fs::read_to_string(&alt));
+    match text {
+        Ok(body) => cap_text(&body, 4096),
+        Err(_) => String::new(),
+    }
+}
+
+fn checkpoints_from(frames: &[String]) -> Option<Vec<CheckpointRow>> {
+    for f in frames {
+        if let Ok(Message::Response(r)) = decode_frame(f) {
+            let arr = r.result.get("checkpoints")?.as_array()?;
+            return Some(
+                arr.iter()
+                    .filter_map(|row| {
+                        Some(CheckpointRow {
+                            id: row.get("id")?.as_str()?.to_owned(),
+                            label: row
+                                .get("label")
+                                .and_then(Value::as_str)
+                                .unwrap_or("manual")
+                                .to_owned(),
                         })
                     })
                     .collect(),

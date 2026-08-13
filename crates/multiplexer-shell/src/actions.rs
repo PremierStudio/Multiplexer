@@ -66,6 +66,11 @@ pub enum ClientAction {
     SwitchWorktree,
     RemoveWorktree,
     KillTerm,
+    RefreshSkills,
+    DetectBrowsers,
+    ToggleSkill,
+    CreateSkill,
+    MentionMcp,
 }
 
 /// Apply a workspace-only layout action.
@@ -202,20 +207,28 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
         }
         ClientAction::DismissToast => ws.dismiss_newest_notice(),
         ClientAction::StartMcp => {
-            let name = ws
-                .right_expanded_id
-                .as_deref()
-                .and_then(|id| id.strip_prefix("mcp:"))
-                .map(str::to_owned);
+            let name = mcp_target(ws);
             name.map(|n| ws.start_mcp(&n)).unwrap_or(false)
         }
         ClientAction::StopMcp => {
+            let name = mcp_target(ws);
+            name.map(|n| ws.stop_mcp(&n)).unwrap_or(false)
+        }
+        ClientAction::ToggleSkill => {
             let name = ws
                 .right_expanded_id
                 .as_deref()
-                .and_then(|id| id.strip_prefix("mcp:"))
+                .and_then(|id| id.strip_prefix("skill:"))
                 .map(str::to_owned);
-            name.map(|n| ws.stop_mcp(&n)).unwrap_or(false)
+            name.map(|n| ws.toggle_skill(&n)).unwrap_or(false)
+        }
+        ClientAction::MentionMcp => {
+            let Some(name) = mcp_target(ws) else {
+                return false;
+            };
+            let mention = format!(" `@mcp:{name}` ");
+            ws.cursor = crate::composer::insert_at(&mut ws.draft, ws.cursor, &mention);
+            true
         }
         ClientAction::DismissReminder => {
             if ws.reminder.is_none() {
@@ -270,8 +283,21 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
         | ClientAction::OpenExternal
         | ClientAction::SwitchWorktree
         | ClientAction::RemoveWorktree
-        | ClientAction::KillTerm => false,
+        | ClientAction::KillTerm
+        | ClientAction::RefreshSkills
+        | ClientAction::DetectBrowsers
+        | ClientAction::CreateSkill => false,
     }
+}
+
+fn mcp_target(ws: &Workspace) -> Option<String> {
+    if let Some(name) = ws.selected_mcp.clone() {
+        return Some(name);
+    }
+    ws.right_expanded_id
+        .as_deref()
+        .and_then(|id| id.strip_prefix("mcp:"))
+        .map(str::to_owned)
 }
 
 #[cfg(test)]
@@ -282,7 +308,7 @@ mod tests {
         Workspace::new("p", "m")
     }
 
-    fn host_noops() -> [ClientAction; 24] {
+    fn host_noops() -> [ClientAction; 27] {
         [
             ClientAction::Send,
             ClientAction::Interrupt,
@@ -308,6 +334,9 @@ mod tests {
             ClientAction::SwitchWorktree,
             ClientAction::RemoveWorktree,
             ClientAction::KillTerm,
+            ClientAction::RefreshSkills,
+            ClientAction::DetectBrowsers,
+            ClientAction::CreateSkill,
         ]
     }
 

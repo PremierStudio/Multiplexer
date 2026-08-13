@@ -7,6 +7,7 @@ mod actions;
 mod approval_ui;
 mod bars;
 mod bindings;
+mod catalog;
 mod center;
 mod chrome_geom;
 mod composer;
@@ -35,6 +36,10 @@ pub use actions::{apply_layout_action, ClientAction};
 pub use approval_ui::PendingApproval;
 pub use bars::usage_bar;
 pub use bindings::{host_call, worktree_create_call, ActionContext, HostCall};
+pub use catalog::{
+    format_ram, merge_models, open_external_program, parse_model_keys, parse_tailscale_dns,
+    remotes_serve_note, slash_arg,
+};
 pub use center::{CenterMode, GrokTuiHost, TuiLife};
 pub use chrome_geom::{bottom_height_from_mouse, remotes_pill_label, title_overflow};
 pub use composer::{
@@ -82,7 +87,7 @@ pub use workbench::{
 };
 pub use workspace::{
     ChatMessage, CheckpointRow, ChromeLayout, CoreRow, InspectorTab, LeftSection, McpLife, McpRow,
-    RailVis, Role, Thread, Workspace, WorktreeCard, BOTTOM_HEIGHT_COLLAPSED,
+    RailVis, Role, SkillItem, Thread, Workspace, WorktreeCard, BOTTOM_HEIGHT_COLLAPSED,
     BOTTOM_HEIGHT_EXPANDED, BOTTOM_HEIGHT_OPEN_MIN, LEFT_WIDTH_MAX, LEFT_WIDTH_MIN, RAIL_COLLAPSED,
     RIGHT_WIDTH_MAX, RIGHT_WIDTH_MIN,
 };

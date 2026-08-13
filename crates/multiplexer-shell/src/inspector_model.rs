@@ -282,10 +282,29 @@ fn term_rows(ws: &Workspace) -> Vec<ListRowSpec> {
 }
 
 fn skill_rows(ws: &Workspace) -> Vec<ListRowSpec> {
-    if ws.skills.is_empty() {
+    if ws.skill_items.is_empty() && ws.skills.is_empty() {
         return vec![ListRowSpec::new("skill:empty", "No skills")
             .with_icon(ChromeGlyph::Sparkle.mark())
             .with_subtitle(".grok/skills")];
+    }
+    if !ws.skill_items.is_empty() {
+        return ws
+            .skill_items
+            .iter()
+            .map(|s| {
+                let flag = if s.enabled { "on" } else { "off" };
+                mark_expanded(
+                    ListRowSpec::new(format!("skill:{}", s.name), s.name.clone())
+                        .with_icon(ChromeGlyph::Sparkle.mark())
+                        .with_subtitle(format!("{} · {flag} · not loaded into grok", s.source))
+                        .with_badge(BadgeSpec::new(
+                            if s.enabled { Tone::Good } else { Tone::Neutral },
+                            flag,
+                        )),
+                    ws,
+                )
+            })
+            .collect();
     }
     ws.skills
         .iter()

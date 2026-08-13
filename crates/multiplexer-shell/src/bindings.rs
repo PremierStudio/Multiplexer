@@ -67,7 +67,9 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         | ClientAction::CloseSearch
         | ClientAction::CloseOverlay
         | ClientAction::ResetOutlook
-        | ClientAction::DismissToast => HostCall::Local,
+        | ClientAction::DismissToast
+        | ClientAction::ToggleSkill
+        | ClientAction::MentionMcp => HostCall::Local,
         ClientAction::CreateWorktree => worktree_create_call(ctx),
         ClientAction::Send
         | ClientAction::RefreshCores
@@ -88,7 +90,10 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         | ClientAction::OpenExternal
         | ClientAction::SwitchWorktree
         | ClientAction::RemoveWorktree
-        | ClientAction::KillTerm => HostCall::NeedsHost,
+        | ClientAction::KillTerm
+        | ClientAction::RefreshSkills
+        | ClientAction::DetectBrowsers
+        | ClientAction::CreateSkill => HostCall::NeedsHost,
         ClientAction::Interrupt => match ctx.session_id.as_deref() {
             Some(session_id) => HostCall::Rpc {
                 method: "session.interrupt",

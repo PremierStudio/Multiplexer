@@ -34,6 +34,7 @@ pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
             button("Reload", "Refresh MCP inventory", ClientAction::RefreshMcp),
             button("Start", "Set ready flag (no child)", ClientAction::StartMcp),
             button("Stop", "Clear ready flag", ClientAction::StopMcp),
+            button("Mention", "text only @mcp:name", ClientAction::MentionMcp),
         ],
         InspectorTab::Checkpoints => vec![
             button("New", "Create a checkpoint", ClientAction::CreateCheckpoint),
@@ -67,7 +68,11 @@ pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
             "kill the running command",
             ClientAction::KillTerm,
         )],
-        InspectorTab::Skills => Vec::new(),
+        InspectorTab::Skills => vec![
+            button("Reload", "rescan .grok/skills", ClientAction::RefreshSkills),
+            button("Toggle", "local enable flag", ClientAction::ToggleSkill),
+            button("Create", "write SKILL.md", ClientAction::CreateSkill),
+        ],
         InspectorTab::Files => vec![
             button("Reload", "rescan project tree", ClientAction::RefreshFiles),
             button("Reveal", "copy absolute path", ClientAction::RevealFile),
@@ -98,7 +103,14 @@ pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
                 ClientAction::InsertFileMention,
             ),
         ],
-        InspectorTab::Browser => vec![button("Open", "system browser", ClientAction::OpenBrowser)],
+        InspectorTab::Browser => vec![
+            button("Open", "system browser", ClientAction::OpenBrowser),
+            button(
+                "Detect",
+                "scan installed browsers",
+                ClientAction::DetectBrowsers,
+            ),
+        ],
     }
 }
 

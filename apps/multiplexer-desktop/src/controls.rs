@@ -137,6 +137,11 @@ pub const REQUIRED_IDS: &[&str] = &[
     "switch_worktree",
     "remove_worktree",
     "term_kill",
+    "refresh_skills",
+    "detect_browsers",
+    "files_filter",
+    "toggle_skill",
+    "create_skill",
 ];
 
 const fn spec(
@@ -318,6 +323,16 @@ const CONTROLS: &[ControlSpec] = &[
         None,
     ),
     spec("term_kill", Surface::TermStrip, "Kill command", None),
+    spec("refresh_skills", Surface::RightRail, "Reload skills", None),
+    spec(
+        "detect_browsers",
+        Surface::RightRail,
+        "Detect browsers",
+        None,
+    ),
+    spec("files_filter", Surface::RightRail, "Filter files", None),
+    spec("toggle_skill", Surface::RightRail, "Toggle skill", None),
+    spec("create_skill", Surface::RightRail, "Create skill", None),
 ];
 
 /// Global chords. Escape is `close_overlay` (palette, help, search, settings).
@@ -409,9 +424,9 @@ mod tests {
             assert_eq!(spec.action, *required);
             assert!(spec.is_live(), "{required} is dead");
         }
-        assert_eq!(REQUIRED_IDS.len(), 78);
+        assert_eq!(REQUIRED_IDS.len(), 83);
         assert_eq!(have.len(), REQUIRED_IDS.len());
-        assert_eq!(all_controls().len(), 78);
+        assert_eq!(all_controls().len(), 83);
 
         let required_once = [
             "chats_toggle",
@@ -553,6 +568,11 @@ mod tests {
             ("switch_worktree", Surface::RightRail),
             ("remove_worktree", Surface::RightRail),
             ("term_kill", Surface::TermStrip),
+            ("refresh_skills", Surface::RightRail),
+            ("detect_browsers", Surface::RightRail),
+            ("files_filter", Surface::RightRail),
+            ("toggle_skill", Surface::RightRail),
+            ("create_skill", Surface::RightRail),
         ];
         for (id, surface) in pin {
             let spec = control_by_id(id).unwrap_or_else(|| panic!("missing {id}"));
@@ -655,7 +675,7 @@ mod tests {
         assert_eq!(controls_on(Surface::LeftRail).len(), 8);
         assert_eq!(controls_on(Surface::Center).len(), 9);
         assert_eq!(controls_on(Surface::Composer).len(), 3);
-        assert_eq!(controls_on(Surface::RightRail).len(), 29);
+        assert_eq!(controls_on(Surface::RightRail).len(), 34);
         assert_eq!(controls_on(Surface::TermStrip).len(), 5);
         assert_eq!(controls_on(Surface::Palette).len(), 2);
         assert_eq!(controls_on(Surface::HelpOverlay).len(), 1);

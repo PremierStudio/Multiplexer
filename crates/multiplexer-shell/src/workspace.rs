@@ -25,6 +25,16 @@ pub struct Thread {
     pub title: String,
     pub messages: Vec<ChatMessage>,
     pub status: String,
+    pub model: String,
+}
+
+/// One skill inventory row. Enable is a local flag, not loaded into grok.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillItem {
+    pub name: String,
+    pub source: String,
+    pub enabled: bool,
+    pub preview: String,
 }
 
 /// Right-rail inspector tab.
@@ -384,6 +394,12 @@ pub struct Workspace {
     pub worktree_cards: Vec<WorktreeCard>,
     pub hello_ok: bool,
     pub ping_ok: bool,
+    pub selected_mcp: Option<String>,
+    pub skill_items: Vec<SkillItem>,
+    pub hooks: Vec<(String, String)>,
+    pub term_cwd: String,
+    pub last_error: String,
+    pub ram_bytes: u64,
     pub browser_url: String,
     next_id: u64,
     next_notice: u64,
@@ -454,6 +470,12 @@ impl Workspace {
             worktree_cards: Vec::new(),
             hello_ok: false,
             ping_ok: false,
+            selected_mcp: None,
+            skill_items: Vec::new(),
+            hooks: Vec::new(),
+            term_cwd: project.clone(),
+            last_error: String::new(),
+            ram_bytes: 0,
             browser_url: String::new(),
             next_id: 1,
             next_notice: 1,
@@ -489,6 +511,7 @@ impl Workspace {
             title: "New chat".to_owned(),
             messages: Vec::new(),
             status: "idle".to_owned(),
+            model: self.model.clone(),
         });
         self.selected = self.threads.len() - 1;
         self.draft.clear();
@@ -640,11 +663,13 @@ impl Workspace {
     }
 
     pub fn mark_error(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        self.last_error = message.clone();
         if let Some(thread) = self.selected_thread_mut() {
             thread.status = "error".to_owned();
             thread.messages.push(ChatMessage {
                 role: Role::Assistant,
-                text: message.into(),
+                text: message,
             });
         }
         self.busy = false;
@@ -729,7 +754,34 @@ impl Workspace {
     }
 
     pub fn set_skills(&mut self, skills: Vec<String>) {
-        self.skills = skills;
+        self.skills = skills.clone();
+        self.skill_items = skills
+            .into_iter()
+            .map(|raw| {
+                let (name, source) = parse_skill_label(&raw);
+                SkillItem {
+                    name,
+                    source,
+                    enabled: true,
+                    preview: String::new(),
+                }
+            })
+            .collect();
+    }
+
+    pub fn set_skill_items(&mut self, items: Vec<SkillItem>) {
+        self.skills = items.iter().map(|s| s.name.clone()).collect();
+        self.skill_items = items;
+    }
+
+    pub fn toggle_skill(&mut self, name: &str) -> bool {
+        match self.skill_items.iter_mut().find(|s| s.name == name) {
+            Some(item) => {
+                item.enabled = !item.enabled;
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn set_git_status(&mut self, status: impl Into<String>) {
@@ -857,7 +909,7 @@ impl Workspace {
             self.models.join(", ")
         };
         format!(
-            "Project\n{}\n\nModel\n{}\n\nConnection\n{}\n\nHandshake\nhello {} ping {}\n\nSession\n{}\n\nThreads\n{}\n\nModels\n{}\n\nTurns\n{}\n\nNote\nlocal snapshot only\n\nPalette\n{}\n\nHelp\n{}",
+            "Project\n{}\n\nModel\n{}\n\nConnection\n{}\n\nHandshake\nhello {} ping {}\n\nSession\n{}\n\nThreads\n{}\n\nModels\n{}\n\nTurns\n{}\n\nNote\nlocal snapshot only\n\nLast error\n{}\n\nPalette\n{}\n\nHelp\n{}",
             self.project,
             self.model,
             self.connection.status_label(),
@@ -867,6 +919,11 @@ impl Workspace {
             self.threads.len(),
             models,
             self.usage_turns,
+            if self.last_error.is_empty() {
+                "(none)"
+            } else {
+                self.last_error.as_str()
+            },
             if self.palette_open { "open" } else { "closed" },
             if self.help_open { "open" } else { "closed" },
         )
@@ -874,8 +931,10 @@ impl Workspace {
 
     pub fn resource_detail(&self) -> String {
         let mut out = String::from(
-            "CPU samples only. Reservation is a local flag. Process containment is not attached.\nNo contained processes.\n\n",
+            "CPU samples only. Reservation is a local flag. Process containment is not attached.\nNo contained processes.\n",
         );
+        out.push_str(&crate::catalog::format_ram(self.ram_bytes));
+        out.push_str("\n\n");
         if self.cores.is_empty() {
             out.push_str("Core samples: (waiting)\n");
         } else {
@@ -1000,11 +1059,30 @@ impl Workspace {
     }
 
     pub fn skills_detail(&self) -> String {
-        if self.skills.is_empty() {
-            "No skills found under .grok/skills".to_owned()
-        } else {
-            self.skills.join("\n")
+        if self.skill_items.is_empty() && self.skills.is_empty() && self.hooks.is_empty() {
+            return "No skills found under .grok/skills".to_owned();
         }
+        let mut out = String::from("Enable is a local flag (not loaded into grok).\n\n");
+        if self.skill_items.is_empty() && self.skills.is_empty() {
+            // hooks only
+        } else if !self.skill_items.is_empty() {
+            for s in &self.skill_items {
+                let flag = if s.enabled { "on" } else { "off" };
+                out.push_str(&format!("{}  [{}]  {flag}\n", s.name, s.source));
+                if !s.preview.is_empty() {
+                    out.push_str(&format!("  {}\n", s.preview.lines().next().unwrap_or("")));
+                }
+            }
+        } else {
+            out.push_str(&self.skills.join("\n"));
+        }
+        if !self.hooks.is_empty() {
+            out.push_str("\nHooks (list only, not run)\n");
+            for (name, when) in &self.hooks {
+                out.push_str(&format!("{name}  {when}\n"));
+            }
+        }
+        out
     }
 
     pub fn files_detail(&self) -> String {
@@ -1146,6 +1224,10 @@ impl Workspace {
             self.right_expanded_id = None;
             true
         }
+    }
+
+    pub fn remember_mcp(&mut self, name: impl Into<String>) {
+        self.selected_mcp = Some(name.into());
     }
 
     pub fn start_mcp(&mut self, name: &str) -> bool {
@@ -1383,10 +1465,40 @@ impl Workspace {
 
     pub fn agents_detail(&self) -> String {
         let mut out = String::from("Local threads only. Subagent spawn is not wired.\n\n");
-        for (id, title, status, n) in self.agent_rows() {
-            out.push_str(&format!("{title}  [{status}]  {id}  {n} msgs\n"));
+        for t in &self.threads {
+            out.push_str(&format!(
+                "{}  [{}]  {}  {}  {} msgs\n",
+                t.title,
+                t.status,
+                t.model,
+                t.id,
+                t.messages.len()
+            ));
         }
         out
+    }
+
+    pub fn toggle_core_reserved(&mut self, index: usize) -> bool {
+        match self.cores.iter_mut().find(|c| c.index == index) {
+            Some(c) => {
+                c.reserved = !c.reserved;
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn set_file_filter(&mut self, query: impl Into<String>) {
+        self.file_filter = query.into();
+    }
+}
+
+fn parse_skill_label(raw: &str) -> (String, String) {
+    if let Some((name, rest)) = raw.rsplit_once('[') {
+        let source = rest.trim().trim_end_matches(']').trim();
+        (name.trim().to_owned(), source.to_owned())
+    } else {
+        (raw.to_owned(), "user".to_owned())
     }
 }
 
@@ -2112,6 +2224,39 @@ mod tests {
         assert_eq!(ws.agent_rows().len(), before);
         assert_eq!(ws.agent_rows()[0].0, ws.threads[0].id);
         assert!(ws.select_thread_id(&ws.threads[0].id.clone()));
+    }
+
+    #[test]
+    fn skills_hooks_core_toggle_and_file_filter() {
+        let mut ws = Workspace::new("p", "m");
+        ws.set_skills(vec!["review [project]".into(), "tdd".into()]);
+        assert_eq!(ws.skill_items.len(), 2);
+        assert_eq!(ws.skill_items[0].source, "project");
+        assert!(ws.toggle_skill("review"));
+        assert!(!ws.skill_items[0].enabled);
+        assert!(
+            ws.skills_detail().contains("not loaded into grok")
+                || ws.skills_detail().contains("local flag")
+        );
+        ws.hooks.push(("pre".into(), "commit".into()));
+        assert!(ws.skills_detail().contains("Hooks"));
+        ws.cores.push(crate::workspace::CoreRow {
+            index: 3,
+            usage: 1.0,
+            reserved: false,
+        });
+        assert!(ws.toggle_core_reserved(3));
+        assert!(ws.cores.iter().any(|c| c.index == 3 && c.reserved));
+        ws.set_file_filter("lib");
+        ws.set_files(vec!["src/lib.rs".into(), "src/main.rs".into()]);
+        assert_eq!(ws.files_visible(), vec!["src/lib.rs".to_owned()]);
+        ws.remember_mcp("linear");
+        assert_eq!(ws.selected_mcp.as_deref(), Some("linear"));
+        assert_eq!(ws.threads[0].model, "m");
+        ws.mark_error("boom");
+        assert!(ws.session_detail(None).contains("boom"));
+        assert!(ws.resource_detail().contains("RAM"));
+        assert!(ws.agents_detail().contains("m"));
     }
 
     #[test]
