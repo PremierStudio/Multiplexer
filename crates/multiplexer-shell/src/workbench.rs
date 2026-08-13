@@ -258,7 +258,7 @@ pub fn detect_tui_hosts(candidates: &[(String, String, String)]) -> Vec<SystemTe
         .collect()
 }
 
-/// Empty preferred: Windows Terminal if installed, else built-in.
+/// Empty or unknown preferred: stay inside Multiplexer.
 pub fn resolve_tui_host<'a>(
     hosts: &'a [SystemTerminal],
     preferred: &str,
@@ -271,9 +271,13 @@ pub fn resolve_tui_host<'a>(
     }
     hosts
         .iter()
-        .find(|h| h.id == "wt")
-        .or_else(|| hosts.iter().find(|h| h.id == TUI_HOST_BUILTIN))
+        .find(|h| h.id == TUI_HOST_BUILTIN)
         .or_else(|| hosts.first())
+}
+
+/// Chat / TUI never pops a system terminal. Open-in-Terminal is a separate click.
+pub fn should_pop_out_on_center_toggle(_preferred: &str) -> bool {
+    false
 }
 
 pub fn is_builtin_tui_host(id: &str) -> bool {
@@ -559,16 +563,24 @@ mod tests {
         ];
         assert_eq!(
             resolve_tui_host(&with_wt, "").map(|h| h.id.as_str()),
+            Some(TUI_HOST_BUILTIN)
+        );
+        assert_ne!(
+            resolve_tui_host(&with_wt, "").map(|h| h.id.as_str()),
             Some("wt")
         );
         assert_eq!(
             resolve_tui_host(&with_wt, "builtin").map(|h| h.id.as_str()),
             Some(TUI_HOST_BUILTIN)
         );
-        assert_ne!(
+        assert_eq!(
             resolve_tui_host(&with_wt, "wt").map(|h| h.id.as_str()),
-            Some(TUI_HOST_BUILTIN)
+            Some("wt")
         );
+        assert!(!should_pop_out_on_center_toggle(""));
+        assert!(!should_pop_out_on_center_toggle("wt"));
+        assert!(!should_pop_out_on_center_toggle("builtin"));
+        assert!(!should_pop_out_on_center_toggle("wezterm"));
         let with_wez = vec![
             SystemTerminal {
                 id: "wezterm".into(),
@@ -607,7 +619,8 @@ mod tests {
         assert_eq!(tui_window_title(""), "Multiplexer · Grok");
         assert_eq!(tui_window_title("  New chat  "), "Multiplexer · New chat");
         assert_ne!(tui_window_title("A"), tui_window_title("B"));
-        assert_eq!(preferred_tui_host_id(&with_wt, ""), "wt");
+        assert_eq!(preferred_tui_host_id(&with_wt, ""), TUI_HOST_BUILTIN);
+        assert_eq!(preferred_tui_host_id(&with_wt, "wt"), "wt");
         assert_eq!(preferred_tui_host_id(&only_builtin, "wt"), TUI_HOST_BUILTIN);
         let sid = "15e1198a-711f-41cf-a080-7cc7bdfd8a5b";
         let kill = stop_grok_session_command(sid).expect("uuid");

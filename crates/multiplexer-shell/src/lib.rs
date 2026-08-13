@@ -123,9 +123,9 @@ pub use workbench::{
     detect_terminals, detect_tui_hosts, filter_files, hosted_child_exit_is_handoff,
     is_builtin_tui_host, is_system_tui_surface, join_project_path, linux_terminal_candidates,
     macos_terminal_candidates, merge_mcp, preferred_browser, preferred_terminal,
-    preferred_tui_host_id, resolve_tui_host, should_warm_tui, stop_grok_session_command,
-    tui_host_candidates, tui_window_title, windows_terminal_candidates, ActivityItem,
-    SystemTerminal, TUI_HOST_BUILTIN,
+    preferred_tui_host_id, resolve_tui_host, should_pop_out_on_center_toggle, should_warm_tui,
+    stop_grok_session_command, tui_host_candidates, tui_window_title, windows_terminal_candidates,
+    ActivityItem, SystemTerminal, TUI_HOST_BUILTIN,
 };
 pub use workspace::{
     ChatMessage, CheckpointRow, ChromeLayout, CoreRow, FocusRegion, InspectorTab, LeftSection,
