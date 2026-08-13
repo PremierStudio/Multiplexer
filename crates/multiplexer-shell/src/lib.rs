@@ -62,7 +62,7 @@ pub use diff_view::{
 };
 pub use embed::{embed_from_selection, embed_grok, embed_surface, EmbedTarget};
 pub use fuzzy::{fuzzy_best, fuzzy_score};
-pub use icons::{BrandIcon, ChromeGlyph};
+pub use icons::{lucide_for_gpui, BrandIcon, ChromeGlyph};
 pub use inspector_model::{inspector_rows, row_detail};
 pub use integrations::{filter_tiles, integration_tiles, TileSpec};
 pub use keymap::{action_from_id, action_id, is_tui_hatch, BindingTable, Chord};

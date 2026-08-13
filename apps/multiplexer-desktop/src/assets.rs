@@ -60,7 +60,14 @@ impl DesktopAssets {
 
 impl AssetSource for DesktopAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        Ok(DesktopAssets::bytes(path).map(Cow::Borrowed))
+        let Some(raw) = DesktopAssets::bytes(path) else {
+            return Ok(None);
+        };
+        if path.ends_with(".svg") {
+            let painted = multiplexer_shell::lucide_for_gpui(&String::from_utf8_lossy(raw));
+            return Ok(Some(Cow::Owned(painted.into_bytes())));
+        }
+        Ok(Some(Cow::Borrowed(raw)))
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {

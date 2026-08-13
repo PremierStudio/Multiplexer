@@ -8,6 +8,7 @@ mod rows;
 mod theme;
 mod widgets;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -35,7 +36,7 @@ use multiplexer_shell::{
     bottom_height_from_mouse, cap_text, changes_headline, default_browser_candidates,
     default_crash_path, default_first_run_path, default_layout_path, default_settings_path,
     default_terminal_candidates, delete_forward, detect_browsers, detect_remotes, detect_terminals,
-    embed_from_selection, embed_grok, embed_surface, first_run_completed,
+    embed_grok, embed_surface, first_run_completed,
     first_run_keychain_notice, format_line, git_diff_line, help_text, hit_action, hunks_for_path,
     insert_at, inspector_rows, is_tui_hatch, join_project_path, journal_from_workspace, leaf_name,
     menu_for, menu_for_thread, merge_cores, merge_mcp, merge_models, move_end, move_home,
@@ -109,7 +110,7 @@ pub(crate) struct ShellView {
     bindings: BindingTable,
     notice_born: Vec<(u64, Instant)>,
     capture: Option<ProcessCapture>,
-    embedded: Option<EmbeddedSession>,
+    embedded: HashMap<String, EmbeddedSession>,
     pending_diff: Option<(String, Receiver<CommandResult>)>,
     turn_started: Option<Instant>,
 }
@@ -208,7 +209,7 @@ impl ShellView {
             bindings,
             notice_born: Vec::new(),
             capture: None,
-            embedded: None,
+            embedded: HashMap::new(),
             pending_diff: None,
             turn_started: None,
         };
@@ -367,42 +368,61 @@ impl ShellView {
         }
     }
 
-    fn launch_grok_tui(&mut self) {
-        self.workspace.terminals = detect_terminals(&default_terminal_candidates());
-        let term = preferred_terminal(&self.workspace.terminals, &self.workspace.selected_terminal)
-            .cloned();
-        let target = embed_from_selection(term.as_ref());
-        if let Some(t) = term {
-            self.workspace.selected_terminal = t.id;
-            self.workspace.settings.preferred_terminal = self.workspace.selected_terminal.clone();
-            self.persist_settings();
-        }
-        let args: Vec<&str> = target.args.iter().map(String::as_str).collect();
-        self.start_embedded(&target.program, &args, &target.label);
+    fn selected_thread_id(&self) -> Option<String> {
+        self.workspace.selected_thread().map(|t| t.id.clone())
     }
 
-    fn start_embedded(&mut self, program: &str, args: &[&str], label: &str) {
-        if let Some(mut old) = self.embedded.take() {
-            let _ = old.kill();
+    fn selected_session(&mut self) -> Option<&mut EmbeddedSession> {
+        let id = self.selected_thread_id()?;
+        self.embedded.get_mut(&id)
+    }
+
+    fn launch_grok_tui(&mut self) {
+        let _ = self.workspace.set_center_mode(CenterMode::GrokTui);
+        self.ensure_thread_grok();
+    }
+
+    fn ensure_thread_grok(&mut self) {
+        let Some(id) = self.selected_thread_id() else {
+            return;
+        };
+        if self.embedded.contains_key(&id) {
+            if let Some(t) = self.workspace.selected_thread() {
+                if t.tui.life == TuiLife::Running {
+                    self.focus = Focus::Tui;
+                    return;
+                }
+            }
+            if let Some(mut dead) = self.embedded.remove(&id) {
+                let _ = dead.kill();
+            }
         }
+        let target = embed_grok();
+        self.start_embedded_for(&id, &target.program, &[], &target.label);
+    }
+
+    fn start_embedded_for(&mut self, thread_id: &str, program: &str, args: &[&str], label: &str) {
         let _ = self.workspace.set_center_mode(CenterMode::GrokTui);
         let (cols, rows) = self.pty_cols_rows();
         let spec = TerminalSpec::new(cols, rows, &self.workspace.project);
         match EmbeddedSession::spawn(program, args, &spec) {
             Ok(session) => {
                 let pid = session.pid();
-                self.embedded = Some(session);
+                self.embedded.insert(thread_id.to_owned(), session);
+                if let Some(t) = self.workspace.selected_thread_mut() {
+                    t.tui.mark_running(pid, program, embed_surface(label));
+                    t.tui.scrollback.clear();
+                }
                 self.workspace
                     .grok_tui
                     .mark_running(pid, program, embed_surface(label));
                 self.workspace.grok_tui.scrollback.clear();
                 self.focus = Focus::Tui;
-                self.workspace.push_notice(
-                    NoticeKind::Good,
-                    format!("{label} is running in Multiplexer."),
-                );
             }
             Err(err) => {
+                if let Some(t) = self.workspace.selected_thread_mut() {
+                    t.tui.mark_failed(format!("spawn failed: {err}"));
+                }
                 self.workspace
                     .grok_tui
                     .mark_failed(format!("spawn failed: {err}"));
@@ -422,7 +442,7 @@ impl ShellView {
 
     fn sync_embedded_size(&mut self) {
         let (cols, rows) = self.pty_cols_rows();
-        if let Some(session) = self.embedded.as_mut() {
+        if let Some(session) = self.selected_session() {
             if session.size() != (cols, rows) {
                 let _ = session.resize(cols, rows);
             }
@@ -430,8 +450,10 @@ impl ShellView {
     }
 
     fn stop_grok_tui(&mut self) {
-        if let Some(mut session) = self.embedded.take() {
-            let _ = session.kill();
+        if let Some(id) = self.selected_thread_id() {
+            if let Some(mut session) = self.embedded.remove(&id) {
+                let _ = session.kill();
+            }
         }
         if let Some(mut child) = self.grok_tui.take() {
             let _ = child.kill();
@@ -626,13 +648,37 @@ impl ShellView {
     }
 
     fn dispatch(&mut self, action: ClientAction, cx: &mut Context<Self>) {
+        if matches!(action, ClientAction::DeleteThread) {
+            if let Some(id) = self.selected_thread_id() {
+                if let Some(mut session) = self.embedded.remove(&id) {
+                    let _ = session.kill();
+                }
+            }
+        }
         match multiplexer_shell::host_call(action, &self.action_ctx()) {
             multiplexer_shell::HostCall::Local => {
                 let changed = apply_layout_action(&mut self.workspace, action);
                 match action {
-                    ClientAction::NewThread => self.session_id = None,
+                    ClientAction::NewThread => {
+                        self.session_id = None;
+                        self.focus = Focus::Composer;
+                    }
                     ClientAction::SetCenterGui => {
                         self.focus = Focus::Composer;
+                    }
+                    ClientAction::SetCenterTui | ClientAction::ToggleCenterMode => {
+                        if self.workspace.selected_center_mode() == CenterMode::GrokTui {
+                            self.ensure_thread_grok();
+                        } else {
+                            self.focus = Focus::Composer;
+                        }
+                    }
+                    ClientAction::SelectThread(_) => {
+                        if self.workspace.selected_center_mode() == CenterMode::GrokTui {
+                            self.focus = Focus::Tui;
+                        } else {
+                            self.focus = Focus::Composer;
+                        }
                     }
                     ClientAction::TogglePalette
                     | ClientAction::ClosePalette
@@ -1571,14 +1617,20 @@ impl ShellView {
                 );
             }
         }
-        if let Some(session) = self.embedded.as_mut() {
+        if let Some(session) = self.selected_session() {
             let chunk = session.try_read_str();
+            let dead = !session.is_alive();
             if !chunk.is_empty() {
-                self.workspace
-                    .grok_tui
-                    .push_output(&visible_pty_text(&chunk));
+                let text = visible_pty_text(&chunk);
+                if let Some(t) = self.workspace.selected_thread_mut() {
+                    t.tui.push_output(&text);
+                }
+                self.workspace.grok_tui.push_output(&text);
             }
-            if !session.is_alive() {
+            if dead {
+                if let Some(t) = self.workspace.selected_thread_mut() {
+                    t.tui.mark_exited();
+                }
                 self.workspace.grok_tui.mark_exited();
             }
         }
@@ -1745,7 +1797,7 @@ impl ShellView {
             || self.pending_cmd.is_some()
             || self.capture.is_some()
             || self.pending_diff.is_some()
-            || self.embedded.is_some()
+            || !self.embedded.is_empty()
             || self.workspace.grok_tui.life == TuiLife::Running
             || self
                 .workspace
@@ -1842,7 +1894,7 @@ impl ShellView {
         }
 
         if self.focus == Focus::Tui {
-            if let Some(session) = self.embedded.as_mut() {
+            if let Some(session) = self.selected_session() {
                 let ch = event.keystroke.key_char.as_deref();
                 if let Some(bytes) = pty_input(key, ch, mods.control) {
                     let _ = session.write(&bytes);
@@ -2026,7 +2078,7 @@ impl ShellView {
             return;
         }
         if self.focus == Focus::Tui {
-            if let Some(session) = self.embedded.as_mut() {
+            if let Some(session) = self.selected_session() {
                 let _ = session.write(&pty_paste_bytes(text));
             }
             return;
@@ -2240,28 +2292,6 @@ impl ShellView {
                     ),
             )
             .child(div().flex_1())
-            .child(
-                div()
-                    .h(px(28.0))
-                    .px_1()
-                    .rounded_lg()
-                    .bg(Theme::raised())
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .child(self.mode_chip(
-                        "Chat",
-                        self.workspace.center_mode == CenterMode::Gui,
-                        cx,
-                        |this, cx| this.dispatch(ClientAction::SetCenterGui, cx),
-                    ))
-                    .child(self.mode_chip(
-                        "TUI",
-                        self.workspace.center_mode == CenterMode::GrokTui,
-                        cx,
-                        |this, cx| this.dispatch(ClientAction::SetCenterTui, cx),
-                    )),
-            )
             .child(if hide("turns_pill") {
                 div().into_any()
             } else {
@@ -3104,7 +3134,7 @@ impl ShellView {
             self.focus == Focus::Composer,
         );
         let slash = parse_slash(&self.workspace.draft);
-        let tui = self.workspace.center_mode == CenterMode::GrokTui;
+        let tui = self.workspace.selected_center_mode() == CenterMode::GrokTui;
         let diffs = self.workspace.visible_diffs();
         glass_pane()
             .flex_1()
@@ -3115,6 +3145,7 @@ impl ShellView {
             .min_h_0()
             .overflow_hidden()
             .bg(Theme::ink())
+            .child(self.chat_header(cx))
             .child(if tui {
                 self.grok_tui_host(cx)
             } else {
@@ -3380,178 +3411,112 @@ impl ShellView {
             })
     }
 
-    fn mode_chip(
-        &mut self,
-        label: &'static str,
-        on: bool,
-        cx: &mut Context<Self>,
-        on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
-    ) -> impl IntoElement {
+    fn chat_header(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let tui = self.workspace.selected_center_mode() == CenterMode::GrokTui;
+        let title = self
+            .workspace
+            .selected_thread()
+            .map(|t| thread_leaf_title(&t.title, &t.id))
+            .unwrap_or_else(|| "New chat".into());
+        let sub = if tui {
+            let life = self
+                .workspace
+                .selected_thread()
+                .map(|t| t.tui.life.label())
+                .unwrap_or("stopped");
+            format!("Grok  ·  {life}")
+        } else {
+            self.workspace.model.clone()
+        };
+        let toggle = if tui {
+            ChromeGlyph::Chat
+        } else {
+            ChromeGlyph::Terminal
+        };
+        let hint = if tui { "Show chat" } else { "Show Grok TUI" };
         div()
-            .id(SharedString::from(format!("center-{label}")))
-            .h(px(22.0))
-            .px_2()
-            .rounded_lg()
+            .id("chat-header")
+            .h(px(40.0))
+            .px_4()
             .flex()
             .items_center()
-            .cursor_pointer()
-            .bg(if on {
-                Theme::selection()
-            } else {
-                Theme::transparent()
-            })
-            .text_size(Theme::text_caption())
-            .text_color(if on { Theme::text() } else { Theme::faint() })
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _, _, cx| on_click(this, cx)),
+            .gap_2()
+            .border_b_1()
+            .border_color(Theme::hairline())
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .text_size(Theme::text_body())
+                            .text_color(Theme::text())
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(Theme::text_caption())
+                            .text_color(Theme::faint())
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .child(sub),
+                    ),
             )
-            .child(label)
+            .child(icon_btn(toggle, hint, cx, |this, cx| {
+                this.dispatch(ClientAction::ToggleCenterMode, cx);
+            }))
     }
 
     fn grok_tui_host(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        if self.workspace.terminals.is_empty() {
-            self.workspace.terminals = detect_terminals(&default_terminal_candidates());
-        }
-        let live = self.embedded.is_some() && self.workspace.grok_tui.life == TuiLife::Running;
-        let host = self.workspace.grok_tui.clone();
-        if live {
-            return div()
-                .id("grok-tui-host")
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .px_3()
-                        .py_1()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .border_b_1()
-                        .border_color(Theme::hairline())
-                        .child(
-                            div()
-                                .flex_1()
-                                .text_size(Theme::text_caption())
-                                .text_color(Theme::faint())
-                                .child(format!("{}  ·  in Multiplexer", host.surface)),
-                        )
-                        .child(ghost_btn("Stop", "kill", cx, |this, cx| {
-                            this.stop_grok_tui();
-                            cx.notify();
-                        })),
-                )
-                .child(
-                    div()
-                        .id("tui-scroll")
-                        .flex_1()
-                        .min_h_0()
-                        .px_3()
-                        .py_2()
-                        .overflow_y_scroll()
-                        .cursor_pointer()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _, _, cx| {
-                                this.focus = Focus::Tui;
-                                cx.notify();
-                            }),
-                        )
-                        .font(font(MONO_FONT))
-                        .text_color(Theme::text())
-                        .child(if host.scrollback.is_empty() {
-                            "starting…".to_owned()
-                        } else {
-                            host.scrollback.clone()
-                        }),
-                )
-                .into_any();
-        }
-        let selected =
-            preferred_terminal(&self.workspace.terminals, &self.workspace.selected_terminal)
-                .map(|t| t.id.clone())
-                .unwrap_or_default();
-        let terms = self.workspace.terminals.clone();
+        let scrollback = self
+            .workspace
+            .selected_thread()
+            .map(|t| t.tui.scrollback.clone())
+            .unwrap_or_default();
+        let failed = self
+            .workspace
+            .selected_thread()
+            .is_some_and(|t| t.tui.life == TuiLife::Failed);
+        let note = self
+            .workspace
+            .selected_thread()
+            .map(|t| t.tui.note.clone())
+            .unwrap_or_default();
         div()
             .id("grok-tui-host")
             .flex_1()
             .min_h_0()
-            .px_6()
-            .py_5()
             .flex()
             .flex_col()
-            .gap_3()
             .child(
                 div()
-                    .text_size(Theme::text_title())
+                    .id("tui-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .px_4()
+                    .py_3()
+                    .overflow_y_scroll()
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.focus = Focus::Tui;
+                            cx.notify();
+                        }),
+                    )
+                    .font(font(MONO_FONT))
                     .text_color(Theme::text())
-                    .child("System shell inside Multiplexer"),
-            )
-            .child(
-                div()
-                    .text_size(Theme::text_caption())
-                    .text_color(Theme::faint())
-                    .child("Pick a shell already on this machine. It runs in this pane, not a new window."),
-            )
-            .children(if terms.is_empty() {
-                vec![div()
-                    .text_color(Theme::muted())
-                    .child("No system shell found. Grok still works: Open Grok.")
-                    .into_any()]
-            } else {
-                terms
-                    .into_iter()
-                    .map(|term| {
-                        let id = term.id.clone();
-                        let pick = id.clone();
-                        let on = selected == id;
-                        div()
-                            .id(SharedString::from(format!("term-{id}")))
-                            .h(px(32.0))
-                            .flex()
-                            .items_center()
-                            .cursor_pointer()
-                            .text_color(if on { Theme::text() } else { Theme::muted() })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _, _, cx| {
-                                    this.workspace.selected_terminal = pick.clone();
-                                    this.workspace.settings.preferred_terminal = pick.clone();
-                                    this.persist_settings();
-                                    cx.notify();
-                                }),
-                            )
-                            .child(format!("{}   {}", term.label, term.path))
-                            .into_any()
-                    })
-                    .collect()
-            })
-            .child(
-                div()
-                    .flex()
-                    .gap_3()
-                    .child(primary_btn("Open here", "launch", cx, |this, cx| {
-                        this.launch_grok_tui();
-                        cx.notify();
-                    }))
-                    .child(ghost_btn("Open Grok", "grok", cx, |this, cx| {
-                        let target = embed_grok();
-                        this.start_embedded(&target.program, &[], &target.label);
-                        cx.notify();
-                    }))
-                    .child(ghost_btn("Refresh", "detect", cx, |this, cx| {
-                        this.workspace.terminals =
-                            detect_terminals(&default_terminal_candidates());
-                        cx.notify();
-                    })),
-            )
-            .child(
-                div()
-                    .text_size(Theme::text_caption())
-                    .text_color(Theme::faint())
-                    .child(format!("{}  ·  {}", host.life.label(), host.surface)),
+                    .child(if failed {
+                        note
+                    } else if scrollback.is_empty() {
+                        "starting grok…".to_owned()
+                    } else {
+                        scrollback
+                    }),
             )
             .into_any()
     }

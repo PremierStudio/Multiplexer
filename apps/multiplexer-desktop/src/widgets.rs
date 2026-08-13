@@ -171,7 +171,7 @@ pub fn icon_btn(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| on_click(this, cx)),
         )
-        .child(chrome_icon(glyph, 16.0))
+        .child(chrome_icon(glyph, 18.0))
         .into_any()
 }
 
@@ -203,7 +203,7 @@ pub fn rail_icon(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| on_click(this, cx)),
         )
-        .child(chrome_icon(glyph, 16.0))
+        .child(chrome_icon(glyph, 18.0))
         .into_any()
 }
 

@@ -119,6 +119,12 @@ impl ChromeGlyph {
     }
 }
 
+/// GPUI `svg()` keeps an alpha mask. Lucide uses `currentColor`, which
+/// usvg leaves unpainted. Force a real stroke so the tint can show.
+pub fn lucide_for_gpui(svg: &str) -> String {
+    svg.replace("currentColor", "#000000")
+}
+
 /// Vendored dashboard-icons filename (png, dark-UI / -light variant).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrandIcon {
@@ -233,6 +239,10 @@ mod tests {
             ChromeGlyph::Chat.icon_file(),
             ChromeGlyph::Folder.icon_file()
         );
+        let painted = lucide_for_gpui("stroke=\"currentColor\" fill=\"none\"");
+        assert!(painted.contains("#000000"));
+        assert!(!painted.contains("currentColor"));
+        assert_ne!(painted, "stroke=\"currentColor\" fill=\"none\"");
     }
 
     #[test]

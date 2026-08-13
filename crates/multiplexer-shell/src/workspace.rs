@@ -29,6 +29,26 @@ pub struct Thread {
     pub pinned: bool,
     pub unread: bool,
     pub archived: bool,
+    /// GUI chat log vs this thread's own Grok TUI.
+    pub center_mode: crate::center::CenterMode,
+    pub tui: crate::center::GrokTuiHost,
+}
+
+impl Thread {
+    pub fn new(id: impl Into<String>, model: impl Into<String>, cwd: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            title: "New chat".to_owned(),
+            messages: Vec::new(),
+            status: "idle".to_owned(),
+            model: model.into(),
+            pinned: false,
+            unread: false,
+            archived: false,
+            center_mode: crate::center::CenterMode::Gui,
+            tui: crate::center::GrokTuiHost::idle(cwd),
+        }
+    }
 }
 
 /// One skill inventory row. Enable is a local flag, not loaded into grok.
@@ -587,19 +607,15 @@ impl Workspace {
         self.stash_selected_draft();
         let id = format!("thr-{}", self.next_id);
         self.next_id += 1;
-        self.threads.push(Thread {
-            id: id.clone(),
-            title: "New chat".to_owned(),
-            messages: Vec::new(),
-            status: "idle".to_owned(),
-            model: self.model.clone(),
-            pinned: false,
-            unread: false,
-            archived: false,
-        });
+        self.threads.push(Thread::new(
+            id.clone(),
+            self.model.clone(),
+            self.project.clone(),
+        ));
         self.selected = self.threads.len() - 1;
         self.draft.clear();
         self.cursor = 0;
+        self.sync_center_from_selected();
         id
     }
 
@@ -610,7 +626,21 @@ impl Workspace {
         self.stash_selected_draft();
         self.selected = index;
         self.restore_selected_draft();
+        self.sync_center_from_selected();
         true
+    }
+
+    pub fn selected_center_mode(&self) -> crate::center::CenterMode {
+        self.selected_thread()
+            .map(|t| t.center_mode)
+            .unwrap_or(crate::center::CenterMode::Gui)
+    }
+
+    fn sync_center_from_selected(&mut self) {
+        self.center_mode = self.selected_center_mode();
+        if let Some(t) = self.selected_thread() {
+            self.grok_tui = t.tui.clone();
+        }
     }
 
     fn stash_selected_draft(&mut self) {
@@ -1636,11 +1666,14 @@ impl Workspace {
                 pinned: false,
                 unread: false,
                 archived: false,
+                center_mode: crate::center::CenterMode::Gui,
+                tui: crate::center::GrokTuiHost::idle(self.project.clone()),
             })
             .collect();
         self.selected = 0;
         self.thread_drafts = journal.drafts.clone();
         self.restore_selected_draft();
+        self.sync_center_from_selected();
         self.push_notice(
             crate::notices::NoticeKind::Info,
             crate::persist::crash_restore_notice(),
@@ -1684,16 +1717,21 @@ impl Workspace {
     }
 
     pub fn toggle_center_mode(&mut self) {
-        self.center_mode = self.center_mode.toggle();
+        let next = self.selected_center_mode().toggle();
+        let _ = self.set_center_mode(next);
     }
 
     pub fn set_center_mode(&mut self, mode: crate::center::CenterMode) -> bool {
-        if self.center_mode == mode {
-            false
-        } else {
+        let Some(thread) = self.selected_thread_mut() else {
+            return false;
+        };
+        if thread.center_mode == mode {
             self.center_mode = mode;
-            true
+            return false;
         }
+        thread.center_mode = mode;
+        self.center_mode = mode;
+        true
     }
 
     pub fn set_diff_sort(&mut self, sort: crate::diff_view::DiffSort) -> bool {
@@ -2101,10 +2139,25 @@ mod tests {
     fn center_mode_and_diff_sort_work() {
         let mut ws = Workspace::new("p", "m");
         assert_eq!(ws.center_mode, crate::center::CenterMode::Gui);
+        assert_eq!(ws.selected_center_mode(), crate::center::CenterMode::Gui);
         ws.toggle_center_mode();
         assert_eq!(ws.center_mode, crate::center::CenterMode::GrokTui);
+        assert_eq!(
+            ws.selected_thread().unwrap().center_mode,
+            crate::center::CenterMode::GrokTui
+        );
         assert!(!ws.set_center_mode(crate::center::CenterMode::GrokTui));
         assert!(ws.set_center_mode(crate::center::CenterMode::Gui));
+        ws.new_thread();
+        assert_eq!(ws.selected_center_mode(), crate::center::CenterMode::Gui);
+        assert!(ws.set_center_mode(crate::center::CenterMode::GrokTui));
+        assert!(ws.select(0));
+        assert_eq!(ws.selected_center_mode(), crate::center::CenterMode::Gui);
+        assert!(ws.select(1));
+        assert_eq!(
+            ws.selected_center_mode(),
+            crate::center::CenterMode::GrokTui
+        );
         ws.apply_porcelain(" M zebra.rs\n M alpha.rs\n");
         ws.remember_turn_paths(vec!["zebra.rs".into()]);
         assert_eq!(ws.diff_sort, crate::diff_view::DiffSort::LastTurn);
