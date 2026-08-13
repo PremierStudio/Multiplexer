@@ -25,22 +25,13 @@ pub fn list_row(
     let menu_id = id.clone();
     div()
         .id(SharedString::from(id))
-        .mx_2()
-        .mb_1()
-        .h(Theme::row_height())
-        .px_2()
+        .h(px(32.0))
+        .px_3()
         .overflow_hidden()
-        .rounded_lg()
         .bg(if selected {
             Theme::selection()
         } else {
-            Theme::glass_ultra()
-        })
-        .border_1()
-        .border_color(if selected {
-            Theme::hairline_bright()
-        } else {
-            Theme::hairline()
+            Theme::transparent()
         })
         .cursor_pointer()
         .on_mouse_down(
@@ -60,7 +51,7 @@ pub fn list_row(
                 .gap_2()
                 .items_center()
                 .overflow_hidden()
-                .child(div().text_color(Theme::accent()).child(icon))
+                .child(div().text_color(Theme::muted()).child(icon))
                 .child(
                     div()
                         .flex_1()
@@ -108,23 +99,14 @@ pub fn inspector_row_el(
     let body = if !detail.is_empty() { detail } else { meta };
     div()
         .id(SharedString::from(id.clone()))
-        .mx_2()
-        .mb_1()
-        .min_h(Theme::row_height())
-        .px_2()
+        .min_h(px(32.0))
+        .px_3()
         .py_1()
         .overflow_hidden()
-        .rounded_lg()
         .bg(if selected {
             Theme::selection()
         } else {
-            Theme::glass_ultra()
-        })
-        .border_1()
-        .border_color(if selected {
-            Theme::hairline_bright()
-        } else {
-            Theme::hairline()
+            Theme::transparent()
         })
         .cursor_pointer()
         .on_mouse_down(
@@ -146,7 +128,7 @@ pub fn inspector_row_el(
                 .flex()
                 .gap_2()
                 .items_center()
-                .child(div().text_color(Theme::accent()).child(icon))
+                .child(div().text_color(Theme::muted()).child(icon))
                 .child(
                     div()
                         .flex_1()
@@ -162,12 +144,7 @@ pub fn inspector_row_el(
                         Tone::Good => Theme::good(),
                         _ => Theme::accent_muted(),
                     };
-                    div()
-                        .px_1()
-                        .rounded_md()
-                        .bg(tone_bg)
-                        .text_color(Theme::text())
-                        .child(b.text)
+                    div().px_1().text_color(tone_bg).child(b.text)
                 } else {
                     div()
                 }),
@@ -182,14 +159,7 @@ pub fn inspector_row_el(
                 .child(subtitle)
         })
         .child(if expanded && !body.is_empty() {
-            div()
-                .mt_1()
-                .px_2()
-                .py_1()
-                .rounded_lg()
-                .bg(Theme::wash_soft())
-                .text_color(Theme::faint())
-                .child(body)
+            div().mt_1().pl_4().text_color(Theme::faint()).child(body)
         } else {
             div()
         })

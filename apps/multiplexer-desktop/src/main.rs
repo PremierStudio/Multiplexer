@@ -2102,7 +2102,7 @@ impl ShellView {
                 click_pill(
                     "turns-pill",
                     format!("{} turns", self.workspace.usage_turns),
-                    ChromeGlyph::Activity.mark(),
+                    "",
                     cx,
                     |this, cx| this.dispatch(ClientAction::OpenSessionTab, cx),
                 )
@@ -2113,7 +2113,7 @@ impl ShellView {
                 click_pill(
                     "remotes-pill",
                     remotes_pill_label(self.remotes.iter().any(|r| r.kind == "tailscale")),
-                    ChromeGlyph::Plug.mark(),
+                    "",
                     cx,
                     |this, cx| this.dispatch(ClientAction::OpenSettingsRemotes, cx),
                 )
@@ -2187,18 +2187,12 @@ impl ShellView {
                 div()
                     .id(SharedString::from(s.rail_label()))
                     .h(px(36.0))
-                    .mx_1()
-                    .rounded_lg()
                     .flex()
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
-                    .bg(if on {
-                        Theme::selection()
-                    } else {
-                        Theme::transparent()
-                    })
-                    .text_color(if on { Theme::accent() } else { Theme::muted() })
+                    .bg(Theme::transparent())
+                    .text_color(if on { Theme::text() } else { Theme::muted() })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, _, cx| {
@@ -2239,14 +2233,13 @@ impl ShellView {
                                 .id("new_thread")
                                 .flex_1()
                                 .h(px(28.0))
-                                .px_2()
-                                .rounded_lg()
+                                .px_1()
                                 .flex()
                                 .items_center()
                                 .gap_2()
                                 .text_color(Theme::text())
                                 .cursor_pointer()
-                                .hover(|s| s.bg(Theme::selection()))
+                                .hover(|s| s.text_color(Theme::muted()))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|this, _, _, cx| {
@@ -2274,17 +2267,12 @@ impl ShellView {
                         div()
                             .id(SharedString::from(format!("sec-{}", s.rail_label())))
                             .h(px(24.0))
-                            .px_2()
-                            .rounded_md()
+                            .px_1()
                             .flex()
                             .items_center()
                             .cursor_pointer()
-                            .bg(if on {
-                                Theme::selection()
-                            } else {
-                                Theme::transparent()
-                            })
-                            .text_color(if on { Theme::accent() } else { Theme::faint() })
+                            .bg(Theme::transparent())
+                            .text_color(if on { Theme::text() } else { Theme::faint() })
                             .text_size(Theme::text_caption())
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -2316,11 +2304,8 @@ impl ShellView {
                     let on = i == selected;
                     div()
                         .id(SharedString::from(format!("thr-{i}")))
-                        .mx_2()
-                        .mb_px()
                         .h(px(32.0))
-                        .px_2()
-                        .rounded_lg()
+                        .px_3()
                         .flex()
                         .items_center()
                         .overflow_hidden()
@@ -2329,7 +2314,7 @@ impl ShellView {
                         } else {
                             Theme::transparent()
                         })
-                        .text_color(if on { Theme::accent() } else { Theme::text() })
+                        .text_color(Theme::text())
                         .cursor_pointer()
                         .on_mouse_down(
                             MouseButton::Left,
@@ -2497,18 +2482,12 @@ impl ShellView {
                 div()
                     .id(SharedString::from(format!("rtab-{}", t.label())))
                     .h(px(32.0))
-                    .mx_1()
-                    .rounded_lg()
                     .flex()
                     .items_center()
                     .justify_center()
                     .cursor_pointer()
-                    .bg(if on {
-                        Theme::selection()
-                    } else {
-                        Theme::transparent()
-                    })
-                    .text_color(if on { Theme::accent() } else { Theme::muted() })
+                    .bg(Theme::transparent())
+                    .text_color(if on { Theme::text() } else { Theme::muted() })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, _, cx| {
@@ -2565,17 +2544,12 @@ impl ShellView {
                 let q = self.workspace.file_filter.clone();
                 div()
                     .id("files_filter")
-                    .mx_2()
-                    .mb_1()
-                    .px_2()
+                    .px_3()
                     .py_1()
-                    .rounded_lg()
-                    .bg(Theme::wash())
-                    .border_1()
-                    .border_color(if self.focus == Focus::FileFilter {
-                        Theme::accent()
+                    .text_color(if self.focus == Focus::FileFilter {
+                        Theme::text()
                     } else {
-                        Theme::hairline()
+                        Theme::muted()
                     })
                     .cursor_pointer()
                     .on_mouse_down(
@@ -2667,35 +2641,30 @@ impl ShellView {
                             .cloned()
                             .map(|m| {
                                 let user = m.role == Role::User;
-                                if user {
-                                    div()
-                                        .flex()
-                                        .justify_center()
-                                        .child(
-                                            div()
-                                                .max_w(px(720.0))
-                                                .px_4()
-                                                .py_2()
-                                                .rounded_xl()
-                                                .bg(Theme::bubble_user())
-                                                .text_color(Theme::text())
-                                                .child(m.text),
-                                        )
-                                        .into_any()
-                                } else {
-                                    div()
-                                        .flex()
-                                        .justify_start()
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .max_w(px(780.0))
-                                                .bg(Theme::bubble_assistant())
-                                                .text_color(Theme::text())
-                                                .child(m.text),
-                                        )
-                                        .into_any()
-                                }
+                                div()
+                                    .flex()
+                                    .justify_center()
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .max_w(px(720.0))
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .text_size(Theme::text_caption())
+                                                    .text_color(Theme::faint())
+                                                    .child(if user { "You" } else { "Grok" }),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_color(Theme::text())
+                                                    .text_size(Theme::text_body())
+                                                    .child(m.text),
+                                            ),
+                                    )
+                                    .into_any()
                             })
                             .collect(),
                         None => vec![empty_center().into_any()],
@@ -2719,7 +2688,10 @@ impl ShellView {
             } else {
                 div()
                     .px_5()
-                    .pb_4()
+                    .pb_3()
+                    .pt_2()
+                    .border_t_1()
+                    .border_color(Theme::hairline())
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -2728,7 +2700,7 @@ impl ShellView {
                     } else {
                         div()
                             .flex()
-                            .gap_2()
+                            .gap_3()
                             .flex_wrap()
                             .child(chip("What can you do?", cx, |this, cx| {
                                 this.workspace.set_draft("What can you do?");
@@ -2753,23 +2725,20 @@ impl ShellView {
                     })
                     .child(
                         div()
-                            .rounded(Theme::panel_radius())
-                            .border_1()
-                            .border_color(if self.focus == Focus::Composer {
-                                Theme::accent()
-                            } else {
-                                Theme::hairline()
-                            })
-                            .bg(Theme::surface())
-                            .p_3()
                             .flex()
-                            .flex_col()
-                            .gap_2()
+                            .items_end()
+                            .gap_3()
                             .child(
                                 div()
                                     .id("composer")
+                                    .flex_1()
                                     .min_h(px(44.0))
                                     .cursor_pointer()
+                                    .text_color(if self.workspace.draft.is_empty() {
+                                        Theme::faint()
+                                    } else {
+                                        Theme::text()
+                                    })
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(|this, _, _, cx| {
@@ -2778,63 +2747,57 @@ impl ShellView {
                                         }),
                                     )
                                     .child(if self.workspace.draft.is_empty() {
-                                        SharedString::from(
-                                            "@ files   / commands   grok -p one-shot",
-                                        )
+                                        SharedString::from("Message Grok…  @ files   / commands")
                                     } else {
                                         SharedString::from(draft)
                                     }),
                             )
                             .child(
                                 div()
+                                    .id("send-circle")
+                                    .h(px(28.0))
                                     .flex()
                                     .items_center()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .text_size(Theme::text_caption())
-                                            .text_color(Theme::faint())
-                                            .child(self.workspace.model.clone()),
+                                    .text_color(
+                                        if self.workspace.draft.trim().is_empty()
+                                            || self.workspace.busy
+                                        {
+                                            Theme::faint()
+                                        } else {
+                                            Theme::text()
+                                        },
                                     )
-                                    .child(div().flex_1())
-                                    .child(if let Some(cmd) = slash {
-                                        div()
-                                            .text_size(Theme::text_caption())
-                                            .text_color(Theme::accent())
-                                            .child(multiplexer_shell::slash_hint(&cmd))
-                                    } else {
-                                        div()
-                                    })
-                                    .child(
-                                        div()
-                                            .id("send-circle")
-                                            .w(px(28.0))
-                                            .h(px(28.0))
-                                            .rounded_full()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .bg(
-                                                if self.workspace.draft.trim().is_empty()
-                                                    || self.workspace.busy
-                                                {
-                                                    Theme::hairline()
-                                                } else {
-                                                    Theme::send_bg()
-                                                },
-                                            )
-                                            .text_color(Theme::ink())
-                                            .cursor_pointer()
-                                            .on_mouse_down(
-                                                MouseButton::Left,
-                                                cx.listener(|this, _, _, cx| {
-                                                    this.dispatch(ClientAction::Send, cx);
-                                                    cx.notify();
-                                                }),
-                                            )
-                                            .child(ChromeGlyph::Play.mark()),
-                                    ),
+                                    .cursor_pointer()
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.dispatch(ClientAction::Send, cx);
+                                            cx.notify();
+                                        }),
+                                    )
+                                    .child("Send"),
                             ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(Theme::text_caption())
+                                    .text_color(Theme::faint())
+                                    .child(self.workspace.model.clone()),
+                            )
+                            .child(div().flex_1())
+                            .child(if let Some(cmd) = slash {
+                                div()
+                                    .text_size(Theme::text_caption())
+                                    .text_color(Theme::muted())
+                                    .child(multiplexer_shell::slash_hint(&cmd))
+                            } else {
+                                div()
+                            }),
                     )
                     .into_any()
             })
@@ -2883,22 +2846,18 @@ impl ShellView {
         div()
             .id(SharedString::from(format!("center-{label}")))
             .h(px(28.0))
-            .px_3()
-            .rounded_lg()
+            .px_1()
             .flex()
             .items_center()
             .cursor_pointer()
-            .bg(if on {
-                Theme::selection()
-            } else {
-                Theme::glass_ultra()
-            })
-            .border_1()
+            .bg(Theme::transparent())
+            .border_b_1()
             .border_color(if on {
-                Theme::hairline_bright()
+                Theme::text()
             } else {
-                Theme::hairline()
+                Theme::transparent()
             })
+            .text_color(if on { Theme::text() } else { Theme::faint() })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| on_click(this, cx)),
@@ -2921,7 +2880,7 @@ impl ShellView {
             .child(
                 div()
                     .text_size(Theme::text_body())
-                    .text_color(Theme::accent())
+                    .text_color(Theme::text())
                     .child("Grok TUI host"),
             )
             .child(
@@ -3025,7 +2984,7 @@ impl ShellView {
         div()
             .id("notice-stack")
             .absolute()
-            .top(px(52.0))
+            .top(px(40.0))
             .right(px(12.0))
             .w(px(320.0))
             .flex()
@@ -3037,12 +2996,11 @@ impl ShellView {
                     .id(SharedString::from(format!("notice-{id}")))
                     .px_3()
                     .py_2()
-                    .rounded_lg()
                     .bg(match n.kind {
                         NoticeKind::Good => Theme::toast_fill(NoticeKind::Good),
                         NoticeKind::Warn => Theme::toast_fill(NoticeKind::Warn),
                         NoticeKind::Danger => Theme::toast_fill(NoticeKind::Danger),
-                        NoticeKind::Info => Theme::accent_muted(),
+                        NoticeKind::Info => Theme::selection(),
                     })
                     .border_1()
                     .border_color(Theme::hairline())
@@ -3111,7 +3069,6 @@ impl ShellView {
                     .bg(Theme::glass_strong())
                     .border_1()
                     .border_color(Theme::hairline_bright())
-                    .shadow(Theme::shadow())
                     .p_4()
                     .on_mouse_down(MouseButton::Left, |_, _, _| {})
                     .child(
@@ -3123,7 +3080,7 @@ impl ShellView {
                                 div()
                                     .flex_1()
                                     .text_size(Theme::text_body())
-                                    .text_color(Theme::accent())
+                                    .text_color(Theme::text())
                                     .child("Settings"),
                             )
                             .child(ghost_btn("Close", "Esc", cx, |this, cx| {
@@ -3196,11 +3153,10 @@ impl ShellView {
                                     .mt_1()
                                     .px_2()
                                     .py_1()
-                                    .rounded_lg()
                                     .bg(if shown == self.workspace.model {
                                         Theme::selection()
                                     } else {
-                                        Theme::glass_ultra()
+                                        Theme::transparent()
                                     })
                                     .cursor_pointer()
                                     .on_mouse_down(
@@ -3242,8 +3198,6 @@ impl ShellView {
                                     .mt_1()
                                     .px_2()
                                     .py_1()
-                                    .rounded_lg()
-                                    .bg(Theme::glass_ultra())
                                     .child(format!("{chord}  →  {action}"))
                                     .into_any()
                             })
@@ -3260,8 +3214,6 @@ impl ShellView {
                                     .mt_1()
                                     .px_2()
                                     .py_1()
-                                    .rounded_lg()
-                                    .bg(Theme::glass_ultra())
                                     .child(format!("{}  ·  {}  ·  {}", r.label, r.kind, r.id))
                                     .into_any()
                             })
@@ -3346,15 +3298,12 @@ impl ShellView {
                     div()
                         .id("term-input")
                         .flex_1()
-                        .px_2()
+                        .px_1()
                         .py_1()
-                        .rounded_lg()
-                        .bg(Theme::wash_soft())
-                        .border_1()
-                        .border_color(if self.focus == Focus::Terminal {
-                            Theme::accent()
+                        .text_color(if self.focus == Focus::Terminal {
+                            Theme::text()
                         } else {
-                            Theme::hairline()
+                            Theme::muted()
                         })
                         .cursor_pointer()
                         .on_mouse_down(
@@ -3434,7 +3383,6 @@ impl ShellView {
                     .bg(Theme::glass_strong())
                     .border_1()
                     .border_color(Theme::hairline_bright())
-                    .shadow(Theme::shadow())
                     .p_3()
                     .on_mouse_down(MouseButton::Left, |_, _, _| {})
                     .child(
@@ -3442,8 +3390,8 @@ impl ShellView {
                             .px_2()
                             .py_2()
                             .mb_2()
-                            .rounded_lg()
-                            .bg(Theme::wash())
+                            .border_b_1()
+                            .border_color(Theme::hairline())
                             .child(if q.is_empty() {
                                 SharedString::from("Type a file, thread, or command name")
                             } else {
@@ -3521,7 +3469,6 @@ impl ShellView {
                     .bg(Theme::glass_strong())
                     .border_1()
                     .border_color(Theme::hairline_bright())
-                    .shadow(Theme::shadow())
                     .p_3()
                     .on_mouse_down(MouseButton::Left, |_, _, _| {})
                     .child(
@@ -3529,8 +3476,8 @@ impl ShellView {
                             .px_2()
                             .py_2()
                             .mb_2()
-                            .rounded_lg()
-                            .bg(Theme::wash())
+                            .border_b_1()
+                            .border_color(Theme::hairline())
                             .child(if self.palette.query.is_empty() {
                                 SharedString::from("Search threads, files, commands…")
                             } else {
@@ -3593,7 +3540,6 @@ impl ShellView {
                     .bg(Theme::glass_strong())
                     .border_1()
                     .border_color(Theme::hairline_bright())
-                    .shadow(Theme::shadow())
                     .p_4()
                     .on_mouse_down(MouseButton::Left, |_, _, _| {})
                     .child(
@@ -3625,7 +3571,6 @@ impl ShellView {
             .bg(Theme::glass_strong())
             .border_1()
             .border_color(Theme::hairline_bright())
-            .shadow(Theme::shadow())
             .p_2()
             .flex()
             .flex_col()
@@ -3637,7 +3582,7 @@ impl ShellView {
                     .child(
                         div()
                             .flex_1()
-                            .text_color(Theme::accent())
+                            .text_color(Theme::text())
                             .child(format!("Inspector · {} · same HWND", tab.label())),
                     )
                     .child(ghost_btn("Dock", "Ctrl+Shift+E", cx, |this, cx| {
@@ -3669,7 +3614,6 @@ impl ShellView {
             .bg(Theme::glass_strong())
             .border_1()
             .border_color(Theme::hairline_bright())
-            .shadow(Theme::shadow())
             .p_2()
             .on_mouse_down(MouseButton::Left, |_, _, _| {})
             .child(
@@ -3709,11 +3653,10 @@ impl ShellView {
                     .bg(Theme::glass_strong())
                     .border_1()
                     .border_color(Theme::hairline_bright())
-                    .shadow(Theme::shadow())
                     .p_4()
                     .child(
                         div()
-                            .text_color(Theme::accent())
+                            .text_color(Theme::text())
                             .child("Welcome to Multiplexer"),
                     )
                     .child(div().mt_2().text_color(Theme::muted()).child(

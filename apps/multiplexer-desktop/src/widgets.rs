@@ -7,11 +7,7 @@ use crate::ShellView;
 use multiplexer_shell::{empty_state_tiles, EmptyStateSpec};
 
 pub fn glass_pane() -> gpui::Div {
-    div()
-        .bg(Theme::glass())
-        .border_color(Theme::hairline())
-        .overflow_hidden()
-        .min_h_0()
+    div().bg(Theme::ink()).overflow_hidden().min_h_0()
 }
 
 pub fn glass_bar() -> gpui::Div {
@@ -61,13 +57,11 @@ pub fn chip(
 ) -> gpui::AnyElement {
     div()
         .id(SharedString::from(label))
-        .px_2()
+        .px_1()
         .py_1()
-        .rounded_lg()
-        .bg(Theme::wash())
-        .border_1()
-        .border_color(Theme::hairline())
+        .text_color(Theme::muted())
         .cursor_pointer()
+        .hover(|s| s.text_color(Theme::text()))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| on_click(this, cx)),
@@ -84,28 +78,18 @@ pub fn ghost_btn(
 ) -> gpui::AnyElement {
     div()
         .id(SharedString::from(format!("{label}-{hint}")))
-        .h(px(28.0))
-        .px_3()
+        .h(px(26.0))
+        .px_2()
         .flex()
         .items_center()
-        .gap_2()
-        .rounded_lg()
-        .border_1()
-        .border_color(Theme::hairline())
-        .bg(if label == "Stop" {
+        .bg(Theme::transparent())
+        .text_color(if label == "Stop" {
             Theme::danger()
-        } else if label == "Send" || label == "commit & sync" {
-            Theme::accent()
         } else {
-            Theme::transparent()
-        })
-        .text_color(if label == "Send" || label == "commit & sync" {
-            Theme::ink()
-        } else {
-            Theme::text()
+            Theme::muted()
         })
         .cursor_pointer()
-        .hover(|s| s.bg(Theme::hover_strong()))
+        .hover(|s| s.bg(Theme::selection()).text_color(Theme::text()))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| on_click(this, cx)),
@@ -125,14 +109,13 @@ pub fn icon_btn(
         .id(SharedString::from(hint.to_owned()))
         .w(Theme::icon_size())
         .h(Theme::icon_size())
-        .rounded_lg()
         .flex()
         .items_center()
         .justify_center()
-        .bg(Theme::ghost_fill())
+        .bg(Theme::transparent())
         .text_color(Theme::muted())
         .cursor_pointer()
-        .hover(|s| s.bg(Theme::selection()).text_color(Theme::text()))
+        .hover(|s| s.text_color(Theme::text()))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| on_click(this, cx)),
@@ -142,18 +125,18 @@ pub fn icon_btn(
 }
 
 pub fn pill(text: impl Into<String>, mark: &'static str) -> impl IntoElement {
+    let mark = mark.trim();
     div()
         .h(px(20.0))
-        .px_2()
-        .rounded_lg()
         .flex()
         .items_center()
         .gap_1()
-        .bg(Theme::glass_ultra())
-        .border_1()
-        .border_color(Theme::hairline())
         .text_color(Theme::muted())
-        .child(mark)
+        .child(if mark.is_empty() {
+            SharedString::from("")
+        } else {
+            SharedString::from(mark)
+        })
         .child(text.into())
 }
 

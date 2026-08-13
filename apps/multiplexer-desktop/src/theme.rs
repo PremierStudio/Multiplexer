@@ -131,19 +131,19 @@ impl Theme {
         )
     }
     pub fn hover_fill() -> Hsla {
-        Self::c(Self::tokens().accent_muted.with_alpha(0.28))
+        Self::c(Self::tokens().selection)
     }
     pub fn hover_strong() -> Hsla {
-        Self::c(Self::tokens().accent_muted.with_alpha(0.40))
+        Self::c(Self::tokens().hairline)
     }
     pub fn bubble_user() -> Hsla {
-        Self::c(Self::tokens().selection.with_alpha(0.55))
+        Self::c(Self::tokens().selection.with_alpha(0.35))
     }
     pub fn bubble_assistant() -> Hsla {
-        Self::wash()
+        Self::transparent()
     }
     pub fn reminder_fill() -> Hsla {
-        Self::c(Self::tokens().warn.with_alpha(0.22))
+        Self::c(Self::tokens().selection)
     }
     pub fn approval_fill() -> Hsla {
         Self::c(Self::tokens().danger.with_alpha(0.22))
@@ -162,7 +162,7 @@ impl Theme {
         Self::c(Self::tokens().hairline_bright.with_alpha(0.07))
     }
     pub fn title_height() -> Pixels {
-        px(48.0 * Self::ui_scale())
+        px(36.0 * Self::ui_scale())
     }
     pub fn rail_width() -> Pixels {
         px(48.0 * Self::ui_scale())
@@ -192,9 +192,25 @@ impl Theme {
 
     /// Native caption contract. `appears_transparent` stays false.
     pub fn window_options(bounds: Bounds<Pixels>) -> WindowOptions {
+        // Adapter stays complete; do not paint these on chrome.
+        let _ = (
+            Self::glass(),
+            Self::glass_ultra(),
+            Self::accent(),
+            Self::send_bg(),
+            Self::surface(),
+            Self::wash(),
+            Self::wash_soft(),
+            Self::bubble_user(),
+            Self::bubble_assistant(),
+            Self::ghost_fill(),
+            Self::panel_radius(),
+            Self::row_height(),
+            Self::shadow(),
+        );
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_background: WindowBackgroundAppearance::Blurred,
+            window_background: WindowBackgroundAppearance::Opaque,
             is_movable: true,
             is_resizable: true,
             is_minimizable: true,
@@ -235,7 +251,7 @@ mod tests {
     fn adapter_page_is_opaque_product_surface() {
         let g = Theme::glass();
         assert!(g.a > 0.90);
-        assert!(Theme::accent().h < 0.12);
+        assert!(Theme::accent().h > 0.50);
         Theme::set_mode(multiplexer_theme::ThemeMode::Dark);
         assert!(Theme::tokens().bg.l < 0.12);
     }
@@ -264,9 +280,10 @@ mod tests {
         assert!(Theme::glass().a > 0.90);
         assert!(Theme::approval_fill().a <= 0.55);
         assert!(Theme::toast_fill(multiplexer_shell::NoticeKind::Danger).a <= 0.55);
-        assert!(Theme::send_bg().h < 0.12);
+        assert!(Theme::send_bg().h > 0.50);
         assert!(Theme::bubble_user().a > 0.0);
-        assert!(Theme::bubble_assistant().a > 0.0);
+        assert!(Theme::hover_fill().s < 0.12);
+        assert_eq!(Theme::title_height(), px(36.0));
         let _ = Theme::ghost_fill();
         let _ = Theme::title_height();
         let _ = Theme::panel_radius();
@@ -284,6 +301,6 @@ mod tests {
         assert!(opts.is_movable);
         assert!(opts.is_resizable);
         assert!(opts.is_minimizable);
-        assert_eq!(opts.window_background, WindowBackgroundAppearance::Blurred);
+        assert_eq!(opts.window_background, WindowBackgroundAppearance::Opaque);
     }
 }
