@@ -103,7 +103,7 @@ impl Theme {
         Self::c(Self::tokens().warn)
     }
     pub fn send_bg() -> Hsla {
-        Self::c(Self::tokens().accent_muted)
+        Self::c(Self::tokens().accent)
     }
     pub fn danger() -> Hsla {
         Self::c(Self::tokens().danger)
@@ -187,7 +187,7 @@ impl Theme {
         }
     }
     pub fn icon_size() -> Pixels {
-        px(32.0)
+        px(28.0)
     }
 
     /// Native caption contract. `appears_transparent` stays false.
@@ -232,10 +232,12 @@ mod tests {
     use multiplexer_theme::TypeScale;
 
     #[test]
-    fn adapter_glass_is_translucent() {
+    fn adapter_page_is_opaque_product_surface() {
         let g = Theme::glass();
-        assert!(g.a < 0.55);
-        assert!(Theme::glass_ultra().a < g.a);
+        assert!(g.a > 0.90);
+        assert!(Theme::accent().h < 0.12);
+        Theme::set_mode(multiplexer_theme::ThemeMode::Dark);
+        assert!(Theme::tokens().bg.l < 0.12);
     }
 
     #[test]
@@ -249,7 +251,7 @@ mod tests {
         Theme::set_ui_scale(100);
         assert_eq!(Theme::row_height(), px(48.0));
         Theme::set_density(Density::Comfortable);
-        assert_eq!(Theme::icon_size(), px(32.0));
+        assert_eq!(Theme::icon_size(), px(28.0));
         Theme::set_mode(ThemeMode::Light);
         assert_eq!(Theme::tokens().mode, ThemeMode::Light);
         assert!(Theme::tokens().text.l < 0.35);
@@ -259,9 +261,15 @@ mod tests {
         assert!(Theme::high_contrast());
         Theme::set_high_contrast(false);
         assert!(!Theme::high_contrast());
-        assert!(Theme::glass().a <= 0.55);
+        assert!(Theme::glass().a > 0.90);
         assert!(Theme::approval_fill().a <= 0.55);
         assert!(Theme::toast_fill(multiplexer_shell::NoticeKind::Danger).a <= 0.55);
+        assert!(Theme::send_bg().h < 0.12);
+        assert!(Theme::bubble_user().a > 0.0);
+        assert!(Theme::bubble_assistant().a > 0.0);
+        let _ = Theme::ghost_fill();
+        let _ = Theme::title_height();
+        let _ = Theme::panel_radius();
     }
 
     #[test]

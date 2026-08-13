@@ -4,15 +4,12 @@ use gpui::{div, prelude::*, px, Context, MouseButton, SharedString};
 
 use crate::theme::Theme;
 use crate::ShellView;
-use multiplexer_shell::{empty_state_tiles, ChromeGlyph, EmptyStateSpec};
+use multiplexer_shell::{empty_state_tiles, EmptyStateSpec};
 
 pub fn glass_pane() -> gpui::Div {
     div()
-        .rounded(Theme::panel_radius())
         .bg(Theme::glass())
-        .border_1()
         .border_color(Theme::hairline())
-        .shadow(Theme::shadow())
         .overflow_hidden()
         .min_h_0()
 }
@@ -21,8 +18,8 @@ pub fn glass_bar() -> gpui::Div {
     div()
         .flex()
         .items_center()
-        .gap_3()
-        .bg(Theme::glass_strong())
+        .gap_2()
+        .bg(Theme::ink())
         .border_color(Theme::hairline())
 }
 
@@ -35,24 +32,25 @@ pub fn empty_center() -> gpui::Div {
         .items_center()
         .justify_center()
         .gap_3()
+        .px_8()
         .text_color(Theme::muted())
         .child(
             div()
                 .text_size(Theme::text_body())
-                .text_color(Theme::accent())
-                .child(format!("{}  {}", ChromeGlyph::Sparkle.mark(), spec.title)),
+                .text_color(Theme::text())
+                .child(spec.title),
         )
-        .child(div().child(spec.body))
+        .child(
+            div()
+                .text_size(Theme::text_caption())
+                .text_color(Theme::faint())
+                .child(spec.body),
+        )
         .child(
             div()
                 .text_size(Theme::text_caption())
                 .text_color(Theme::faint())
                 .child(empty_state_tiles().join("   ·   ")),
-        )
-        .child(
-            div()
-                .text_color(Theme::faint())
-                .child("Ctrl+Shift+G Grok TUI   Ctrl+K palette   F2 settings"),
         )
 }
 
@@ -86,22 +84,26 @@ pub fn ghost_btn(
 ) -> gpui::AnyElement {
     div()
         .id(SharedString::from(format!("{label}-{hint}")))
-        .h(px(32.0))
+        .h(px(28.0))
         .px_3()
         .flex()
         .items_center()
         .gap_2()
         .rounded_lg()
         .border_1()
-        .border_color(Theme::hairline_bright())
+        .border_color(Theme::hairline())
         .bg(if label == "Stop" {
             Theme::danger()
-        } else if label == "Send" {
-            Theme::send_bg()
+        } else if label == "Send" || label == "commit & sync" {
+            Theme::accent()
         } else {
-            Theme::ghost_fill()
+            Theme::transparent()
         })
-        .text_color(Theme::text())
+        .text_color(if label == "Send" || label == "commit & sync" {
+            Theme::ink()
+        } else {
+            Theme::text()
+        })
         .cursor_pointer()
         .hover(|s| s.bg(Theme::hover_strong()))
         .on_mouse_down(
@@ -127,12 +129,10 @@ pub fn icon_btn(
         .flex()
         .items_center()
         .justify_center()
-        .border_1()
-        .border_color(Theme::hairline())
-        .bg(Theme::glass_ultra())
-        .text_color(Theme::text())
+        .bg(Theme::ghost_fill())
+        .text_color(Theme::muted())
         .cursor_pointer()
-        .hover(|s| s.bg(Theme::selection()))
+        .hover(|s| s.bg(Theme::selection()).text_color(Theme::text()))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| on_click(this, cx)),
