@@ -11,5 +11,5 @@
 
 - Files: `fonts/Geist-*.ttf`, `fonts/GeistMono-Regular.ttf`
 - License: SIL Open Font License 1.1 (see `fonts/OFL.txt`)
-- Source: https://github.com/vercel/geist-font
-- Latin subset via Fontsource, same OFL.
+- Source: https://github.com/vercel/geist-font/releases/tag/v1.7.2
+- Official static TTF (Regular, Medium, SemiBold + Mono Regular/Medium).

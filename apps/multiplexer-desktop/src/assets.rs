@@ -15,7 +15,9 @@ impl DesktopAssets {
         vec![
             Cow::Borrowed(include_bytes!("../assets/fonts/Geist-Regular.ttf").as_slice()),
             Cow::Borrowed(include_bytes!("../assets/fonts/Geist-Medium.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../assets/fonts/Geist-SemiBold.ttf").as_slice()),
             Cow::Borrowed(include_bytes!("../assets/fonts/GeistMono-Regular.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../assets/fonts/GeistMono-Medium.ttf").as_slice()),
         ]
     }
 
