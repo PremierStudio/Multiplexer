@@ -22,6 +22,23 @@ pub fn bottom_height_from_mouse(win_h: f32, mouse_y: f32, status_h: f32, handle_
     win_h - mouse_y - status_h - handle_h
 }
 
+/// Inner TUI host size after Outlook chrome is subtracted.
+pub fn tui_host_px(win_w: f32, win_h: f32, chrome_w: f32, chrome_h: f32) -> (f32, f32) {
+    let win_w = if win_w.is_finite() { win_w } else { 0.0 };
+    let win_h = if win_h.is_finite() { win_h } else { 0.0 };
+    let chrome_w = if chrome_w.is_finite() {
+        chrome_w.max(0.0)
+    } else {
+        0.0
+    };
+    let chrome_h = if chrome_h.is_finite() {
+        chrome_h.max(0.0)
+    } else {
+        0.0
+    };
+    ((win_w - chrome_w).max(0.0), (win_h - chrome_h).max(0.0))
+}
+
 /// Remotes title pill. Detect only, never "connected".
 pub fn remotes_pill_label(tailscale_detected: bool) -> &'static str {
     if tailscale_detected {
@@ -58,6 +75,23 @@ mod tests {
     fn bottom_drag_subtracts_status_and_handle() {
         assert_eq!(bottom_height_from_mouse(1080.0, 800.0, 28.0, 8.0), 244.0);
         assert!(bottom_height_from_mouse(800.0, 400.0, 28.0, 8.0) < 800.0 - 400.0);
+    }
+
+    #[test]
+    fn tui_host_subtracts_chrome_and_clamps() {
+        assert_eq!(
+            tui_host_px(
+                1360.0,
+                860.0,
+                248.0 + 300.0 + 24.0,
+                36.0 + 28.0 + 36.0 + 28.0 + 16.0
+            ),
+            (788.0, 716.0)
+        );
+        assert_eq!(tui_host_px(100.0, 80.0, 200.0, 200.0), (0.0, 0.0));
+        assert_eq!(tui_host_px(f32::NAN, 800.0, 100.0, 100.0), (0.0, 700.0));
+        assert_ne!(tui_host_px(1360.0, 860.0, 0.0, 0.0), (0.0, 0.0));
+        assert_ne!(tui_host_px(1360.0, 860.0, 572.0, 144.0).0, 1360.0);
     }
 
     #[test]

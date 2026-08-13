@@ -81,5 +81,15 @@ mod tests {
             command_line("grok", &[r#"say "hi""#]),
             r#"grok "say \"hi\"""#
         );
+        assert_eq!(command_line("p", &[r#"a \"b"#]), "p \"a \\\\\\\"b\"");
+        assert_eq!(
+            command_line("p", &[r"C:\Program Files\"]),
+            "p \"C:\\Program Files\\\\\""
+        );
+        assert_ne!(
+            command_line("p", &[r"C:\Program Files\"]),
+            "p \"C:\\Program Files\\\""
+        );
+        assert_ne!(command_line("p", &[r#"a \"b"#]), "p \"a \\\"b\"");
     }
 }

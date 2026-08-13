@@ -14,6 +14,7 @@ mod center;
 mod chrome_geom;
 mod composer;
 mod diff_view;
+mod embed;
 mod fuzzy;
 mod icons;
 mod inspector_model;
@@ -50,7 +51,7 @@ pub use catalog::{
     remotes_serve_note, slash_arg,
 };
 pub use center::{CenterMode, GrokTuiHost, TuiLife};
-pub use chrome_geom::{bottom_height_from_mouse, remotes_pill_label, title_overflow};
+pub use chrome_geom::{bottom_height_from_mouse, remotes_pill_label, title_overflow, tui_host_px};
 pub use composer::{
     clamp_cursor, delete_back, delete_forward, insert_at, move_end, move_home, move_left,
     move_right, move_word_left, move_word_right,
@@ -58,6 +59,7 @@ pub use composer::{
 pub use diff_view::{
     changes_headline, mark_last_turn, parse_porcelain, sort_diffs, status_mark, DiffRow, DiffSort,
 };
+pub use embed::{embed_from_selection, embed_grok, embed_surface, EmbedTarget};
 pub use fuzzy::{fuzzy_best, fuzzy_score};
 pub use icons::{BrandIcon, ChromeGlyph};
 pub use inspector_model::{inspector_rows, row_detail};

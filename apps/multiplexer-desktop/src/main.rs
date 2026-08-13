@@ -33,21 +33,25 @@ use multiplexer_shell::{
     bottom_height_from_mouse, cap_text, changes_headline, default_browser_candidates,
     default_crash_path, default_first_run_path, default_layout_path, default_settings_path,
     default_terminal_candidates, delete_forward, detect_browsers, detect_remotes, detect_terminals,
-    first_run_completed, first_run_keychain_notice, format_line, git_diff_line, help_text,
-    hit_action, insert_at, inspector_rows, is_tui_hatch, join_project_path, journal_from_workspace,
-    leaf_name, menu_for, menu_for_thread, merge_cores, merge_mcp, merge_models, move_end,
-    move_home, move_left, move_right, move_word_left, move_word_right, open_external_program,
-    palette_hits, parse_builtin, parse_deep_link, parse_model_keys, parse_slash, plan_send,
-    preferred_terminal, read_crash_journal, read_layout, read_settings, remotes_pill_label,
-    remotes_serve_note, row_detail, search_workspace, slash_arg, status_from, status_line,
-    status_mark, thread_leaf_title, title_overflow, visible_notices, visible_tail, working_copy,
+    embed_from_selection, embed_grok, embed_surface, first_run_completed,
+    first_run_keychain_notice, format_line, git_diff_line, help_text, hit_action, insert_at,
+    inspector_rows, is_tui_hatch, join_project_path, journal_from_workspace, leaf_name, menu_for,
+    menu_for_thread, merge_cores, merge_mcp, merge_models, move_end, move_home, move_left,
+    move_right, move_word_left, move_word_right, open_external_program, palette_hits,
+    parse_builtin, parse_deep_link, parse_model_keys, parse_slash, plan_send, preferred_terminal,
+    read_crash_journal, read_layout, read_settings, remotes_pill_label, remotes_serve_note,
+    row_detail, search_workspace, slash_arg, status_from, status_line, status_mark,
+    thread_leaf_title, title_overflow, tui_host_px, visible_notices, visible_tail, working_copy,
     write_crash_journal, write_first_run_done, write_layout, write_settings, BindingTable,
     BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow, FocusRegion,
     InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind, PaletteState, RemoteRow, Role,
     SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand, TermLineKind, TuiLife,
     Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
 };
-use multiplexer_terminal::{visible_pty_text, EmbeddedSession, ProcessCapture, TerminalSpec};
+use multiplexer_terminal::{
+    pty_grid_from_px, pty_input, pty_paste_bytes, visible_pty_text, EmbeddedSession,
+    ProcessCapture, TerminalSpec,
+};
 use multiplexer_wire::codec::{decode_frame, encode_frame};
 use multiplexer_wire::jsonrpc::{Id, Message, Request};
 use multiplexer_wire::methods;
@@ -96,6 +100,7 @@ pub(crate) struct ShellView {
     grok_tui: Option<std::process::Child>,
     pending_turn_diffs: bool,
     win_w: f32,
+    win_h: f32,
     bindings: BindingTable,
     notice_born: Vec<(u64, Instant)>,
     capture: Option<ProcessCapture>,
@@ -194,6 +199,7 @@ impl ShellView {
             grok_tui: None,
             pending_turn_diffs: false,
             win_w: 1360.0,
+            win_h: 860.0,
             bindings,
             notice_born: Vec::new(),
             capture: None,
@@ -360,14 +366,14 @@ impl ShellView {
         self.workspace.terminals = detect_terminals(&default_terminal_candidates());
         let term = preferred_terminal(&self.workspace.terminals, &self.workspace.selected_terminal)
             .cloned();
-        let (id, label, path) = match term {
-            Some(t) => (t.id, t.label, t.path),
-            None => ("grok".into(), "Grok".into(), "grok".into()),
-        };
-        self.workspace.selected_terminal = id.clone();
-        self.workspace.settings.preferred_terminal = id.clone();
-        self.persist_settings();
-        self.start_embedded(&path, &[], &label);
+        let target = embed_from_selection(term.as_ref());
+        if let Some(t) = term {
+            self.workspace.selected_terminal = t.id;
+            self.workspace.settings.preferred_terminal = self.workspace.selected_terminal.clone();
+            self.persist_settings();
+        }
+        let args: Vec<&str> = target.args.iter().map(String::as_str).collect();
+        self.start_embedded(&target.program, &args, &target.label);
     }
 
     fn start_embedded(&mut self, program: &str, args: &[&str], label: &str) {
@@ -375,14 +381,15 @@ impl ShellView {
             let _ = old.kill();
         }
         let _ = self.workspace.set_center_mode(CenterMode::GrokTui);
-        let spec = TerminalSpec::new(100, 32, &self.workspace.project);
+        let (cols, rows) = self.pty_cols_rows();
+        let spec = TerminalSpec::new(cols, rows, &self.workspace.project);
         match EmbeddedSession::spawn(program, args, &spec) {
             Ok(session) => {
                 let pid = session.pid();
                 self.embedded = Some(session);
                 self.workspace
                     .grok_tui
-                    .mark_running(pid, program, format!("in-app {label}"));
+                    .mark_running(pid, program, embed_surface(label));
                 self.workspace.grok_tui.scrollback.clear();
                 self.focus = Focus::Tui;
                 self.workspace.push_notice(
@@ -396,6 +403,23 @@ impl ShellView {
                     .mark_failed(format!("spawn failed: {err}"));
                 self.workspace
                     .push_notice(NoticeKind::Danger, format!("{label}: {err}"));
+            }
+        }
+    }
+
+    fn pty_cols_rows(&self) -> (u16, u16) {
+        let chrome_w =
+            self.workspace.chrome.occupied_left() + self.workspace.chrome.occupied_right() + 24.0;
+        let chrome_h = 36.0 + 28.0 + self.workspace.occupied_bottom() + 28.0 + 16.0;
+        let (pw, ph) = tui_host_px(self.win_w, self.win_h, chrome_w, chrome_h);
+        pty_grid_from_px(pw, ph, 8.0, 16.0)
+    }
+
+    fn sync_embedded_size(&mut self) {
+        let (cols, rows) = self.pty_cols_rows();
+        if let Some(session) = self.embedded.as_mut() {
+            if session.size() != (cols, rows) {
+                let _ = session.resize(cols, rows);
             }
         }
     }
@@ -1527,6 +1551,8 @@ impl ShellView {
     }
 
     fn pump(&mut self, window: &mut Window) {
+        self.win_w = f32::from(window.viewport_size().width);
+        self.win_h = f32::from(window.viewport_size().height);
         if self.workspace.inspector == InspectorTab::Resources
             && self.last_core_sample.elapsed() > Duration::from_millis(1500)
         {
@@ -1551,6 +1577,7 @@ impl ShellView {
                 self.workspace.grok_tui.mark_exited();
             }
         }
+        self.sync_embedded_size();
         if let Some((path, rx)) = self.pending_diff.take() {
             match rx.try_recv() {
                 Ok(out) => {
@@ -1803,18 +1830,9 @@ impl ShellView {
 
         if self.focus == Focus::Tui {
             if let Some(session) = self.embedded.as_mut() {
-                if key == "enter" {
-                    let _ = session.write_str("\r");
-                } else if key == "backspace" {
-                    let _ = session.write(&[0x7f]);
-                } else if key == "tab" {
-                    let _ = session.write(b"\t");
-                } else if let Some(ch) = event.keystroke.key_char.as_deref() {
-                    if !mods.control {
-                        let _ = session.write_str(ch);
-                    }
-                } else if key == "space" {
-                    let _ = session.write(b" ");
+                let ch = event.keystroke.key_char.as_deref();
+                if let Some(bytes) = pty_input(key, ch, mods.control) {
+                    let _ = session.write(&bytes);
                 }
             }
             cx.notify();
@@ -1996,7 +2014,7 @@ impl ShellView {
         }
         if self.focus == Focus::Tui {
             if let Some(session) = self.embedded.as_mut() {
-                let _ = session.write_str(text);
+                let _ = session.write(&pty_paste_bytes(text));
             }
             return;
         }
@@ -2069,6 +2087,7 @@ impl Render for ShellView {
         let win_w = f32::from(window.viewport_size().width);
         let win_h = f32::from(window.viewport_size().height);
         self.win_w = win_w;
+        self.win_h = win_h;
         let mut root = div()
             .flex()
             .flex_col()
@@ -3405,7 +3424,8 @@ impl ShellView {
                         cx.notify();
                     }))
                     .child(ghost_btn("Open Grok", "grok", cx, |this, cx| {
-                        this.start_embedded("grok", &[], "Grok");
+                        let target = embed_grok();
+                        this.start_embedded(&target.program, &[], &target.label);
                         cx.notify();
                     }))
                     .child(ghost_btn("Refresh", "detect", cx, |this, cx| {

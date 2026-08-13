@@ -279,14 +279,7 @@ fn close_handle(handle: HANDLE) {
 }
 
 fn coord(cols: u16, rows: u16) -> Result<COORD, TerminalError> {
-    if cols == 0 || rows == 0 {
-        return Err(TerminalError::Io(
-            "cols and rows must be greater than 0".into(),
-        ));
-    }
-    if cols > i16::MAX as u16 || rows > i16::MAX as u16 {
-        return Err(TerminalError::Io("cols or rows exceed COORD (i16)".into()));
-    }
+    let (cols, rows) = crate::validate_pty_size(cols, rows)?;
     Ok(COORD {
         X: cols as i16,
         Y: rows as i16,

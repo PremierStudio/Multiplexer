@@ -27,11 +27,7 @@ pub struct EmbeddedSession {
 impl EmbeddedSession {
     /// Open a PTY and exec `program` on the slave.
     pub fn spawn(program: &str, args: &[&str], spec: &TerminalSpec) -> Result<Self, TerminalError> {
-        if spec.cols == 0 || spec.rows == 0 {
-            return Err(TerminalError::Io(
-                "cols and rows must be greater than 0".into(),
-            ));
-        }
+        crate::validate_pty_size(spec.cols, spec.rows)?;
         let (master, slave_name) = open_pty()?;
         set_winsize(master.as_raw(), spec.cols, spec.rows)?;
 
@@ -94,6 +90,7 @@ impl EmbeddedSession {
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) -> Result<(), TerminalError> {
+        let (cols, rows) = crate::validate_pty_size(cols, rows)?;
         let fd = self
             .master_fd
             .ok_or_else(|| TerminalError::Io("pty closed".into()))?;

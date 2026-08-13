@@ -422,7 +422,9 @@ mod tests {
         assert!(path_program("mux-no-such-binary-xyz").is_none());
         let cargo = path_program("cargo");
         assert!(
-            cargo.as_ref().is_some_and(|p| p.to_ascii_lowercase().contains("cargo")),
+            cargo
+                .as_ref()
+                .is_some_and(|p| p.to_ascii_lowercase().contains("cargo")),
             "cargo must be on PATH, got {cargo:?}"
         );
         assert_ne!(cargo, Some(String::new()));

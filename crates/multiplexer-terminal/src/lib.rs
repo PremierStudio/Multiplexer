@@ -9,6 +9,7 @@ mod cmdline;
 mod error;
 mod hub;
 mod id;
+mod keys;
 mod session;
 mod spec;
 
@@ -16,6 +17,7 @@ pub use capture::ProcessCapture;
 pub use error::TerminalError;
 pub use hub::{TerminalHub, TerminalSnapshot, TerminalWatch};
 pub use id::TerminalId;
+pub use keys::{pty_grid_from_px, pty_input, pty_key_bytes, pty_paste_bytes, validate_pty_size};
 pub use session::{ConptySession, EmbeddedSession};
 pub use spec::TerminalSpec;
 
