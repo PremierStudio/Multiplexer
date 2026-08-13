@@ -17,6 +17,10 @@ pub enum InspectorAction {
     StartMcp,
     StopMcp,
     MentionFile,
+    ReloadDiffs,
+    SortDiffLastTurn,
+    SortDiffFileName,
+    OpenBrowser,
 }
 
 /// One labeled control for the active inspector tab.
@@ -89,6 +93,28 @@ pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
         )],
         InspectorTab::Activity => Vec::new(),
         InspectorTab::Agents => Vec::new(),
+        InspectorTab::Diff => vec![
+            button(
+                "Reload",
+                "git status --porcelain",
+                InspectorAction::ReloadDiffs,
+            ),
+            button(
+                "Last turn",
+                "sort last turn first",
+                InspectorAction::SortDiffLastTurn,
+            ),
+            button(
+                "Name",
+                "sort by file name",
+                InspectorAction::SortDiffFileName,
+            ),
+        ],
+        InspectorTab::Browser => vec![button(
+            "Open",
+            "system browser",
+            InspectorAction::OpenBrowser,
+        )],
     }
 }
 
@@ -106,6 +132,8 @@ pub fn inspector_body(ws: &Workspace, session_id: Option<&str>) -> String {
         InspectorTab::Files => ws.files_detail(),
         InspectorTab::Activity => ws.activity_detail(),
         InspectorTab::Agents => ws.agents_detail(),
+        InspectorTab::Diff => ws.diff_detail(),
+        InspectorTab::Browser => ws.browser_detail(),
     }
 }
 
@@ -176,5 +204,11 @@ mod tests {
         assert_eq!(inspector_body(&ws, None), ws.activity_detail());
         ws.inspector = InspectorTab::Agents;
         assert_eq!(inspector_body(&ws, None), ws.agents_detail());
+        ws.inspector = InspectorTab::Diff;
+        assert_eq!(inspector_body(&ws, None), ws.diff_detail());
+        assert_eq!(tab_buttons(InspectorTab::Diff).len(), 3);
+        ws.inspector = InspectorTab::Browser;
+        assert_eq!(inspector_body(&ws, None), ws.browser_detail());
+        assert!(!tab_buttons(InspectorTab::Browser).is_empty());
     }
 }

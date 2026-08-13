@@ -17,6 +17,8 @@ pub fn inspector_rows(ws: &Workspace) -> Vec<ListRowSpec> {
         InspectorTab::Files => file_rows(ws),
         InspectorTab::Activity => activity_rows(ws),
         InspectorTab::Agents => agent_rows(ws),
+        InspectorTab::Diff => diff_rows(ws),
+        InspectorTab::Browser => browser_rows(ws),
     }
 }
 
@@ -78,6 +80,24 @@ pub fn row_detail(ws: &Workspace, id: &str) -> String {
             .find(|c| c.id == cid)
             .map(|c| c.label.clone())
             .unwrap_or_default();
+    }
+    if let Some(path) = id.strip_prefix("diff:") {
+        return ws
+            .diff_rows
+            .iter()
+            .find(|r| r.path == path)
+            .map(|r| {
+                format!(
+                    "{}  {}  {}",
+                    r.status,
+                    r.path,
+                    if r.last_turn { "last turn" } else { "earlier" }
+                )
+            })
+            .unwrap_or_default();
+    }
+    if id == "browser:slot" {
+        return ws.browser_detail();
     }
     if let Some(aid) = id.strip_prefix("agent:") {
         return ws
@@ -360,6 +380,42 @@ fn agent_rows(ws: &Workspace) -> Vec<ListRowSpec> {
         .collect()
 }
 
+fn diff_rows(ws: &Workspace) -> Vec<ListRowSpec> {
+    if ws.diff_rows.is_empty() {
+        return vec![ListRowSpec::new("diff:empty", "No working-tree diffs")
+            .with_icon(ChromeGlyph::Diff.mark())
+            .with_subtitle(ws.diff_sort.label())];
+    }
+    ws.visible_diffs()
+        .into_iter()
+        .map(|d| {
+            let mut row = ListRowSpec::new(format!("diff:{}", d.path), d.path.clone())
+                .with_icon(ChromeGlyph::Diff.mark())
+                .with_subtitle(d.status.clone());
+            if d.last_turn {
+                row = row.with_badge(BadgeSpec::new(Tone::Accent, "turn"));
+            }
+            row.selected = d.last_turn;
+            mark_expanded(row, ws)
+        })
+        .collect()
+}
+
+fn browser_rows(ws: &Workspace) -> Vec<ListRowSpec> {
+    let url = if ws.browser_url.is_empty() {
+        "(no URL)".into()
+    } else {
+        ws.browser_url.clone()
+    };
+    vec![mark_expanded(
+        ListRowSpec::new("browser:slot", "System browser")
+            .with_icon(ChromeGlyph::Browser.mark())
+            .with_subtitle(url)
+            .with_meta("CDP later"),
+        ws,
+    )]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,6 +435,25 @@ mod tests {
         assert_eq!(row_detail(&ws, "session:model"), "grok");
         assert_eq!(row_detail(&ws, "session:connection"), "disconnected");
         assert_eq!(row_detail(&ws, "session:threads"), "1");
+    }
+
+    #[test]
+    fn diff_rows_sort_and_mark_last_turn() {
+        let mut ws = Workspace::new("p", "m");
+        ws.inspector = InspectorTab::Diff;
+        ws.apply_porcelain(" M zebra.rs\n M alpha.rs\n");
+        ws.remember_turn_paths(vec!["zebra.rs".into()]);
+        let rows = inspector_rows(&ws);
+        assert_eq!(rows[0].id, "diff:zebra.rs");
+        assert!(rows[0].selected);
+        assert!(row_detail(&ws, "diff:zebra.rs").contains("last turn"));
+        ws.set_diff_sort(crate::diff_view::DiffSort::FileName);
+        let named = inspector_rows(&ws);
+        assert_eq!(named[0].id, "diff:alpha.rs");
+        ws.inspector = InspectorTab::Browser;
+        let browser = inspector_rows(&ws);
+        assert_eq!(browser[0].id, "browser:slot");
+        assert!(row_detail(&ws, "browser:slot").contains("CDP/HAR"));
     }
 
     #[test]

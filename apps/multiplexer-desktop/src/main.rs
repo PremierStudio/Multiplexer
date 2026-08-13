@@ -16,8 +16,8 @@ use gpui::{
 use inspector::{tab_buttons, InspectorAction};
 use multiplexer_checkpoint::CheckpointStore;
 use multiplexer_client::{
-    list_project_tree, spawn_command, spawn_grok_turn, windows_cmd, CommandResult, ListOptions,
-    TurnRequest, TurnResult,
+    list_project_tree, spawn_command, spawn_grok_tui, spawn_grok_turn, windows_cmd, CommandResult,
+    ListOptions, TuiLaunch, TurnRequest, TurnResult,
 };
 use multiplexer_mcp::{
     list_dir_entry_names, load_user_mcp_inventory, merge_skill_rows, parse_skill_names,
@@ -29,9 +29,10 @@ use multiplexer_shell::{
     apply_layout_action, default_items, delete_forward, detect_remotes, empty_state_tiles,
     format_line, help_text, insert_at, inspector_rows, move_end, move_home, move_left, move_right,
     move_word_left, move_word_right, palette_hits, parse_builtin, parse_slash, row_detail,
-    status_from, status_line, visible_tail, BuiltinCmd, CheckpointRow, ChromeGlyph, ClientAction,
-    CoreRow, EmptyStateSpec, InspectorTab, LeftSection, ListRowSpec, McpRow, NoticeKind,
-    PaletteState, RemoteRow, Role, SearchKind, SlashCommand, TermLineKind, Workspace, TERM_PROMPT,
+    status_from, status_line, visible_tail, BuiltinCmd, CenterMode, CheckpointRow, ChromeGlyph,
+    ClientAction, CoreRow, EmptyStateSpec, InspectorTab, LeftSection, ListRowSpec, McpRow,
+    NoticeKind, PaletteState, RemoteRow, Role, SearchKind, SlashCommand, TermLineKind, TuiLife,
+    Workspace, TERM_PROMPT,
 };
 use multiplexer_wire::codec::{decode_frame, encode_frame};
 use multiplexer_wire::jsonrpc::{Id, Message, Request};
@@ -69,6 +70,8 @@ struct ShellView {
     last_core_sample: Instant,
     flash: Option<String>,
     remotes: Vec<RemoteRow>,
+    grok_tui: Option<std::process::Child>,
+    pending_turn_diffs: bool,
 }
 
 impl ShellView {
@@ -146,6 +149,8 @@ impl ShellView {
             last_core_sample: Instant::now(),
             flash: None,
             remotes: detect_remotes(tailscale_which().as_deref()),
+            grok_tui: None,
+            pending_turn_diffs: false,
         };
         view.apply_theme();
         view.bootstrap_catalogs();
@@ -218,6 +223,71 @@ impl ShellView {
                 self.remotes = merged;
             }
         }
+    }
+
+    fn wt_available() -> bool {
+        std::process::Command::new("where.exe")
+            .arg("wt.exe")
+            .output()
+            .map(|o| o.status.success() && !o.stdout.is_empty())
+            .unwrap_or(false)
+    }
+
+    fn launch_grok_tui(&mut self) {
+        if self.workspace.grok_tui.life == TuiLife::Running && self.grok_tui.is_some() {
+            self.workspace
+                .push_notice(NoticeKind::Info, "Grok TUI already running");
+            return;
+        }
+        let _ = self.workspace.set_center_mode(CenterMode::GrokTui);
+        let launch = TuiLaunch::prefer_wt(&self.workspace.project, "grok", Self::wt_available());
+        match spawn_grok_tui(&launch) {
+            Ok(child) => {
+                let pid = child.id();
+                self.workspace
+                    .grok_tui
+                    .mark_running(pid, launch.program.display().to_string());
+                self.grok_tui = Some(child);
+                self.workspace
+                    .push_notice(NoticeKind::Good, format!("Grok TUI launched (pid {pid})"));
+                self.term_meta(&format!("grok tui pid {pid}"));
+            }
+            Err(err) => {
+                self.workspace
+                    .grok_tui
+                    .mark_failed(format!("spawn failed: {err}"));
+                self.workspace
+                    .push_notice(NoticeKind::Danger, format!("Grok TUI: {err}"));
+            }
+        }
+    }
+
+    fn stop_grok_tui(&mut self) {
+        if let Some(mut child) = self.grok_tui.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        self.workspace.grok_tui.mark_exited();
+        self.workspace
+            .push_notice(NoticeKind::Info, "Grok TUI stopped");
+    }
+
+    fn reload_diffs(&mut self) {
+        self.run_shell("git status --porcelain");
+    }
+
+    fn open_browser(&mut self) {
+        let url = if self.workspace.browser_url.trim().is_empty() {
+            "https://grok.com".to_owned()
+        } else {
+            self.workspace.browser_url.clone()
+        };
+        self.workspace.browser_url = url.clone();
+        self.run_shell(&format!("start \"\" \"{url}\""));
+        self.workspace.push_notice(
+            NoticeKind::Info,
+            format!("opened {url} (system browser, no CDP)"),
+        );
     }
 
     fn create_worktree(&mut self) {
@@ -356,6 +426,9 @@ impl ShellView {
             ClientAction::Approve => self.respond_approval("allow"),
             ClientAction::Deny => self.respond_approval("deny"),
             ClientAction::CreateWorktree => self.create_worktree(),
+            ClientAction::LaunchGrokTui => self.launch_grok_tui(),
+            ClientAction::StopGrokTui => self.stop_grok_tui(),
+            ClientAction::OpenBrowser => self.open_browser(),
             ClientAction::StartMcp | ClientAction::StopMcp => {
                 let _ = apply_layout_action(&mut self.workspace, action);
             }
@@ -403,6 +476,18 @@ impl ShellView {
                     }
                 }
             }
+            InspectorAction::ReloadDiffs => self.reload_diffs(),
+            InspectorAction::SortDiffLastTurn => {
+                let _ = self
+                    .workspace
+                    .set_diff_sort(multiplexer_shell::DiffSort::LastTurn);
+            }
+            InspectorAction::SortDiffFileName => {
+                let _ = self
+                    .workspace
+                    .set_diff_sort(multiplexer_shell::DiffSort::FileName);
+            }
+            InspectorAction::OpenBrowser => self.open_browser(),
             InspectorAction::MentionFile => {
                 if let Some(id) = self.workspace.right_expanded_id.clone() {
                     if let Some(path) = id.strip_prefix("file:") {
@@ -763,6 +848,8 @@ impl ShellView {
                             multiplexer_shell::NoticeKind::Good,
                             format!("turn complete · ~{estimate} tok"),
                         );
+                        self.pending_turn_diffs = true;
+                        self.reload_diffs();
                     } else {
                         let err = out.stderr.trim();
                         self.workspace.mark_error(if err.is_empty() {
@@ -819,6 +906,30 @@ impl ShellView {
                         self.workspace
                             .set_git_status(body.chars().take(800).collect::<String>());
                     }
+                    if self.workspace.inspector == InspectorTab::Diff
+                        || self.pending_turn_diffs
+                        || body.lines().any(|l| {
+                            l.len() >= 4
+                                && (l.starts_with(" M")
+                                    || l.starts_with("M ")
+                                    || l.starts_with("??")
+                                    || l.starts_with("A ")
+                                    || l.starts_with("D ")
+                                    || l.starts_with("R "))
+                        })
+                    {
+                        self.workspace.apply_porcelain(&body);
+                        if self.pending_turn_diffs {
+                            let paths: Vec<String> = self
+                                .workspace
+                                .diff_rows
+                                .iter()
+                                .map(|r| r.path.clone())
+                                .collect();
+                            self.workspace.remember_turn_paths(paths);
+                            self.pending_turn_diffs = false;
+                        }
+                    }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -827,7 +938,25 @@ impl ShellView {
                 }
             }
         }
-        if self.pending_turn.is_some() || self.pending_cmd.is_some() {
+        if let Some(child) = self.grok_tui.as_mut() {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    self.grok_tui = None;
+                    self.workspace.grok_tui.mark_exited();
+                    self.workspace
+                        .push_notice(NoticeKind::Info, "Grok TUI exited");
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    self.grok_tui = None;
+                    self.workspace.grok_tui.mark_exited();
+                }
+            }
+        }
+        if self.pending_turn.is_some()
+            || self.pending_cmd.is_some()
+            || self.workspace.grok_tui.life == TuiLife::Running
+        {
             window.request_animation_frame();
         }
     }
@@ -868,6 +997,10 @@ impl ShellView {
         }
         if key == "f2" {
             self.dispatch(ClientAction::ToggleSettings, cx);
+            return;
+        }
+        if key == "g" && mods.control && mods.shift {
+            self.dispatch(ClientAction::ToggleCenterMode, cx);
             return;
         }
         if key == "l" && mods.control && mods.shift {
@@ -1518,13 +1651,17 @@ impl ShellView {
             self.focus == Focus::Composer,
         );
         let slash = parse_slash(&self.workspace.draft);
+        let tui = self.workspace.center_mode == CenterMode::GrokTui;
         glass_pane()
             .flex_1()
             .h_full()
             .flex()
             .flex_col()
             .min_w_0()
-            .child(
+            .child(self.center_mode_bar(cx))
+            .child(if tui {
+                self.grok_tui_host(cx)
+            } else {
                 div()
                     .flex_1()
                     .min_h_0()
@@ -1572,9 +1709,12 @@ impl ShellView {
                             })
                             .collect(),
                         None => vec![empty_center()],
-                    }),
-            )
-            .child(
+                    })
+                    .into_any()
+            })
+            .child(if tui {
+                div().id("no-composer").into_any()
+            } else {
                 div()
                     .p_3()
                     .border_t_1()
@@ -1680,8 +1820,127 @@ impl ShellView {
                             .child(format!("/  {}", multiplexer_shell::slash_hint(&cmd)))
                     } else {
                         div().child("")
+                    })
+                    .into_any()
+            })
+    }
+
+    fn center_mode_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mode = self.workspace.center_mode;
+        div()
+            .px_3()
+            .py_2()
+            .border_b_1()
+            .border_color(Theme::hairline())
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                self.mode_chip("Chat log", mode == CenterMode::Gui, cx, |this, cx| {
+                    this.dispatch(ClientAction::SetCenterGui, cx);
+                }),
+            )
+            .child(
+                self.mode_chip("Grok TUI", mode == CenterMode::GrokTui, cx, |this, cx| {
+                    this.dispatch(ClientAction::SetCenterTui, cx);
+                }),
+            )
+            .child(div().flex_1())
+            .child(
+                div()
+                    .text_size(Theme::text_caption())
+                    .text_color(Theme::faint())
+                    .child(if mode == CenterMode::GrokTui {
+                        "Grok owns the agent. This is the host, not a rewrite."
+                    } else {
+                        "Headless log (grok -p). Switch to Grok TUI for the real pager."
                     }),
             )
+    }
+
+    fn mode_chip(
+        &mut self,
+        label: &'static str,
+        on: bool,
+        cx: &mut Context<Self>,
+        on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+    ) -> impl IntoElement {
+        div()
+            .id(SharedString::from(format!("center-{label}")))
+            .h(px(28.0))
+            .px_3()
+            .rounded_lg()
+            .flex()
+            .items_center()
+            .cursor_pointer()
+            .bg(if on {
+                Theme::selection()
+            } else {
+                Theme::glass_ultra()
+            })
+            .border_1()
+            .border_color(if on {
+                Theme::hairline_bright()
+            } else {
+                Theme::hairline()
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| on_click(this, cx)),
+            )
+            .child(label)
+    }
+
+    fn grok_tui_host(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let host = self.workspace.grok_tui.clone();
+        div()
+            .id("grok-tui-host")
+            .flex_1()
+            .min_h_0()
+            .p_6()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .child(
+                div()
+                    .text_size(Theme::text_body())
+                    .text_color(Theme::accent())
+                    .child("Grok TUI host"),
+            )
+            .child(
+                div()
+                    .max_w(px(560.0))
+                    .text_color(Theme::muted())
+                    .child(host.summary()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(ghost_btn("Launch", "console", cx, |this, cx| {
+                        this.launch_grok_tui();
+                        cx.notify();
+                    }))
+                    .child(ghost_btn("Stop", "kill", cx, |this, cx| {
+                        this.stop_grok_tui();
+                        cx.notify();
+                    }))
+                    .child(ghost_btn("Diffs", "g d", cx, |this, cx| {
+                        this.dispatch(ClientAction::SelectTab(InspectorTab::Diff), cx);
+                    }))
+                    .child(ghost_btn("Browser", "g b", cx, |this, cx| {
+                        this.dispatch(ClientAction::SelectTab(InspectorTab::Browser), cx);
+                    })),
+            )
+            .child(
+                div()
+                    .text_size(Theme::text_caption())
+                    .text_color(Theme::faint())
+                    .child("Launches interactive grok (no -p) in Windows Terminal or a new console. In-pane ConPTY is later."),
+            )
+            .into_any()
     }
 
     fn reminder_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2136,7 +2395,7 @@ impl ShellView {
                     .p_4()
                     .child("Keyboard")
                     .child(div().text_color(Theme::muted()).mt_2().child(
-                        "Enter send   Shift+Enter newline   Ctrl+K palette   F1 help   F2 settings\nCtrl+N new chat   Ctrl+[ / ] rails   Ctrl+` terminal   Ctrl+. stop   Ctrl+S checkpoint\nCtrl+Shift+L reset layout   Tab focuses the terminal   Esc closes overlays\nSlash: /new /stop /help /cp /cores /mcp /git /term /skills /model\nTerm builtins: clear  help  cores  mcp  git  points  skills\nPalette searches threads, files, and commands together.",
+                        "Enter send   Shift+Enter newline   Ctrl+K palette   F1 help   F2 settings\nCtrl+Shift+G Grok TUI / chat log   Ctrl+N new chat   Ctrl+[ / ] rails   Ctrl+` terminal\nCtrl+. stop   Ctrl+S checkpoint   Ctrl+Shift+L reset layout\nSlash: /new /stop /help /cp /cores /mcp /git /term /skills /model\nRight rail Diffs sorts by last turn or file name. Browser opens the system browser.\nGrok TUI is the real pager in a console. Chat log is grok -p only.",
                     )),
             )
     }
@@ -2213,7 +2472,7 @@ fn empty_center() -> gpui::Div {
         .child(
             div()
                 .text_color(Theme::faint())
-                .child("Ctrl+K palette   F1 help   F2 settings   Ctrl+` terminal"),
+                .child("Ctrl+Shift+G Grok TUI   Ctrl+K palette   F2 settings"),
         )
 }
 

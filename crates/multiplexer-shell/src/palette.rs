@@ -228,6 +228,36 @@ pub fn default_items() -> Vec<PaletteItem> {
             hint: "",
             action: ClientAction::InsertFileMention,
         },
+        PaletteItem {
+            id: "center-tui",
+            label: "Grok TUI",
+            hint: "Ctrl+Shift+G",
+            action: ClientAction::SetCenterTui,
+        },
+        PaletteItem {
+            id: "center-gui",
+            label: "Chat log",
+            hint: "",
+            action: ClientAction::SetCenterGui,
+        },
+        PaletteItem {
+            id: "launch-tui",
+            label: "Launch Grok TUI",
+            hint: "",
+            action: ClientAction::LaunchGrokTui,
+        },
+        PaletteItem {
+            id: "diff-tab",
+            label: "Diffs",
+            hint: "g d",
+            action: ClientAction::SelectTab(InspectorTab::Diff),
+        },
+        PaletteItem {
+            id: "browser-tab",
+            label: "Browser",
+            hint: "g b",
+            action: ClientAction::SelectTab(InspectorTab::Browser),
+        },
     ]
 }
 

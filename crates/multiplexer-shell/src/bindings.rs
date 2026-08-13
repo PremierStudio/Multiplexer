@@ -49,7 +49,12 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         | ClientAction::ToggleBottom
         | ClientAction::InsertFileMention
         | ClientAction::ToggleSettings
-        | ClientAction::SelectModel => HostCall::Local,
+        | ClientAction::SelectModel
+        | ClientAction::ToggleCenterMode
+        | ClientAction::SetCenterGui
+        | ClientAction::SetCenterTui
+        | ClientAction::SortDiffLastTurn
+        | ClientAction::SortDiffFileName => HostCall::Local,
         ClientAction::CreateWorktree => worktree_create_call(ctx),
         ClientAction::Send
         | ClientAction::RefreshCores
@@ -58,7 +63,10 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         | ClientAction::CopyLastMessage
         | ClientAction::RefreshMcp
         | ClientAction::StartMcp
-        | ClientAction::StopMcp => HostCall::NeedsHost,
+        | ClientAction::StopMcp
+        | ClientAction::LaunchGrokTui
+        | ClientAction::StopGrokTui
+        | ClientAction::OpenBrowser => HostCall::NeedsHost,
         ClientAction::Interrupt => match ctx.session_id.as_deref() {
             Some(session_id) => HostCall::Rpc {
                 method: "session.interrupt",

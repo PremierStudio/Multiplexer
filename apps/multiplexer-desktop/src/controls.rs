@@ -63,6 +63,9 @@ pub const REQUIRED_IDS: &[&str] = &[
     "run",
     "layout_reset",
     "settings",
+    "center_gui",
+    "center_tui",
+    "launch_tui",
     "new_thread",
     "select_thread",
     "delete_thread",
@@ -81,6 +84,11 @@ pub const REQUIRED_IDS: &[&str] = &[
     "tab_git",
     "tab_term",
     "tab_skills",
+    "tab_diff",
+    "tab_browser",
+    "sort_last_turn",
+    "sort_file_name",
+    "open_browser",
     "cycle_model",
     "copy_session",
     "refresh_cores",
@@ -134,6 +142,14 @@ const CONTROLS: &[ControlSpec] = &[
     spec("run", Surface::TitleBar, "Run", None),
     spec("layout_reset", Surface::TitleBar, "Reset layout", None),
     spec("settings", Surface::TitleBar, "Settings", Some("f2")),
+    spec("center_gui", Surface::Center, "Chat log", None),
+    spec(
+        "center_tui",
+        Surface::Center,
+        "Grok TUI",
+        Some("ctrl-shift-g"),
+    ),
+    spec("launch_tui", Surface::Center, "Launch Grok TUI", None),
     spec("new_thread", Surface::LeftRail, "New", Some("ctrl-n")),
     spec("select_thread", Surface::LeftRail, "Select thread", None),
     spec("delete_thread", Surface::LeftRail, "Delete thread", None),
@@ -162,6 +178,11 @@ const CONTROLS: &[ControlSpec] = &[
     spec("tab_git", Surface::RightRail, "Git", None),
     spec("tab_term", Surface::RightRail, "Term", None),
     spec("tab_skills", Surface::RightRail, "Skills", None),
+    spec("tab_diff", Surface::RightRail, "Diffs", None),
+    spec("tab_browser", Surface::RightRail, "Browser", None),
+    spec("sort_last_turn", Surface::RightRail, "Last turn", None),
+    spec("sort_file_name", Surface::RightRail, "File name", None),
+    spec("open_browser", Surface::RightRail, "Open browser", None),
     spec("cycle_model", Surface::RightRail, "Cycle model", None),
     spec("copy_session", Surface::RightRail, "Copy session", None),
     spec("refresh_cores", Surface::RightRail, "Refresh cores", None),
@@ -211,6 +232,7 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("f1", "help"),
     ("ctrl-`", "toggle_bottom"),
     ("f2", "settings"),
+    ("ctrl-shift-g", "center_tui"),
 ];
 
 fn is_live_text(s: &str) -> bool {
@@ -275,9 +297,9 @@ mod tests {
             assert_eq!(spec.action, *required);
             assert!(spec.is_live(), "{required} is dead");
         }
-        assert_eq!(REQUIRED_IDS.len(), 43);
+        assert_eq!(REQUIRED_IDS.len(), 51);
         assert_eq!(have.len(), REQUIRED_IDS.len());
-        assert_eq!(all_controls().len(), 43);
+        assert_eq!(all_controls().len(), 51);
 
         let required_once = [
             "chats_toggle",
@@ -288,6 +310,9 @@ mod tests {
             "run",
             "layout_reset",
             "settings",
+            "center_gui",
+            "center_tui",
+            "launch_tui",
             "new_thread",
             "select_thread",
             "delete_thread",
@@ -305,6 +330,11 @@ mod tests {
             "tab_git",
             "tab_term",
             "tab_skills",
+            "tab_diff",
+            "tab_browser",
+            "sort_last_turn",
+            "sort_file_name",
+            "open_browser",
             "cycle_model",
             "copy_session",
             "refresh_cores",
@@ -327,7 +357,7 @@ mod tests {
         for id in required_once {
             assert!(have.contains(&id), "checklist id missing: {id}");
         }
-        assert_eq!(required_once.len(), 43);
+        assert_eq!(required_once.len(), 51);
     }
 
     #[test]
@@ -341,6 +371,9 @@ mod tests {
             ("run", Surface::TitleBar),
             ("layout_reset", Surface::TitleBar),
             ("settings", Surface::TitleBar),
+            ("center_gui", Surface::Center),
+            ("center_tui", Surface::Center),
+            ("launch_tui", Surface::Center),
             ("new_thread", Surface::LeftRail),
             ("select_thread", Surface::LeftRail),
             ("delete_thread", Surface::LeftRail),
@@ -359,6 +392,11 @@ mod tests {
             ("tab_git", Surface::RightRail),
             ("tab_term", Surface::RightRail),
             ("tab_skills", Surface::RightRail),
+            ("tab_diff", Surface::RightRail),
+            ("tab_browser", Surface::RightRail),
+            ("sort_last_turn", Surface::RightRail),
+            ("sort_file_name", Surface::RightRail),
+            ("open_browser", Surface::RightRail),
             ("cycle_model", Surface::RightRail),
             ("copy_session", Surface::RightRail),
             ("refresh_cores", Surface::RightRail),
@@ -474,9 +512,9 @@ mod tests {
         }
         assert_eq!(controls_on(Surface::TitleBar).len(), 8);
         assert_eq!(controls_on(Surface::LeftRail).len(), 3);
-        assert_eq!(controls_on(Surface::Center).len(), 5);
+        assert_eq!(controls_on(Surface::Center).len(), 8);
         assert_eq!(controls_on(Surface::Composer).len(), 3);
-        assert_eq!(controls_on(Surface::RightRail).len(), 15);
+        assert_eq!(controls_on(Surface::RightRail).len(), 20);
         assert_eq!(controls_on(Surface::TermStrip).len(), 3);
         assert_eq!(controls_on(Surface::Palette).len(), 2);
         assert_eq!(controls_on(Surface::HelpOverlay).len(), 1);
@@ -507,7 +545,8 @@ mod tests {
 
     #[test]
     fn shortcut_map_has_required_bindings() {
-        assert_eq!(shortcut_map().len(), 13);
+        assert_eq!(shortcut_map().len(), 14);
+        assert_eq!(shortcut_action("ctrl-shift-g"), Some("center_tui"));
         assert_eq!(shortcut_action("enter"), Some("send"));
         assert_eq!(shortcut_action("escape"), Some("close_overlay"));
         assert_eq!(shortcut_action("ctrl-k"), Some("command_palette"));
@@ -547,7 +586,7 @@ mod tests {
                 "{key} maps to {action}, which is not a control action"
             );
         }
-        assert_eq!(keys.len(), 13);
+        assert_eq!(keys.len(), 14);
     }
 
     #[test]

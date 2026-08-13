@@ -36,6 +36,14 @@ pub enum ClientAction {
     StopMcp,
     InsertFileMention,
     ToggleSettings,
+    ToggleCenterMode,
+    SetCenterGui,
+    SetCenterTui,
+    LaunchGrokTui,
+    StopGrokTui,
+    SortDiffLastTurn,
+    SortDiffFileName,
+    OpenBrowser,
 }
 
 /// Apply a workspace-only layout action.
@@ -76,6 +84,14 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
             ws.toggle_bottom();
             true
         }
+        ClientAction::ToggleCenterMode => {
+            ws.toggle_center_mode();
+            true
+        }
+        ClientAction::SetCenterGui => ws.set_center_mode(crate::center::CenterMode::Gui),
+        ClientAction::SetCenterTui => ws.set_center_mode(crate::center::CenterMode::GrokTui),
+        ClientAction::SortDiffLastTurn => ws.set_diff_sort(crate::diff_view::DiffSort::LastTurn),
+        ClientAction::SortDiffFileName => ws.set_diff_sort(crate::diff_view::DiffSort::FileName),
         ClientAction::CreateWorktree => false,
         ClientAction::SelectModel => {
             let model = ws.settings.default_model.clone();
@@ -143,7 +159,10 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
         | ClientAction::RunTerminal
         | ClientAction::RefreshGit
         | ClientAction::CycleFile
-        | ClientAction::CopyLastMessage => false,
+        | ClientAction::CopyLastMessage
+        | ClientAction::LaunchGrokTui
+        | ClientAction::StopGrokTui
+        | ClientAction::OpenBrowser => false,
     }
 }
 
@@ -155,7 +174,7 @@ mod tests {
         Workspace::new("p", "m")
     }
 
-    fn host_noops() -> [ClientAction; 12] {
+    fn host_noops() -> [ClientAction; 15] {
         [
             ClientAction::Send,
             ClientAction::Interrupt,
@@ -169,6 +188,9 @@ mod tests {
             ClientAction::RefreshGit,
             ClientAction::CycleFile,
             ClientAction::CopyLastMessage,
+            ClientAction::LaunchGrokTui,
+            ClientAction::StopGrokTui,
+            ClientAction::OpenBrowser,
         ]
     }
 
@@ -418,6 +440,26 @@ mod tests {
             );
             assert_eq!(copy, snapshot, "{action:?} must not mutate workspace");
         }
+    }
+
+    #[test]
+    fn center_mode_and_diff_sort_actions() {
+        let mut ws = fresh();
+        assert_eq!(ws.center_mode, crate::center::CenterMode::Gui);
+        assert!(apply_layout_action(&mut ws, ClientAction::ToggleCenterMode));
+        assert_eq!(ws.center_mode, crate::center::CenterMode::GrokTui);
+        assert!(!apply_layout_action(&mut ws, ClientAction::SetCenterTui));
+        assert!(apply_layout_action(&mut ws, ClientAction::SetCenterGui));
+        assert_eq!(ws.center_mode, crate::center::CenterMode::Gui);
+        assert!(apply_layout_action(&mut ws, ClientAction::SortDiffFileName));
+        assert_eq!(ws.diff_sort, crate::diff_view::DiffSort::FileName);
+        assert!(!apply_layout_action(
+            &mut ws,
+            ClientAction::SortDiffFileName
+        ));
+        assert!(apply_layout_action(&mut ws, ClientAction::SortDiffLastTurn));
+        assert!(!apply_layout_action(&mut ws, ClientAction::LaunchGrokTui));
+        assert!(!apply_layout_action(&mut ws, ClientAction::OpenBrowser));
     }
 
     #[test]

@@ -6,10 +6,12 @@
 
 mod command;
 mod files;
+mod tui;
 mod turn;
 
 pub use command::{
     spawn_command, windows_cmd, CommandRequest, CommandResult, SHELL_WORKER_THREAD_NAME,
 };
 pub use files::{list_project_files, list_project_tree, FileEntry, ListOptions};
+pub use tui::{spawn_grok_tui, TuiLaunch};
 pub use turn::{spawn_grok_turn, try_recv, TurnError, TurnRequest, TurnResult, WORKER_THREAD_NAME};

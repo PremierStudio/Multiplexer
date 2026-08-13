@@ -40,6 +40,8 @@ pub enum InspectorTab {
     Files,
     Activity,
     Agents,
+    Diff,
+    Browser,
 }
 
 impl InspectorTab {
@@ -55,6 +57,8 @@ impl InspectorTab {
             Self::Files => "Files",
             Self::Activity => "Activity",
             Self::Agents => "Agents",
+            Self::Diff => "Diffs",
+            Self::Browser => "Browser",
         }
     }
 
@@ -70,10 +74,12 @@ impl InspectorTab {
             Self::Files => "▤",
             Self::Activity => "●",
             Self::Agents => "⚡",
+            Self::Diff => "±",
+            Self::Browser => "⧉",
         }
     }
 
-    pub fn all() -> [InspectorTab; 10] {
+    pub fn all() -> [InspectorTab; 12] {
         [
             Self::Session,
             Self::Resources,
@@ -85,6 +91,8 @@ impl InspectorTab {
             Self::Files,
             Self::Activity,
             Self::Agents,
+            Self::Diff,
+            Self::Browser,
         ]
     }
 }
@@ -295,6 +303,12 @@ pub struct Workspace {
     pub file_expanded: Vec<String>,
     pub usage_turns: u64,
     pub usage_tokens: u64,
+    pub center_mode: crate::center::CenterMode,
+    pub grok_tui: crate::center::GrokTuiHost,
+    pub diff_rows: Vec<crate::diff_view::DiffRow>,
+    pub diff_sort: crate::diff_view::DiffSort,
+    pub last_turn_paths: Vec<String>,
+    pub browser_url: String,
     next_id: u64,
     next_notice: u64,
 }
@@ -302,8 +316,9 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(project: impl Into<String>, model: impl Into<String>) -> Self {
         let model = model.into();
+        let project = project.into();
         let mut ws = Self {
-            project: project.into(),
+            project: project.clone(),
             model: model.clone(),
             connection: ConnectionState::Disconnected,
             threads: Vec::new(),
@@ -343,6 +358,12 @@ impl Workspace {
             file_expanded: Vec::new(),
             usage_turns: 0,
             usage_tokens: 0,
+            center_mode: crate::center::CenterMode::Gui,
+            grok_tui: crate::center::GrokTuiHost::idle(project.clone()),
+            diff_rows: Vec::new(),
+            diff_sort: crate::diff_view::DiffSort::LastTurn,
+            last_turn_paths: Vec::new(),
+            browser_url: String::new(),
             next_id: 1,
             next_notice: 1,
         };
@@ -968,6 +989,65 @@ impl Workspace {
         self.right_expanded_id = None;
     }
 
+    pub fn toggle_center_mode(&mut self) {
+        self.center_mode = self.center_mode.toggle();
+    }
+
+    pub fn set_center_mode(&mut self, mode: crate::center::CenterMode) -> bool {
+        if self.center_mode == mode {
+            false
+        } else {
+            self.center_mode = mode;
+            true
+        }
+    }
+
+    pub fn set_diff_sort(&mut self, sort: crate::diff_view::DiffSort) -> bool {
+        if self.diff_sort == sort {
+            false
+        } else {
+            self.diff_sort = sort;
+            true
+        }
+    }
+
+    pub fn apply_porcelain(&mut self, text: &str) {
+        let mut rows = crate::diff_view::parse_porcelain(text);
+        crate::diff_view::mark_last_turn(&mut rows, &self.last_turn_paths);
+        self.diff_rows = crate::diff_view::sort_diffs(rows, self.diff_sort);
+    }
+
+    pub fn remember_turn_paths(&mut self, paths: Vec<String>) {
+        self.last_turn_paths = paths;
+        crate::diff_view::mark_last_turn(&mut self.diff_rows, &self.last_turn_paths);
+        self.diff_rows = crate::diff_view::sort_diffs(self.diff_rows.clone(), self.diff_sort);
+    }
+
+    pub fn visible_diffs(&self) -> Vec<crate::diff_view::DiffRow> {
+        crate::diff_view::sort_diffs(self.diff_rows.clone(), self.diff_sort)
+    }
+
+    pub fn diff_detail(&self) -> String {
+        if self.diff_rows.is_empty() {
+            return "No working-tree diffs. Reload after a Grok turn.".into();
+        }
+        let mut out = format!("Sort {}\n\n", self.diff_sort.label());
+        for row in self.visible_diffs() {
+            let mark = if row.last_turn { "*" } else { " " };
+            out.push_str(&format!("{mark} {}  {}\n", row.status, row.path));
+        }
+        out
+    }
+
+    pub fn browser_detail(&self) -> String {
+        let url = if self.browser_url.is_empty() {
+            "(no URL)"
+        } else {
+            self.browser_url.as_str()
+        };
+        format!("System browser only. CDP/HAR is later.\n\n{url}")
+    }
+
     pub fn agents_detail(&self) -> String {
         let mut out = String::from("Local threads only. Subagent spawn is not wired.\n\n");
         for (id, title, status, n) in self.agent_rows() {
@@ -1144,7 +1224,9 @@ mod tests {
         assert_eq!(InspectorTab::Files.label(), "Files");
         assert_eq!(InspectorTab::Activity.label(), "Activity");
         assert_eq!(InspectorTab::Agents.label(), "Agents");
-        assert_eq!(InspectorTab::all().len(), 10);
+        assert_eq!(InspectorTab::Diff.label(), "Diffs");
+        assert_eq!(InspectorTab::Browser.label(), "Browser");
+        assert_eq!(InspectorTab::all().len(), 12);
         let mut ws = Workspace::new("p", "m");
         ws.connect(vec!["sess-1".into()]);
         assert!(ws.connection.is_connected());
@@ -1229,9 +1311,9 @@ mod tests {
     }
 
     #[test]
-    fn inspector_all_is_ten_tabs() {
+    fn inspector_all_is_twelve_tabs() {
         let all = InspectorTab::all();
-        assert_eq!(all.len(), 10);
+        assert_eq!(all.len(), 12);
         assert_eq!(
             all,
             [
@@ -1245,15 +1327,37 @@ mod tests {
                 InspectorTab::Files,
                 InspectorTab::Activity,
                 InspectorTab::Agents,
+                InspectorTab::Diff,
+                InspectorTab::Browser,
             ]
         );
         assert_eq!(
             all.map(InspectorTab::label),
             [
                 "Session", "Cores", "MCP", "Points", "Git", "Term", "Skills", "Files", "Activity",
-                "Agents"
+                "Agents", "Diffs", "Browser"
             ]
         );
+    }
+
+    #[test]
+    fn center_mode_and_diff_sort_work() {
+        let mut ws = Workspace::new("p", "m");
+        assert_eq!(ws.center_mode, crate::center::CenterMode::Gui);
+        ws.toggle_center_mode();
+        assert_eq!(ws.center_mode, crate::center::CenterMode::GrokTui);
+        assert!(!ws.set_center_mode(crate::center::CenterMode::GrokTui));
+        assert!(ws.set_center_mode(crate::center::CenterMode::Gui));
+        ws.apply_porcelain(" M zebra.rs\n M alpha.rs\n");
+        ws.remember_turn_paths(vec!["zebra.rs".into()]);
+        assert_eq!(ws.diff_sort, crate::diff_view::DiffSort::LastTurn);
+        let first = ws.visible_diffs();
+        assert_eq!(first[0].path, "zebra.rs");
+        assert!(first[0].last_turn);
+        assert!(ws.set_diff_sort(crate::diff_view::DiffSort::FileName));
+        assert_eq!(ws.visible_diffs()[0].path, "alpha.rs");
+        assert!(ws.diff_detail().contains("alpha.rs"));
+        assert!(ws.browser_detail().contains("CDP/HAR"));
     }
 
     #[test]

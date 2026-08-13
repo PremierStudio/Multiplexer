@@ -7,7 +7,9 @@ mod actions;
 mod approval_ui;
 mod bars;
 mod bindings;
+mod center;
 mod composer;
+mod diff_view;
 mod icons;
 mod inspector_model;
 mod integrations;
@@ -27,10 +29,12 @@ pub use actions::{apply_layout_action, ClientAction};
 pub use approval_ui::PendingApproval;
 pub use bars::usage_bar;
 pub use bindings::{host_call, worktree_create_call, ActionContext, HostCall};
+pub use center::{CenterMode, GrokTuiHost, TuiLife};
 pub use composer::{
     clamp_cursor, delete_back, delete_forward, insert_at, move_end, move_home, move_left,
     move_right, move_word_left, move_word_right,
 };
+pub use diff_view::{mark_last_turn, parse_porcelain, sort_diffs, DiffRow, DiffSort};
 pub use icons::{BrandIcon, ChromeGlyph};
 pub use inspector_model::{inspector_rows, row_detail};
 pub use integrations::{filter_tiles, integration_tiles, TileSpec};
