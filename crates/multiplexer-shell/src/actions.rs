@@ -104,11 +104,19 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
             ws.selected != before
         }
         ClientAction::ToggleLeft => {
-            ws.chrome.toggle_left();
+            if ws.chrome.left == crate::workspace::RailVis::Hidden {
+                ws.chrome.open_left();
+            } else {
+                ws.chrome.toggle_left();
+            }
             true
         }
         ClientAction::ToggleRight => {
-            ws.chrome.toggle_right();
+            if ws.chrome.right == crate::workspace::RailVis::Hidden {
+                ws.chrome.open_right();
+            } else {
+                ws.chrome.toggle_right();
+            }
             true
         }
         ClientAction::SelectTab(tab) => {
@@ -722,6 +730,9 @@ mod tests {
         assert!(apply_layout_action(&mut ws, ClientAction::HideLeft));
         assert_eq!(ws.chrome.left, crate::workspace::RailVis::Hidden);
         assert_eq!(ws.chrome.occupied_left(), 0.0);
+        assert!(apply_layout_action(&mut ws, ClientAction::ToggleLeft));
+        assert!(ws.chrome.left_open());
+        assert!(apply_layout_action(&mut ws, ClientAction::HideLeft));
         assert!(apply_layout_action(&mut ws, ClientAction::FocusLayout));
         assert!(ws.is_focus_layout());
         assert!(apply_layout_action(&mut ws, ClientAction::FocusLayout));

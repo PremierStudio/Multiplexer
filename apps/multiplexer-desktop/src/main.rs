@@ -36,20 +36,20 @@ use multiplexer_shell::{
     bottom_height_from_mouse, cap_text, changes_headline, default_browser_candidates,
     default_crash_path, default_first_run_path, default_layout_path, default_settings_path,
     default_terminal_candidates, delete_forward, detect_browsers, detect_remotes, detect_terminals,
-    embed_grok, embed_surface, first_run_completed,
-    first_run_keychain_notice, format_line, git_diff_line, help_text, hit_action, hunks_for_path,
-    insert_at, inspector_rows, is_tui_hatch, join_project_path, journal_from_workspace, leaf_name,
-    menu_for, menu_for_thread, merge_cores, merge_mcp, merge_models, move_end, move_home,
-    move_left, move_right, move_word_left, move_word_right, open_external_program, palette_hits,
-    parse_builtin, parse_deep_link, parse_model_keys, parse_slash, parse_unified_diff, plan_send,
-    preferred_terminal, read_crash_journal, read_layout, read_settings, remotes_pill_label,
-    remotes_serve_note, row_detail, search_workspace, slash_arg, status_from, status_line,
-    status_mark, thread_leaf_title, title_overflow, tui_host_px, visible_notices, visible_tail,
-    working_copy, write_crash_journal, write_first_run_done, write_layout, write_settings,
-    BindingTable, BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow,
-    FocusRegion, HunkLineKind, InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind,
-    PaletteState, RemoteRow, Role, SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand,
-    TermLineKind, TuiLife, Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
+    embed_grok, embed_surface, first_run_completed, first_run_keychain_notice, format_line,
+    git_diff_line, help_text, hit_action, hunks_for_path, insert_at, inspector_rows, is_tui_hatch,
+    join_project_path, journal_from_workspace, leaf_name, menu_for, menu_for_thread, merge_cores,
+    merge_mcp, merge_models, move_end, move_home, move_left, move_right, move_word_left,
+    move_word_right, open_external_program, palette_hits, parse_builtin, parse_deep_link,
+    parse_model_keys, parse_slash, parse_unified_diff, plan_send, preferred_terminal,
+    read_crash_journal, read_layout, read_settings, remotes_pill_label, remotes_serve_note,
+    row_detail, search_workspace, slash_arg, status_from, status_line, status_mark,
+    thread_leaf_title, title_overflow, tui_host_px, visible_notices, visible_tail, working_copy,
+    write_crash_journal, write_first_run_done, write_layout, write_settings, BindingTable,
+    BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow, FocusRegion,
+    HunkLineKind, InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind, PaletteState, RemoteRow,
+    Role, SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand, TermLineKind, TuiLife,
+    Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
 };
 use multiplexer_terminal::{
     pty_grid_from_px, pty_input, pty_paste_bytes, visible_pty_text, EmbeddedSession,
@@ -675,7 +675,7 @@ impl ShellView {
                     }
                     ClientAction::SelectThread(_) => {
                         if self.workspace.selected_center_mode() == CenterMode::GrokTui {
-                            self.focus = Focus::Tui;
+                            self.ensure_thread_grok();
                         } else {
                             self.focus = Focus::Composer;
                         }
@@ -734,7 +734,11 @@ impl ShellView {
                     | ClientAction::ClosePopOut
                     | ClientAction::ResetOutlook
                     | ClientAction::HideRight
-                    | ClientAction::ToggleRight => {
+                    | ClientAction::HideLeft
+                    | ClientAction::HideBottom
+                    | ClientAction::ToggleLeft
+                    | ClientAction::ToggleRight
+                    | ClientAction::ToggleBottom => {
                         self.persist_layout();
                     }
                     ClientAction::NextRegion => {
@@ -1325,8 +1329,17 @@ impl ShellView {
     }
 
     fn cycle_file(&mut self) {
-        self.workspace
-            .push_notice(NoticeKind::Info, "use Files filter. Rotate is gone.");
+        if self.workspace.cycle_file() {
+            let _ = self.workspace.select_inspector(InspectorTab::Files);
+            self.workspace.chrome.open_right();
+            if let Some(path) = self.workspace.selected_file.clone() {
+                self.workspace
+                    .push_notice(NoticeKind::Info, format!("selected {path}"));
+            }
+        } else {
+            self.workspace
+                .push_notice(NoticeKind::Warn, "no files to rotate");
+        }
     }
 
     fn ensure_session(&mut self) -> bool {
@@ -1385,9 +1398,7 @@ impl ShellView {
             return;
         };
         self.persist_crash();
-        if !self.ensure_session() {
-            return;
-        }
+        let _ = self.ensure_session();
         let cwd = PathBuf::from(&self.workspace.project);
         let rx = spawn_grok_turn(TurnRequest {
             cwd,
@@ -2802,7 +2813,7 @@ impl ShellView {
             .gap_1()
             .py_2()
             .overflow_y_scroll()
-            .children(InspectorTab::rail_order().into_iter().map(|t| {
+            .children(InspectorTab::primary_rail().into_iter().map(|t| {
                 let on = tab == t;
                 rail_icon(
                     t.icon(),
@@ -3433,7 +3444,7 @@ impl ShellView {
         } else {
             ChromeGlyph::Terminal
         };
-        let hint = if tui { "Show chat" } else { "Show Grok TUI" };
+        let label = if tui { "Chat" } else { "TUI" };
         div()
             .id("chat-header")
             .h(px(40.0))
@@ -3466,9 +3477,32 @@ impl ShellView {
                             .child(sub),
                     ),
             )
-            .child(icon_btn(toggle, hint, cx, |this, cx| {
-                this.dispatch(ClientAction::ToggleCenterMode, cx);
-            }))
+            .child(
+                div()
+                    .id("chat-mode-toggle")
+                    .h(px(28.0))
+                    .px_2()
+                    .rounded_lg()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .bg(Theme::raised())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(Theme::selection()))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.dispatch(ClientAction::ToggleCenterMode, cx);
+                        }),
+                    )
+                    .child(chrome_icon(toggle, 14.0))
+                    .child(
+                        div()
+                            .text_size(Theme::text_caption())
+                            .text_color(Theme::text())
+                            .child(label),
+                    ),
+            )
     }
 
     fn grok_tui_host(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {

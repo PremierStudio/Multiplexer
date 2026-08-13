@@ -134,6 +134,18 @@ impl InspectorTab {
         ]
     }
 
+    /// Tabs on the icon strip. The rest stay reachable from Session / palette.
+    pub fn primary_rail() -> [InspectorTab; 6] {
+        [
+            Self::Diff,
+            Self::Files,
+            Self::Git,
+            Self::Terminal,
+            Self::Session,
+            Self::Mcp,
+        ]
+    }
+
     /// Right-rail order used by the product chrome (Changes first).
     pub fn rail_order() -> [InspectorTab; 12] {
         [
@@ -1446,6 +1458,28 @@ impl Workspace {
         )
     }
 
+    /// Rotate the selected leaf file. Directories are skipped.
+    pub fn cycle_file(&mut self) -> bool {
+        let files: Vec<String> = self
+            .files_visible()
+            .into_iter()
+            .filter(|p| !p.ends_with('/'))
+            .collect();
+        if files.is_empty() {
+            return false;
+        }
+        let next = match self.selected_file.as_deref() {
+            Some(cur) => files
+                .iter()
+                .position(|p| p == cur)
+                .map(|i| (i + 1) % files.len())
+                .unwrap_or(0),
+            None => 0,
+        };
+        self.selected_file = Some(files[next].clone());
+        true
+    }
+
     pub fn insert_file_mention(&mut self) -> bool {
         if self.selected_file.is_none() {
             if let Some(path) = self
@@ -2133,6 +2167,11 @@ mod tests {
         );
         assert_eq!(InspectorTab::rail_order()[0], InspectorTab::Diff);
         assert_eq!(InspectorTab::rail_order()[0].label(), "Changes");
+        assert_eq!(InspectorTab::primary_rail().len(), 6);
+        assert_eq!(InspectorTab::primary_rail()[0], InspectorTab::Diff);
+        assert!(InspectorTab::primary_rail()
+            .iter()
+            .all(|t| InspectorTab::all().contains(t)));
     }
 
     #[test]
@@ -2207,6 +2246,16 @@ mod tests {
         assert!(ws.draft.contains("`@src/lib.rs`"));
         assert!(ws.toggle_file_expand("src/"));
         assert!(!ws.files_visible().contains(&"src/lib.rs".into()));
+        assert!(ws.toggle_file_expand("src/"));
+        ws.selected_file = None;
+        assert!(ws.cycle_file());
+        assert_eq!(ws.selected_file.as_deref(), Some("src/lib.rs"));
+        assert!(ws.cycle_file());
+        assert_eq!(ws.selected_file.as_deref(), Some("Cargo.toml"));
+        assert!(ws.cycle_file());
+        assert_eq!(ws.selected_file.as_deref(), Some("src/lib.rs"));
+        ws.set_files(Vec::new());
+        assert!(!ws.cycle_file());
     }
 
     #[test]
