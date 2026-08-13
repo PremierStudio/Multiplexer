@@ -70,7 +70,15 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
             ws.chrome.toggle_right();
             true
         }
-        ClientAction::SelectTab(tab) => ws.select_inspector(tab),
+        ClientAction::SelectTab(tab) => {
+            let changed = ws.select_inspector(tab);
+            if !ws.chrome.right_open {
+                ws.chrome.right_open = true;
+                true
+            } else {
+                changed
+            }
+        }
         ClientAction::SelectLeftSection(section) => {
             let changed = ws.select_left_section(section);
             if !ws.chrome.left_open {
@@ -252,6 +260,19 @@ mod tests {
 
         assert!(apply_layout_action(&mut ws, ClientAction::ToggleRight));
         assert!(ws.chrome.left_open && ws.chrome.right_open);
+    }
+
+    #[test]
+    fn select_tab_reopens_hidden_right_rail() {
+        let mut ws = fresh();
+        ws.chrome.hide_right();
+        assert!(!ws.chrome.right_open);
+        assert!(apply_layout_action(
+            &mut ws,
+            ClientAction::SelectTab(InspectorTab::Session)
+        ));
+        assert!(ws.chrome.right_open);
+        assert_eq!(ws.inspector, InspectorTab::Session);
     }
 
     #[test]

@@ -190,10 +190,10 @@ pub const LEFT_WIDTH_MAX: f32 = 420.0;
 pub const RIGHT_WIDTH_MIN: f32 = 220.0;
 pub const RIGHT_WIDTH_MAX: f32 = 480.0;
 pub const RAIL_COLLAPSED: f32 = 44.0;
-pub const BOTTOM_HEIGHT_COLLAPSED: f32 = 120.0;
-pub const BOTTOM_HEIGHT_EXPANDED: f32 = 280.0;
-pub const BOTTOM_HEIGHT_MIN: f32 = 120.0;
-pub const BOTTOM_HEIGHT_MAX: f32 = 420.0;
+pub const BOTTOM_HEIGHT_COLLAPSED: f32 = 36.0;
+pub const BOTTOM_HEIGHT_EXPANDED: f32 = 240.0;
+pub const BOTTOM_HEIGHT_MIN: f32 = 36.0;
+pub const BOTTOM_HEIGHT_MAX: f32 = 480.0;
 
 /// Show/hide and width of the left and right rails.
 #[derive(Debug, Clone, PartialEq)]
@@ -222,6 +222,14 @@ impl ChromeLayout {
 
     pub fn toggle_right(&mut self) {
         self.right_open = !self.right_open;
+    }
+
+    pub fn hide_left(&mut self) {
+        self.left_open = false;
+    }
+
+    pub fn hide_right(&mut self) {
+        self.right_open = false;
     }
 
     pub fn set_left_width(&mut self, width: f32) {
@@ -1289,6 +1297,11 @@ mod tests {
         c.toggle_left();
         assert!(c.left_open);
         assert_eq!(c.occupied_left(), c.left_width);
+        c.hide_left();
+        c.hide_right();
+        assert!(!c.left_open && !c.right_open);
+        assert_eq!(c.occupied_left(), RAIL_COLLAPSED);
+        assert_eq!(c.occupied_right(), RAIL_COLLAPSED);
     }
 
     #[test]
@@ -1444,7 +1457,9 @@ mod tests {
         assert_eq!(ws.bottom_height, 200.0);
         ws.set_bottom_height(10.0);
         assert_eq!(ws.bottom_height, BOTTOM_HEIGHT_MIN);
+        assert_eq!(BOTTOM_HEIGHT_MIN, 36.0);
         assert!(!ws.bottom_open);
+        assert_eq!(ws.occupied_bottom(), 36.0);
     }
 
     #[test]

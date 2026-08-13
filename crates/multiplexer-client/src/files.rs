@@ -111,7 +111,7 @@ fn is_hidden_name(name: &str) -> bool {
 }
 
 fn is_skipped_tree_dir(name: &str) -> bool {
-    SKIP_TREE_DIR_NAMES.contains(&name)
+    SKIP_TREE_DIR_NAMES.contains(&name) || name.starts_with("mutants.out")
 }
 
 fn sort_entries(entries: &mut [FileEntry]) {
@@ -299,6 +299,9 @@ mod tests {
         fs::create_dir_all(nm.join("pkg")).expect("node_modules/pkg");
         fs::write(nm.join("pkg").join("index.js"), b"x").expect("nm file");
 
+        let mo = root.mkdir("mutants.out.layout");
+        fs::write(mo.join("log.txt"), b"x").expect("mutants log");
+
         let got = list_project_tree(
             &root.path,
             ListOptions {
@@ -330,6 +333,10 @@ mod tests {
                 .iter()
                 .any(|p| p.split('/').any(|s| s == "node_modules")),
             "node_modules must be skipped: {got_paths:?}"
+        );
+        assert!(
+            !got_paths.iter().any(|p| p.contains("mutants.out")),
+            "mutants.out* must be skipped: {got_paths:?}"
         );
         assert!(got.iter().all(|e| !e.path.contains('\\')));
         assert_eq!(
