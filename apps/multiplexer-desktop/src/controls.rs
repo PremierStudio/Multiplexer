@@ -131,6 +131,9 @@ pub const REQUIRED_IDS: &[&str] = &[
     "settings_theme",
     "settings_density",
     "toast_dismiss",
+    "refresh_files",
+    "reveal_file",
+    "open_external",
 ];
 
 const fn spec(
@@ -296,6 +299,9 @@ const CONTROLS: &[ControlSpec] = &[
     spec("settings_theme", Surface::Settings, "Theme", None),
     spec("settings_density", Surface::Settings, "Density", None),
     spec("toast_dismiss", Surface::TitleBar, "Dismiss toast", None),
+    spec("refresh_files", Surface::RightRail, "Reload files", None),
+    spec("reveal_file", Surface::RightRail, "Reveal file", None),
+    spec("open_external", Surface::RightRail, "Open external", None),
 ];
 
 /// Global chords. Escape is `close_overlay` (palette, help, search, settings).
@@ -387,9 +393,9 @@ mod tests {
             assert_eq!(spec.action, *required);
             assert!(spec.is_live(), "{required} is dead");
         }
-        assert_eq!(REQUIRED_IDS.len(), 72);
+        assert_eq!(REQUIRED_IDS.len(), 75);
         assert_eq!(have.len(), REQUIRED_IDS.len());
-        assert_eq!(all_controls().len(), 72);
+        assert_eq!(all_controls().len(), 75);
 
         let required_once = [
             "chats_toggle",
@@ -525,6 +531,9 @@ mod tests {
             ("settings_theme", Surface::Settings),
             ("settings_density", Surface::Settings),
             ("toast_dismiss", Surface::TitleBar),
+            ("refresh_files", Surface::RightRail),
+            ("reveal_file", Surface::RightRail),
+            ("open_external", Surface::RightRail),
         ];
         for (id, surface) in pin {
             let spec = control_by_id(id).unwrap_or_else(|| panic!("missing {id}"));
@@ -627,7 +636,7 @@ mod tests {
         assert_eq!(controls_on(Surface::LeftRail).len(), 8);
         assert_eq!(controls_on(Surface::Center).len(), 9);
         assert_eq!(controls_on(Surface::Composer).len(), 3);
-        assert_eq!(controls_on(Surface::RightRail).len(), 24);
+        assert_eq!(controls_on(Surface::RightRail).len(), 27);
         assert_eq!(controls_on(Surface::TermStrip).len(), 4);
         assert_eq!(controls_on(Surface::Palette).len(), 2);
         assert_eq!(controls_on(Surface::HelpOverlay).len(), 1);

@@ -25,16 +25,16 @@ use multiplexer_mcp::{
 use multiplexer_resman::sample_cores;
 use multiplexer_server::Server;
 use multiplexer_shell::{
-    apply_layout_action, auto_dismisses, bottom_height_from_mouse, default_settings_path,
-    delete_forward, detect_remotes, empty_state_tiles, format_line, help_text, hit_action,
-    insert_at, inspector_rows, is_tui_hatch, move_end, move_home, move_left, move_right,
-    move_word_left, move_word_right, palette_hits, parse_builtin, parse_slash, plan_send,
-    read_settings, remotes_pill_label, row_detail, search_workspace, status_from, status_line,
-    title_overflow, visible_notices, visible_tail, write_settings, BindingTable, BuiltinCmd,
-    CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow, EmptyStateSpec,
-    InspectorTab, LeftSection, ListRowSpec, McpRow, NoticeKind, PaletteState, RemoteRow, Role,
-    SearchKind, SendPlan, SettingsSection, SlashCommand, TermLineKind, TuiLife, Workspace,
-    NOTICE_AUTO_MS, TERM_PROMPT,
+    apply_layout_action, auto_dismisses, bottom_height_from_mouse, default_browser_candidates,
+    default_settings_path, delete_forward, detect_browsers, detect_remotes, empty_state_tiles,
+    format_line, help_text, hit_action, insert_at, inspector_rows, is_tui_hatch, join_project_path,
+    merge_mcp, move_end, move_home, move_left, move_right, move_word_left, move_word_right,
+    palette_hits, parse_builtin, parse_slash, plan_send, read_settings, remotes_pill_label,
+    row_detail, search_workspace, status_from, status_line, title_overflow, visible_notices,
+    visible_tail, write_settings, BindingTable, BuiltinCmd, CenterMode, CheckpointRow, Chord,
+    ChromeGlyph, ClientAction, CoreRow, EmptyStateSpec, InspectorTab, LeftSection, ListRowSpec,
+    McpRow, NoticeKind, PaletteState, RemoteRow, Role, SearchKind, SendPlan, SettingsSection,
+    SlashCommand, TermLineKind, TuiLife, Workspace, NOTICE_AUTO_MS, TERM_PROMPT,
 };
 use multiplexer_wire::codec::{decode_frame, encode_frame};
 use multiplexer_wire::jsonrpc::{Id, Message, Request};
@@ -313,11 +313,20 @@ impl ShellView {
             self.workspace.browser_url.clone()
         };
         self.workspace.browser_url = url.clone();
-        self.run_shell(&format!("start \"\" \"{url}\""));
-        self.workspace.push_notice(
-            NoticeKind::Info,
-            format!("opened {url} (system browser, no CDP)"),
-        );
+        let found = detect_browsers(&default_browser_candidates());
+        if let Some((name, exe)) = found.first() {
+            self.run_shell(&format!("start \"\" \"{exe}\" \"{url}\""));
+            self.workspace.push_notice(
+                NoticeKind::Info,
+                format!("opened {url} with {name} (no CDP)"),
+            );
+        } else {
+            self.run_shell(&format!("start \"\" \"{url}\""));
+            self.workspace.push_notice(
+                NoticeKind::Info,
+                format!("opened {url} (system browser, no CDP)"),
+            );
+        }
     }
 
     fn create_worktree(&mut self) {
@@ -524,6 +533,9 @@ impl ShellView {
             ClientAction::CopySession => self.copy_session(cx),
             ClientAction::ReloadDiffs => self.reload_diffs(),
             ClientAction::RunGitStatus => self.run_shell("git status"),
+            ClientAction::RefreshFiles => self.reload_files(),
+            ClientAction::RevealFile => self.reveal_file(cx),
+            ClientAction::OpenExternal => self.open_external(),
             ClientAction::StartMcp | ClientAction::StopMcp => {
                 if !apply_layout_action(&mut self.workspace, action) {
                     self.workspace
@@ -617,7 +629,7 @@ impl ShellView {
     }
 
     fn refresh_mcp(&mut self) {
-        self.workspace.mcp = load_user_mcp_inventory()
+        let incoming: Vec<McpRow> = load_user_mcp_inventory()
             .into_iter()
             .map(|row| McpRow {
                 name: row.name,
@@ -626,7 +638,66 @@ impl ShellView {
                 state: multiplexer_shell::McpLife::Stopped,
             })
             .collect();
+        self.workspace.mcp = merge_mcp(&self.workspace.mcp, incoming);
         self.term_meta(&format!("mcp inventory {}", self.workspace.mcp.len()));
+    }
+
+    fn reload_files(&mut self) {
+        let cwd = PathBuf::from(&self.workspace.project);
+        self.workspace.set_files(
+            list_project_tree(&cwd, ListOptions::default())
+                .into_iter()
+                .map(|e| {
+                    if e.is_dir {
+                        format!("{}/", e.path)
+                    } else {
+                        e.path
+                    }
+                })
+                .collect(),
+        );
+        self.workspace.push_notice(
+            NoticeKind::Info,
+            format!("files {}", self.workspace.files.len()),
+        );
+    }
+
+    fn selected_or_expanded_file(&self) -> Option<String> {
+        if let Some(p) = self.workspace.selected_file.clone() {
+            return Some(p);
+        }
+        self.workspace
+            .right_expanded_id
+            .as_deref()
+            .and_then(|id| id.strip_prefix("file:"))
+            .map(str::to_owned)
+    }
+
+    fn reveal_file(&mut self, cx: &mut Context<Self>) {
+        let Some(rel) = self.selected_or_expanded_file() else {
+            self.workspace
+                .push_notice(NoticeKind::Warn, "select a file first");
+            return;
+        };
+        let abs = join_project_path(&self.workspace.project, &rel);
+        let text = abs.display().to_string();
+        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+        self.workspace
+            .push_notice(NoticeKind::Info, format!("copied {text}"));
+    }
+
+    fn open_external(&mut self) {
+        let Some(rel) = self.selected_or_expanded_file() else {
+            self.workspace
+                .push_notice(NoticeKind::Warn, "select a file first");
+            return;
+        };
+        let abs = join_project_path(&self.workspace.project, &rel);
+        self.run_shell(&format!("start \"\" \"{}\"", abs.display()));
+        self.workspace.push_notice(
+            NoticeKind::Info,
+            format!("opened {} (system app)", abs.display()),
+        );
     }
 
     fn refresh_reminder(&mut self) {
@@ -740,13 +811,8 @@ impl ShellView {
     }
 
     fn cycle_file(&mut self) {
-        if self.workspace.files.is_empty() {
-            self.term_meta("no project files listed");
-            return;
-        }
-        let first = self.workspace.files.remove(0);
-        self.workspace.files.push(first);
-        self.term_meta(&format!("file {}", self.workspace.files[0]));
+        self.workspace
+            .push_notice(NoticeKind::Info, "use Files filter. Rotate is gone.");
     }
 
     fn ensure_session(&mut self) -> bool {

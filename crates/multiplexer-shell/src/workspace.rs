@@ -362,6 +362,8 @@ pub struct Workspace {
     pub search_selected: usize,
     pub settings_section: crate::settings::SettingsSection,
     pub recent_commands: Vec<String>,
+    pub file_filter: String,
+    pub thread_drafts: Vec<(String, String, usize)>,
     pub file_expanded: Vec<String>,
     pub usage_turns: u64,
     pub usage_tokens: u64,
@@ -425,6 +427,8 @@ impl Workspace {
             search_selected: 0,
             settings_section: crate::settings::SettingsSection::Appearance,
             recent_commands: Vec::new(),
+            file_filter: String::new(),
+            thread_drafts: Vec::new(),
             file_expanded: Vec::new(),
             usage_turns: 0,
             usage_tokens: 0,
@@ -460,6 +464,7 @@ impl Workspace {
     }
 
     pub fn new_thread(&mut self) -> String {
+        self.stash_selected_draft();
         let id = format!("thr-{}", self.next_id);
         self.next_id += 1;
         self.threads.push(Thread {
@@ -475,11 +480,43 @@ impl Workspace {
     }
 
     pub fn select(&mut self, index: usize) -> bool {
-        if index < self.threads.len() {
-            self.selected = index;
-            true
+        if index >= self.threads.len() || index == self.selected {
+            return false;
+        }
+        self.stash_selected_draft();
+        self.selected = index;
+        self.restore_selected_draft();
+        true
+    }
+
+    fn stash_selected_draft(&mut self) {
+        let Some(id) = self.threads.get(self.selected).map(|t| t.id.clone()) else {
+            return;
+        };
+        self.thread_drafts.retain(|(i, _, _)| i != &id);
+        if !self.draft.is_empty() {
+            self.thread_drafts
+                .push((id, self.draft.clone(), self.cursor));
+        }
+    }
+
+    fn restore_selected_draft(&mut self) {
+        let Some(id) = self.threads.get(self.selected).map(|t| t.id.clone()) else {
+            self.draft.clear();
+            self.cursor = 0;
+            return;
+        };
+        if let Some((_, d, c)) = self
+            .thread_drafts
+            .iter()
+            .find(|(i, _, _)| i == &id)
+            .cloned()
+        {
+            self.draft = d;
+            self.cursor = c.min(self.draft.chars().count());
         } else {
-            false
+            self.draft.clear();
+            self.cursor = 0;
         }
     }
 
@@ -489,11 +526,14 @@ impl Workspace {
         if self.threads.len() <= 1 || index >= self.threads.len() {
             return false;
         }
+        let dropped = self.threads[index].id.clone();
         self.threads.remove(index);
+        self.thread_drafts.retain(|(i, _, _)| i != &dropped);
         if index < self.selected {
             self.selected -= 1;
         } else if index == self.selected {
             self.selected = self.selected.saturating_sub(1);
+            self.restore_selected_draft();
         }
         true
     }
@@ -932,19 +972,20 @@ impl Workspace {
     }
 
     pub fn files_detail(&self) -> String {
-        if self.files.is_empty() {
+        let shown = crate::workbench::filter_files(&self.files, &self.file_filter);
+        if shown.is_empty() {
             "No project files listed.".to_owned()
         } else {
-            self.files.join("\n")
+            shown.join("\n")
         }
     }
 
     pub fn activity_detail(&self) -> String {
-        if self.terminal_log.is_empty() {
-            "No activity yet.".to_owned()
-        } else {
-            self.terminal_log.join("\n")
-        }
+        crate::workbench::activity_items(self)
+            .into_iter()
+            .map(|i| format!("{}  {}", i.title, i.hint))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     pub fn select_left_section(&mut self, section: LeftSection) -> bool {
@@ -1040,7 +1081,10 @@ impl Workspace {
 
     pub fn select_thread_id(&mut self, id: &str) -> bool {
         match self.threads.iter().position(|t| t.id == id) {
-            Some(i) => self.select(i),
+            Some(i) => {
+                let _ = self.select(i);
+                true
+            }
             None => false,
         }
     }
@@ -2004,6 +2048,21 @@ mod tests {
         assert_eq!(ws.agent_rows().len(), before);
         assert_eq!(ws.agent_rows()[0].0, ws.threads[0].id);
         assert!(ws.select_thread_id(&ws.threads[0].id.clone()));
+    }
+
+    #[test]
+    fn per_thread_draft_stashes_and_restores() {
+        let mut ws = Workspace::new("p", "m");
+        ws.set_draft("hello");
+        ws.new_thread();
+        assert!(ws.draft.is_empty());
+        ws.set_draft("second");
+        assert!(ws.select(0));
+        assert_eq!(ws.draft, "hello");
+        assert!(ws.select(1));
+        assert_eq!(ws.draft, "second");
+        assert!(!ws.select(1));
+        assert_eq!(ws.draft, "second");
     }
 
     #[test]

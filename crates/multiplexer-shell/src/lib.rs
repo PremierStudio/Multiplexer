@@ -27,6 +27,7 @@ mod status;
 mod terminal_ui;
 mod usage;
 mod widgets;
+mod workbench;
 mod workspace;
 
 pub use actions::{apply_layout_action, ClientAction};
@@ -69,6 +70,10 @@ pub use usage::UsageSnapshot;
 pub use widgets::{
     empty_state_tiles, BadgeSpec, ButtonKind, ButtonSpec, EmptyStateSpec, ListRowSpec, TabSpec,
     Tone,
+};
+pub use workbench::{
+    activity_items, default_browser_candidates, detect_browsers, filter_files, join_project_path,
+    merge_mcp, preferred_browser, ActivityItem,
 };
 pub use workspace::{
     ChatMessage, CheckpointRow, ChromeLayout, CoreRow, InspectorTab, LeftSection, McpLife, McpRow,

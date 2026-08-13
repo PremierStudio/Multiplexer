@@ -53,11 +53,16 @@ pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
             ),
         ],
         InspectorTab::Terminal | InspectorTab::Skills => Vec::new(),
-        InspectorTab::Files => vec![button(
-            "Mention",
-            "@ path into composer",
-            ClientAction::InsertFileMention,
-        )],
+        InspectorTab::Files => vec![
+            button("Reload", "rescan project tree", ClientAction::RefreshFiles),
+            button("Reveal", "copy absolute path", ClientAction::RevealFile),
+            button("Open", "open in system app", ClientAction::OpenExternal),
+            button(
+                "Mention",
+                "@ path into composer",
+                ClientAction::InsertFileMention,
+            ),
+        ],
         InspectorTab::Activity => Vec::new(),
         InspectorTab::Agents => Vec::new(),
         InspectorTab::Diff => vec![

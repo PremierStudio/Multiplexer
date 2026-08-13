@@ -60,6 +60,9 @@ pub enum ClientAction {
     ReloadDiffs,
     RunGitStatus,
     DismissToast,
+    RefreshFiles,
+    RevealFile,
+    OpenExternal,
 }
 
 /// Apply a workspace-only layout action.
@@ -258,7 +261,10 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
         | ClientAction::OpenBrowser
         | ClientAction::CopySession
         | ClientAction::ReloadDiffs
-        | ClientAction::RunGitStatus => false,
+        | ClientAction::RunGitStatus
+        | ClientAction::RefreshFiles
+        | ClientAction::RevealFile
+        | ClientAction::OpenExternal => false,
     }
 }
 
@@ -270,7 +276,7 @@ mod tests {
         Workspace::new("p", "m")
     }
 
-    fn host_noops() -> [ClientAction; 18] {
+    fn host_noops() -> [ClientAction; 21] {
         [
             ClientAction::Send,
             ClientAction::Interrupt,
@@ -290,6 +296,9 @@ mod tests {
             ClientAction::CopySession,
             ClientAction::ReloadDiffs,
             ClientAction::RunGitStatus,
+            ClientAction::RefreshFiles,
+            ClientAction::RevealFile,
+            ClientAction::OpenExternal,
         ]
     }
 
