@@ -52,8 +52,8 @@ use multiplexer_shell::{
     TermLineKind, TuiLife, Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
 };
 use multiplexer_terminal::{
-    pty_grid_from_px, pty_input, pty_paste_bytes, visible_pty_text, EmbeddedSession,
-    ProcessCapture, TerminalSpec,
+    pty_grid_from_px, pty_input, pty_paste_bytes, EmbeddedSession, ProcessCapture, PtyFrame,
+    TerminalSpec,
 };
 use multiplexer_wire::codec::{decode_frame, encode_frame};
 use multiplexer_wire::jsonrpc::{Id, Message, Request};
@@ -111,6 +111,7 @@ pub(crate) struct ShellView {
     notice_born: Vec<(u64, Instant)>,
     capture: Option<ProcessCapture>,
     embedded: HashMap<String, EmbeddedSession>,
+    frames: HashMap<String, PtyFrame>,
     pending_diff: Option<(String, Receiver<CommandResult>)>,
     turn_started: Option<Instant>,
 }
@@ -210,6 +211,7 @@ impl ShellView {
             notice_born: Vec::new(),
             capture: None,
             embedded: HashMap::new(),
+            frames: HashMap::new(),
             pending_diff: None,
             turn_started: None,
         };
@@ -396,6 +398,7 @@ impl ShellView {
             if let Some(mut dead) = self.embedded.remove(&id) {
                 let _ = dead.kill();
             }
+            self.frames.remove(&id);
         }
         let target = embed_grok();
         self.start_embedded_for(&id, &target.program, &[], &target.label);
@@ -409,6 +412,8 @@ impl ShellView {
             Ok(session) => {
                 let pid = session.pid();
                 self.embedded.insert(thread_id.to_owned(), session);
+                self.frames
+                    .insert(thread_id.to_owned(), PtyFrame::new(cols, rows));
                 if let Some(t) = self.workspace.selected_thread_mut() {
                     t.tui.mark_running(pid, program, embed_surface(label));
                     t.tui.scrollback.clear();
@@ -447,6 +452,13 @@ impl ShellView {
                 let _ = session.resize(cols, rows);
             }
         }
+        if let Some(id) = self.selected_thread_id() {
+            if let Some(frame) = self.frames.get_mut(&id) {
+                if frame.size() != (cols, rows) {
+                    frame.resize(cols, rows);
+                }
+            }
+        }
     }
 
     fn stop_grok_tui(&mut self) {
@@ -454,6 +466,7 @@ impl ShellView {
             if let Some(mut session) = self.embedded.remove(&id) {
                 let _ = session.kill();
             }
+            self.frames.remove(&id);
         }
         if let Some(mut child) = self.grok_tui.take() {
             let _ = child.kill();
@@ -660,6 +673,7 @@ impl ShellView {
                 if let Some(mut session) = self.embedded.remove(&id) {
                     let _ = session.kill();
                 }
+                self.frames.remove(&id);
             }
         }
         match multiplexer_shell::host_call(action, &self.action_ctx()) {
@@ -1652,15 +1666,32 @@ impl ShellView {
                 );
             }
         }
-        if let Some(session) = self.selected_session() {
-            let chunk = session.try_read_str();
-            let dead = !session.is_alive();
-            if !chunk.is_empty() {
-                let text = visible_pty_text(&chunk);
-                if let Some(t) = self.workspace.selected_thread_mut() {
-                    t.tui.push_output(&text);
+        if let Some(id) = self.selected_thread_id() {
+            let (chunk, dead, size) = match self.embedded.get_mut(&id) {
+                Some(session) => {
+                    let chunk = session.try_read_str();
+                    let dead = !session.is_alive();
+                    (chunk, dead, session.size())
                 }
-                self.workspace.grok_tui.push_output(&text);
+                None => (String::new(), false, (80, 24)),
+            };
+            if !chunk.is_empty() {
+                let (cols, rows) = size;
+                let frame = self
+                    .frames
+                    .entry(id.clone())
+                    .or_insert_with(|| PtyFrame::new(cols, rows));
+                if frame.size() != (cols, rows) {
+                    frame.resize(cols, rows);
+                }
+                frame.feed(&chunk);
+                let text = frame.display();
+                if !text.is_empty() {
+                    if let Some(t) = self.workspace.selected_thread_mut() {
+                        t.tui.set_output(&text);
+                    }
+                    self.workspace.grok_tui.set_output(&text);
+                }
             }
             if dead {
                 if let Some(t) = self.workspace.selected_thread_mut() {
@@ -3546,6 +3577,22 @@ impl ShellView {
             .selected_thread()
             .map(|t| t.tui.note.clone())
             .unwrap_or_default();
+        let lines: Vec<String> = if failed {
+            vec![note]
+        } else if scrollback.is_empty() {
+            vec!["starting grok…".to_owned()]
+        } else {
+            scrollback
+                .lines()
+                .map(|line| {
+                    if line.is_empty() {
+                        " ".to_owned()
+                    } else {
+                        line.to_owned()
+                    }
+                })
+                .collect()
+        };
         div()
             .id("grok-tui-host")
             .flex_1()
@@ -3557,8 +3604,8 @@ impl ShellView {
                     .id("tui-scroll")
                     .flex_1()
                     .min_h_0()
-                    .px_4()
-                    .py_3()
+                    .px_3()
+                    .py_2()
                     .overflow_y_scroll()
                     .cursor_pointer()
                     .on_mouse_down(
@@ -3569,14 +3616,13 @@ impl ShellView {
                         }),
                     )
                     .font(font(MONO_FONT))
+                    .text_size(Theme::text_ui())
                     .text_color(Theme::text())
-                    .child(if failed {
-                        note
-                    } else if scrollback.is_empty() {
-                        "starting grok…".to_owned()
-                    } else {
-                        scrollback
-                    }),
+                    .children(
+                        lines
+                            .into_iter()
+                            .map(|line| div().whitespace_nowrap().child(line)),
+                    ),
             )
             .into_any()
     }

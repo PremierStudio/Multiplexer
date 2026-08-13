@@ -78,6 +78,13 @@ impl GrokTuiHost {
         self.scrollback = keep_tail(&self.scrollback, CAP);
     }
 
+    /// Replace the painted frame. Used for last-frame PTY text so a
+    /// grok pager redraw does not append leftover ASCII.
+    pub fn set_output(&mut self, text: &str) {
+        const CAP: usize = 64 * 1024;
+        self.scrollback = keep_tail(text, CAP);
+    }
+
     pub fn mark_running(
         &mut self,
         pid: Option<u32>,
@@ -160,6 +167,18 @@ mod tests {
         assert!(!host.summary().contains("in-pane pager"));
         host.push_output("hello from grok\n");
         assert!(host.scrollback.contains("hello from grok"));
+        host.set_output("frame one");
+        assert_eq!(host.scrollback, "frame one");
+        assert!(!host.scrollback.contains("hello from grok"));
+        host.set_output("frame two");
+        assert_eq!(host.scrollback, "frame two");
+        assert_ne!(host.scrollback, "frame oneframe two");
+        let huge = format!("{}TAIL", "⠀".repeat(22_000));
+        host.set_output(&huge);
+        assert!(host.scrollback.ends_with("TAIL"));
+        assert!(host.scrollback.len() > 2000);
+        assert!(host.scrollback.len() <= 64 * 1024);
+        assert!(host.scrollback.is_char_boundary(0));
 
         host.mark_exited();
         assert_eq!(host.life, TuiLife::Exited);
