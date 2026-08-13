@@ -15,7 +15,7 @@ use gpui::{
     KeyDownEvent, MouseButton, MouseMoveEvent, SharedString, Window,
 };
 use inspector::tab_buttons;
-use multiplexer_checkpoint::CheckpointStore;
+use multiplexer_checkpoint::{HiddenGitStore, ProcessGitExec};
 use multiplexer_client::{
     list_project_tree, spawn_command, spawn_grok_tui, spawn_grok_turn, windows_cmd, CommandResult,
     ListOptions, TuiLaunch, TurnRequest, TurnResult,
@@ -155,12 +155,22 @@ impl ShellView {
                 .map(|r| format!("{} [{}]", r.name, r.source))
                 .collect(),
         );
-        let mut store = CheckpointStore::new();
-        let start = store.create("local", "start");
-        workspace.checkpoints.push(CheckpointRow {
-            id: start.id.to_string(),
-            label: start.label,
-        });
+        let mut store = HiddenGitStore::new(ProcessGitExec::new(), cwd.clone());
+        match store.create("local", "start") {
+            Ok(start) => {
+                workspace.git_checkpoints = true;
+                workspace.checkpoints.push(CheckpointRow {
+                    id: start.id.to_string(),
+                    label: start.label,
+                });
+            }
+            Err(err) => {
+                workspace.push_notice(
+                    NoticeKind::Warn,
+                    format!("hidden-git start snapshot skipped: {err}"),
+                );
+            }
+        }
         let server = Server::with_local();
         server.install_checkpoints(store);
         let bindings = workspace.settings.binding_table();
@@ -458,6 +468,7 @@ impl ShellView {
             }
         } else if let Some(cid) = id.strip_prefix("point:") {
             self.workspace.select_checkpoint(Some(cid.to_owned()));
+            self.load_checkpoint_diff(cid);
         } else if let Some(aid) = id.strip_prefix("agent:") {
             if let Some(i) = self.workspace.threads.iter().position(|t| t.id == aid) {
                 let _ = self.workspace.select(i);
@@ -1108,10 +1119,15 @@ impl ShellView {
             );
             return;
         }
-        if let Some((id, label)) = checkpoint_from(&frames) {
+        if let Some((id, label, sha)) = checkpoint_from(&frames) {
             self.workspace.create_local_checkpoint(id.clone(), label);
-            self.workspace.select_checkpoint(Some(id));
-            self.term_meta("checkpoint created");
+            self.workspace.select_checkpoint(Some(id.clone()));
+            self.workspace.git_checkpoints = true;
+            if sha.is_empty() {
+                self.term_meta("checkpoint created (no git sha)");
+            } else {
+                self.term_meta(&format!("checkpoint {id} sha {sha}"));
+            }
         }
         self.refresh_checkpoints();
     }
@@ -1132,11 +1148,40 @@ impl ShellView {
             return;
         }
         self.workspace.select_checkpoint(Some(id.clone()));
-        self.workspace.push_notice(
-            NoticeKind::Info,
-            format!("pointer set to {id}; files unchanged"),
-        );
+        let restored = revert_restored(&frames);
+        if restored {
+            self.workspace.git_checkpoints = true;
+            self.workspace
+                .push_notice(NoticeKind::Good, format!("restored working tree to {id}"));
+            self.reload_files();
+            self.reload_diffs();
+        } else {
+            self.workspace.push_notice(
+                NoticeKind::Info,
+                format!("pointer set to {id}; files unchanged"),
+            );
+        }
         self.refresh_checkpoints();
+    }
+
+    fn load_checkpoint_diff(&mut self, id: &str) {
+        let frames = self.server.handle_frame(&rpc(
+            "cpd",
+            methods::CHECKPOINT_DIFF,
+            json!({ "checkpoint_id": id }),
+        ));
+        if let Some(err) = first_error(&frames) {
+            self.workspace
+                .push_notice(NoticeKind::Warn, format!("checkpoint.diff: {err}"));
+            return;
+        }
+        if let Some(text) = checkpoint_diff_text(&frames) {
+            self.workspace.diff_text = cap_text(&text, DIFF_TEXT_CAP);
+            if !text.is_empty() {
+                self.workspace
+                    .push_notice(NoticeKind::Info, format!("diff vs {id}"));
+            }
+        }
     }
 
     fn respond_approval(&mut self, decision: &str) {
@@ -3949,7 +3994,7 @@ fn checkpoints_from(frames: &[String]) -> Option<Vec<CheckpointRow>> {
     None
 }
 
-fn checkpoint_from(frames: &[String]) -> Option<(String, String)> {
+fn checkpoint_from(frames: &[String]) -> Option<(String, String, String)> {
     for f in frames {
         if let Ok(Message::Response(r)) = decode_frame(f) {
             let id = r.result.get("id").and_then(Value::as_str)?;
@@ -3958,7 +4003,39 @@ fn checkpoint_from(frames: &[String]) -> Option<(String, String)> {
                 .get("label")
                 .and_then(Value::as_str)
                 .unwrap_or("manual");
-            return Some((id.to_owned(), label.to_owned()));
+            let sha = r
+                .result
+                .get("sha")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            return Some((id.to_owned(), label.to_owned(), sha));
+        }
+    }
+    None
+}
+
+fn revert_restored(frames: &[String]) -> bool {
+    for f in frames {
+        if let Ok(Message::Response(r)) = decode_frame(f) {
+            return r
+                .result
+                .get("restored")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+        }
+    }
+    false
+}
+
+fn checkpoint_diff_text(frames: &[String]) -> Option<String> {
+    for f in frames {
+        if let Ok(Message::Response(r)) = decode_frame(f) {
+            return r
+                .result
+                .get("diff")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
         }
     }
     None

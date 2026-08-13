@@ -164,7 +164,7 @@ pub fn default_items() -> Vec<PaletteItem> {
         },
         PaletteItem {
             id: "restore-checkpoint",
-            label: "Select checkpoint pointer",
+            label: "Restore files to checkpoint",
             hint: "",
             action: ClientAction::RestoreCheckpoint,
         },

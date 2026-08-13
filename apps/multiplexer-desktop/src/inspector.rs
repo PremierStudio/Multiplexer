@@ -39,8 +39,8 @@ pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
         InspectorTab::Checkpoints => vec![
             button("New", "Create a checkpoint", ClientAction::CreateCheckpoint),
             button(
-                "Set pointer",
-                "Move pointer only, files unchanged",
+                "Restore files",
+                "Hard-reset the worktree to the hidden git ref",
                 ClientAction::RestoreCheckpoint,
             ),
         ],
@@ -163,7 +163,7 @@ mod tests {
             .any(|b| b.label == "New" && b.action == ClientAction::CreateCheckpoint));
         assert!(buttons
             .iter()
-            .any(|b| b.label == "Set pointer" && b.action == ClientAction::RestoreCheckpoint));
+            .any(|b| b.label == "Restore files" && b.action == ClientAction::RestoreCheckpoint));
     }
 
     #[test]

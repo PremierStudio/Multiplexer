@@ -1,6 +1,9 @@
 //! Optional checkpoint catalog used by `checkpoint.list` / `checkpoint.create` / `checkpoint.revert`.
 
-use multiplexer_checkpoint::{Checkpoint, CheckpointError, CheckpointId, CheckpointStore};
+use multiplexer_checkpoint::{
+    Checkpoint, CheckpointDiff, CheckpointError, CheckpointId, CheckpointStore, HiddenGitStore,
+    RevertOutcome,
+};
 use multiplexer_wire::error::AppErrorKind;
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +15,12 @@ pub struct CheckpointInfo {
     pub id: String,
     pub label: String,
     pub seq: u64,
+    #[serde(default)]
+    pub sha: String,
+    #[serde(default)]
+    pub ref_name: String,
+    #[serde(default)]
+    pub restored: bool,
 }
 
 impl From<Checkpoint> for CheckpointInfo {
@@ -20,7 +29,18 @@ impl From<Checkpoint> for CheckpointInfo {
             id: checkpoint.id.to_string(),
             label: checkpoint.label,
             seq: checkpoint.seq,
+            sha: checkpoint.sha,
+            ref_name: checkpoint.ref_name,
+            restored: false,
         }
+    }
+}
+
+impl From<RevertOutcome> for CheckpointInfo {
+    fn from(out: RevertOutcome) -> Self {
+        let mut info = CheckpointInfo::from(out.checkpoint);
+        info.restored = out.files_restored;
+        info
     }
 }
 
@@ -29,6 +49,7 @@ pub trait CheckpointCatalog: Send {
     fn list(&self, session_id: &str) -> Vec<CheckpointInfo>;
     fn create(&mut self, session_id: &str, label: &str) -> Result<CheckpointInfo, BackendError>;
     fn revert(&mut self, checkpoint_id: &str) -> Result<CheckpointInfo, BackendError>;
+    fn diff(&self, checkpoint_id: &str) -> Result<CheckpointDiff, BackendError>;
 }
 
 impl CheckpointCatalog for CheckpointStore {
@@ -48,12 +69,53 @@ impl CheckpointCatalog for CheckpointStore {
     fn revert(&mut self, checkpoint_id: &str) -> Result<CheckpointInfo, BackendError> {
         CheckpointStore::revert(self, &CheckpointId::from(checkpoint_id))
             .map(CheckpointInfo::from)
-            .map_err(|err| match err {
-                CheckpointError::NotFound(id) => BackendError::Provider {
-                    kind: AppErrorKind::NotFound,
-                    message: format!("checkpoint not found: {id}"),
-                },
-            })
+            .map_err(map_ckpt_err)
+    }
+
+    fn diff(&self, checkpoint_id: &str) -> Result<CheckpointDiff, BackendError> {
+        let _ = checkpoint_id;
+        Err(BackendError::Provider {
+            kind: AppErrorKind::Unsupported,
+            message: "checkpoint.diff needs hidden-git (RAM catalog has no tree)".into(),
+        })
+    }
+}
+
+impl<R: multiplexer_checkpoint::GitExec + Send> CheckpointCatalog for HiddenGitStore<R> {
+    fn list(&self, session_id: &str) -> Vec<CheckpointInfo> {
+        HiddenGitStore::list(self, session_id)
+            .into_iter()
+            .map(CheckpointInfo::from)
+            .collect()
+    }
+
+    fn create(&mut self, session_id: &str, label: &str) -> Result<CheckpointInfo, BackendError> {
+        HiddenGitStore::create(self, session_id, label)
+            .map(CheckpointInfo::from)
+            .map_err(map_ckpt_err)
+    }
+
+    fn revert(&mut self, checkpoint_id: &str) -> Result<CheckpointInfo, BackendError> {
+        HiddenGitStore::revert(self, &CheckpointId::from(checkpoint_id))
+            .map(CheckpointInfo::from)
+            .map_err(map_ckpt_err)
+    }
+
+    fn diff(&self, checkpoint_id: &str) -> Result<CheckpointDiff, BackendError> {
+        HiddenGitStore::diff(self, &CheckpointId::from(checkpoint_id)).map_err(map_ckpt_err)
+    }
+}
+
+fn map_ckpt_err(err: CheckpointError) -> BackendError {
+    match err {
+        CheckpointError::NotFound(id) => BackendError::Provider {
+            kind: AppErrorKind::NotFound,
+            message: format!("checkpoint not found: {id}"),
+        },
+        CheckpointError::Git(message) => BackendError::Provider {
+            kind: AppErrorKind::ProviderError,
+            message,
+        },
     }
 }
 
@@ -68,10 +130,14 @@ mod tests {
             session_id: "sess".into(),
             label: "turn".into(),
             seq: 3,
+            sha: "abc".into(),
+            ref_name: "refs/multiplexer/checkpoints/cp-3".into(),
         });
         assert_eq!(info.id, "cp-3");
         assert_eq!(info.label, "turn");
         assert_eq!(info.seq, 3);
+        assert_eq!(info.sha, "abc");
+        assert!(!info.restored);
     }
 
     #[test]
@@ -89,11 +155,13 @@ mod tests {
                     id: "cp-1".into(),
                     label: "start".into(),
                     seq: 1,
+                    ..CheckpointInfo::default()
                 },
                 CheckpointInfo {
                     id: "cp-3".into(),
                     label: "turn".into(),
                     seq: 2,
+                    ..CheckpointInfo::default()
                 },
             ]
         );
@@ -103,6 +171,7 @@ mod tests {
                 id: "cp-2".into(),
                 label: "other".into(),
                 seq: 1,
+                ..CheckpointInfo::default()
             }]
         );
         assert!(CheckpointCatalog::list(&store, "missing").is_empty());
@@ -118,6 +187,7 @@ mod tests {
                 id: "cp-1".into(),
                 label: "a".into(),
                 seq: 1,
+                ..CheckpointInfo::default()
             }
         );
         assert_eq!(
@@ -132,6 +202,7 @@ mod tests {
                 id: "cp-2".into(),
                 label: "b".into(),
                 seq: 2,
+                ..CheckpointInfo::default()
             }
         );
         assert_eq!(
@@ -156,6 +227,7 @@ mod tests {
                 id: "cp-1".into(),
                 label: "a".into(),
                 seq: 1,
+                ..CheckpointInfo::default()
             }
         );
         assert_eq!(

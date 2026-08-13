@@ -58,7 +58,11 @@ impl
         server.install_git(multiplexer_worktree::WorktreeService::new(
             multiplexer_worktree::ProcessGit::new(),
         ));
-        server.install_checkpoints(multiplexer_checkpoint::CheckpointStore::new());
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        server.install_checkpoints(multiplexer_checkpoint::HiddenGitStore::new(
+            multiplexer_checkpoint::ProcessGitExec::new(),
+            cwd,
+        ));
         server.install_terminals(multiplexer_terminal::TerminalHub::new());
         server
     }
@@ -139,6 +143,7 @@ impl<B: SessionBackend> Server<B> {
             methods::CHECKPOINT_LIST => self.checkpoint_list(req),
             methods::CHECKPOINT_CREATE => self.checkpoint_create(req),
             methods::CHECKPOINT_REVERT => self.checkpoint_revert(req),
+            methods::CHECKPOINT_DIFF => self.checkpoint_diff(req),
             methods::TERMINAL_CREATE => crate::terms::create(&self.terminals, req),
             methods::TERMINAL_LIST => crate::terms::list(&self.terminals, req),
             methods::TERMINAL_INPUT => crate::terms::input(&self.terminals, req),
@@ -302,6 +307,35 @@ impl<B: SessionBackend> Server<B> {
                 Ok(checkpoint) => vec![ok_frame(
                     req.id,
                     serde_json::to_value(checkpoint).expect("checkpoint encodes"),
+                )],
+                Err(e) => vec![error_frame(req.id, backend_rpc(e))],
+            },
+            None => vec![error_frame(
+                req.id,
+                RpcError::app(
+                    AppErrorKind::Unsupported,
+                    "checkpoint catalog not configured",
+                ),
+            )],
+        }
+    }
+
+    fn checkpoint_diff(&self, req: Request) -> Vec<String> {
+        let checkpoint_id = match parse_checkpoint_id(&req.params) {
+            Ok(id) => id,
+            Err(e) => return vec![error_frame(req.id, e)],
+        };
+        let store = self.checkpoints.lock().unwrap_or_else(|p| p.into_inner());
+        match store.as_ref() {
+            Some(catalog) => match catalog.diff(&checkpoint_id) {
+                Ok(diff) => vec![ok_frame(
+                    req.id,
+                    json!({
+                        "checkpoint_id": diff.checkpoint_id,
+                        "sha": diff.sha,
+                        "diff": diff.text,
+                        "files": diff.files,
+                    }),
                 )],
                 Err(e) => vec![error_frame(req.id, backend_rpc(e))],
             },

@@ -180,6 +180,20 @@ fn create_after_revert_continues_global_ids_and_session_seq() {
 }
 
 #[test]
+fn peek_next_and_attach_git() {
+    let mut store = CheckpointStore::new();
+    assert_eq!(store.peek_next_id().as_str(), "cp-1");
+    let a = store.create("s", "a");
+    assert_eq!(store.peek_next_id().as_str(), "cp-2");
+    assert!(a.sha.is_empty());
+    assert!(store.attach_git(&a.id, "deadbeef", "refs/multiplexer/checkpoints/cp-1"));
+    let got = store.get(&a.id).unwrap();
+    assert_eq!(got.sha, "deadbeef");
+    assert!(got.ref_name.contains("cp-1"));
+    assert!(!store.attach_git(&CheckpointId::from("cp-9"), "x", "y"));
+}
+
+#[test]
 fn empty_label_and_session_are_stored() {
     let mut store = CheckpointStore::new();
     let cp = store.create("", "");

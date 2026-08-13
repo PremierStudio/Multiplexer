@@ -410,6 +410,7 @@ pub struct Workspace {
     pub focus_region: FocusRegion,
     pub context_menu: Option<crate::menus::OpenMenu>,
     pub first_run_open: bool,
+    pub git_checkpoints: bool,
     next_id: u64,
     next_notice: u64,
     focus_snapshot: Option<ChromeSnapshot>,
@@ -520,6 +521,7 @@ impl Workspace {
             focus_region: FocusRegion::Center,
             context_menu: None,
             first_run_open: false,
+            git_checkpoints: false,
             next_id: 1,
             next_notice: 1,
             focus_snapshot: None,
@@ -1029,11 +1031,15 @@ impl Workspace {
     }
 
     pub fn checkpoint_detail(&self) -> String {
+        let banner = if self.git_checkpoints {
+            "Hidden git refs. Revert restores the working tree."
+        } else {
+            "Pointer only. Files unchanged."
+        };
         if self.checkpoints.is_empty() {
-            return "Pointer only. Files unchanged.\n\nNo pointers yet. Create adds a RAM pointer."
-                .to_owned();
+            return format!("{banner}\n\nNo checkpoints yet.");
         }
-        let mut out = String::from("Pointer only. Files unchanged.\n\n");
+        let mut out = format!("{banner}\n\n");
         out.push_str(
             &self
                 .checkpoints
@@ -2408,6 +2414,16 @@ mod tests {
         assert!(detail.contains("Pointer only"));
         assert!(detail.contains("Files unchanged") || detail.contains("not snapshotted"));
         assert!(!detail.contains("session runtime"));
+        let mut git = Workspace::new("p", "m");
+        git.git_checkpoints = true;
+        git.checkpoints.push(crate::workspace::CheckpointRow {
+            id: "cp-1".into(),
+            label: "start".into(),
+        });
+        let hidden = git.checkpoint_detail();
+        assert!(hidden.contains("Hidden git refs"));
+        assert!(hidden.contains("restores"));
+        assert!(!hidden.contains("Pointer only"));
     }
 
     #[test]

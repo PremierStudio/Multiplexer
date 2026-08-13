@@ -1,12 +1,14 @@
-//! In-memory hidden-ref checkpoint store (plan/07, Phase 1.8 stub).
-//!
-//! Ids stand in for `refs/multiplexer/...` until a real git backend lands.
-//! This crate does not spawn git or touch the filesystem.
+//! Hidden-git checkpoint store: RAM catalog plus `refs/multiplexer/checkpoints/*`.
 
 mod error;
+mod hidden;
 mod id;
 mod store;
 
 pub use error::CheckpointError;
+pub use hidden::{
+    ref_for, CheckpointDiff, FakeGitExec, GitExec, GitOut, HiddenGitStore, ProcessGitExec,
+    RevertOutcome,
+};
 pub use id::CheckpointId;
 pub use store::{Checkpoint, CheckpointStore};

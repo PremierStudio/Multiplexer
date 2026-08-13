@@ -12,6 +12,10 @@ pub struct Checkpoint {
     pub label: String,
     /// 1-based creation order within [`Self::session_id`].
     pub seq: u64,
+    /// Hidden-ref target. Empty when this row is a RAM pointer only.
+    pub sha: String,
+    /// `refs/multiplexer/checkpoints/<id>`. Empty for RAM pointers.
+    pub ref_name: String,
 }
 
 /// Session-scoped list of checkpoints plus a current pointer per session.
@@ -55,6 +59,8 @@ impl CheckpointStore {
             session_id: session_id.to_owned(),
             label: label.to_owned(),
             seq,
+            sha: String::new(),
+            ref_name: String::new(),
         };
         self.checkpoints.push(checkpoint.clone());
         self.current.insert(session_id.to_owned(), id);
@@ -91,5 +97,27 @@ impl CheckpointStore {
     /// Current pointer for `session_id`, if any checkpoint exists (or was reverted to).
     pub fn current(&self, session_id: &str) -> Option<CheckpointId> {
         self.current.get(session_id).cloned()
+    }
+
+    /// Next id that [`Self::create`] will assign (`cp-N`).
+    pub fn peek_next_id(&self) -> CheckpointId {
+        CheckpointId(format!("cp-{}", self.next))
+    }
+
+    /// Record a hidden-ref SHA after a successful git capture.
+    pub fn attach_git(
+        &mut self,
+        id: &CheckpointId,
+        sha: impl Into<String>,
+        ref_name: impl Into<String>,
+    ) -> bool {
+        match self.checkpoints.iter_mut().find(|cp| &cp.id == id) {
+            Some(cp) => {
+                cp.sha = sha.into();
+                cp.ref_name = ref_name.into();
+                true
+            }
+            None => false,
+        }
     }
 }

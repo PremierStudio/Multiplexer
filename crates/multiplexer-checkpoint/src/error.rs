@@ -8,4 +8,7 @@ pub enum CheckpointError {
     /// No checkpoint exists for the given id.
     #[error("not found: {0}")]
     NotFound(CheckpointId),
+    /// Git capture, restore, or diff failed.
+    #[error("{0}")]
+    Git(String),
 }

@@ -190,6 +190,7 @@ fn catalog_create_returns_row() {
             id: "cp-1".into(),
             label: "manual".into(),
             seq: 1,
+            ..CheckpointInfo::default()
         }
     );
     assert_eq!(CheckpointCatalog::list(&store, "sess-a"), vec![row]);
@@ -311,4 +312,17 @@ fn install_replaces_previous_store() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["id"], "cp-1");
     assert_eq!(rows[0]["label"], "new");
+}
+
+#[test]
+fn ram_catalog_diff_is_unsupported() {
+    let server = Server::new();
+    server.install_checkpoints(CheckpointStore::new());
+    let frames = server.handle_frame(&rpc(
+        "d1",
+        methods::CHECKPOINT_DIFF,
+        json!({ "checkpoint_id": "cp-1" }),
+    ));
+    let (_, err) = first_error(&frames);
+    assert_eq!(err.code, AppErrorKind::Unsupported.code());
 }
