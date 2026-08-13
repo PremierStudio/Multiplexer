@@ -1,6 +1,7 @@
 //! Multiplexer desktop: glass chrome, live grok -p, working inspector and terminal.
 
 mod article;
+mod assets;
 mod controls;
 mod inspector;
 mod rows;
@@ -12,8 +13,9 @@ use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use article::render_article;
+use assets::{DesktopAssets, MONO_FONT, UI_FONT};
 use gpui::{
-    div, prelude::*, px, size, App, Application, Bounds, ClipboardItem, Context, CursorStyle,
+    div, font, prelude::*, px, size, App, Application, Bounds, ClipboardItem, Context, CursorStyle,
     KeyDownEvent, MouseButton, MouseMoveEvent, SharedString, Window,
 };
 use inspector::tab_buttons;
@@ -61,8 +63,8 @@ use rows::{inspector_row_el, list_row};
 use serde_json::{json, Value};
 use theme::Theme;
 use widgets::{
-    chip, click_pill, empty_center, ghost_btn, glass_bar, glass_pane, icon_btn, primary_btn,
-    rail_icon,
+    chip, chrome_icon, click_pill, empty_center, ghost_btn, glass_bar, glass_pane, icon_btn,
+    primary_btn, rail_icon,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2105,6 +2107,7 @@ impl Render for ShellView {
             .size_full()
             .overflow_hidden()
             .bg(Theme::ink())
+            .font(font(UI_FONT))
             .text_color(Theme::text())
             .text_size(Theme::text_ui())
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
@@ -2200,7 +2203,7 @@ impl ShellView {
             .border_b_1()
             .overflow_hidden()
             .child(icon_btn(
-                ChromeGlyph::Layout.mark(),
+                ChromeGlyph::Layout,
                 if left_on { "Hide chats" } else { "Show chats" },
                 cx,
                 |this, cx| this.dispatch(ClientAction::ToggleLeft, cx),
@@ -2282,36 +2285,33 @@ impl ShellView {
                 )
             })
             .child(if self.workspace.busy {
-                icon_btn(ChromeGlyph::Stop.mark(), "Stop", cx, |this, cx| {
+                icon_btn(ChromeGlyph::Stop, "Stop", cx, |this, cx| {
                     this.interrupt();
                     cx.notify();
                 })
             } else {
-                icon_btn(ChromeGlyph::Play.mark(), "Run", cx, |this, cx| {
+                icon_btn(ChromeGlyph::Play, "Run", cx, |this, cx| {
                     this.dispatch(ClientAction::Send, cx);
                     cx.notify();
                 })
             })
+            .child(icon_btn(ChromeGlyph::Palette, "Palette", cx, |this, cx| {
+                this.dispatch(ClientAction::TogglePalette, cx)
+            }))
             .child(icon_btn(
-                ChromeGlyph::Palette.mark(),
-                "Palette",
-                cx,
-                |this, cx| this.dispatch(ClientAction::TogglePalette, cx),
-            ))
-            .child(icon_btn(
-                ChromeGlyph::Settings.mark(),
+                ChromeGlyph::Settings,
                 "Settings",
                 cx,
                 |this, cx| this.dispatch(ClientAction::ToggleSettings, cx),
             ))
             .child(icon_btn(
-                ChromeGlyph::Terminal.mark(),
+                ChromeGlyph::Terminal,
                 "Terminal",
                 cx,
                 |this, cx| this.dispatch(ClientAction::ToggleBottom, cx),
             ))
             .child(icon_btn(
-                if right_on { "▣" } else { "▢" },
+                ChromeGlyph::Layout,
                 if right_on {
                     "Hide inspector"
                 } else {
@@ -2347,7 +2347,7 @@ impl ShellView {
             .bg(Theme::ink())
             .children(LeftSection::all().into_iter().map(|s| {
                 let on = section == s;
-                rail_icon(s.glyph(), s.rail_label(), on, cx, move |this, cx| {
+                rail_icon(s.icon(), s.rail_label(), on, cx, move |this, cx| {
                     this.dispatch(ClientAction::SelectLeftSection(s), cx);
                 })
             }));
@@ -2397,17 +2397,12 @@ impl ShellView {
                                     this.dispatch(ClientAction::NewThread, cx);
                                 }),
                             )
-                            .child(ChromeGlyph::Plus.mark())
+                            .child(chrome_icon(ChromeGlyph::Plus, 14.0))
                             .child("New session"),
                     )
-                    .child(icon_btn(
-                        ChromeGlyph::Close.mark(),
-                        "Hide left",
-                        cx,
-                        |this, cx| {
-                            this.dispatch(ClientAction::HideLeft, cx);
-                        },
-                    )),
+                    .child(icon_btn(ChromeGlyph::Close, "Hide left", cx, |this, cx| {
+                        this.dispatch(ClientAction::HideLeft, cx);
+                    })),
             )
             .child(
                 div()
@@ -2637,7 +2632,7 @@ impl ShellView {
                 if rows.is_empty() {
                     vec![list_row(
                         "agent-none",
-                        ChromeGlyph::Agent.mark(),
+                        ChromeGlyph::Agent,
                         "No sessions",
                         "Local threads only",
                         "",
@@ -2653,7 +2648,7 @@ impl ShellView {
                             let idx = row.index;
                             list_row(
                                 format!("agent-{}", row.id),
-                                ChromeGlyph::Agent.mark(),
+                                ChromeGlyph::Agent,
                                 row.title,
                                 format!("{} · {} msgs", row.status.as_str(), row.messages),
                                 row.model,
@@ -2681,7 +2676,7 @@ impl ShellView {
                 if files.is_empty() {
                     vec![list_row(
                         "file-none",
-                        ChromeGlyph::Folder.mark(),
+                        ChromeGlyph::Folder,
                         "No files listed",
                         "Reload from the Files tab",
                         "",
@@ -2700,7 +2695,7 @@ impl ShellView {
                             let title = leaf_name(&p);
                             list_row(
                                 format!("file-{p}"),
-                                ChromeGlyph::Folder.mark(),
+                                ChromeGlyph::Folder,
                                 title,
                                 p.clone(),
                                 "",
@@ -2727,7 +2722,7 @@ impl ShellView {
                     let jump = item.id.clone();
                     list_row(
                         item.id.clone(),
-                        ChromeGlyph::Activity.mark(),
+                        ChromeGlyph::Activity,
                         item.title,
                         item.hint,
                         "",
@@ -2780,7 +2775,7 @@ impl ShellView {
             .children(InspectorTab::rail_order().into_iter().map(|t| {
                 let on = tab == t;
                 rail_icon(
-                    t.glyph(),
+                    t.icon(),
                     format!("rtab-{}", t.label()),
                     on,
                     cx,
@@ -2826,7 +2821,7 @@ impl ShellView {
                             .child(tab.label()),
                     )
                     .child(icon_btn(
-                        ChromeGlyph::Close.mark(),
+                        ChromeGlyph::Close,
                         "Hide right",
                         cx,
                         |this, cx| {
@@ -3376,7 +3371,7 @@ impl ShellView {
                                                             cx.notify();
                                                         }),
                                                     )
-                                                    .child(ChromeGlyph::Play.mark()),
+                                                    .child(chrome_icon(ChromeGlyph::Play, 14.0)),
                                             ),
                                     ),
                             ),
@@ -3464,6 +3459,7 @@ impl ShellView {
                                 cx.notify();
                             }),
                         )
+                        .font(font(MONO_FONT))
                         .text_color(Theme::text())
                         .child(if host.scrollback.is_empty() {
                             "starting…".to_owned()
@@ -3651,7 +3647,7 @@ impl ShellView {
                     .gap_2()
                     .child(div().flex_1().child(n.text))
                     .child(icon_btn(
-                        ChromeGlyph::Close.mark(),
+                        ChromeGlyph::Close,
                         "dismiss",
                         cx,
                         move |this, cx| {
@@ -4190,7 +4186,7 @@ impl ShellView {
                             .flex()
                             .justify_between()
                             .child("Keyboard")
-                            .child(icon_btn("×", "Close", cx, |this, cx| {
+                            .child(icon_btn(ChromeGlyph::Close, "Close", cx, |this, cx| {
                                 this.dispatch(ClientAction::ToggleHelp, cx);
                             })),
                     )
@@ -4675,12 +4671,15 @@ fn checkpoint_diff_text(frames: &[String]) -> Option<String> {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1360.0), px(860.0)), cx);
-        cx.open_window(Theme::window_options(bounds), |_, cx| {
-            cx.new(|_| ShellView::new())
-        })
-        .expect("open Multiplexer window");
-        cx.activate(true);
-    });
+    Application::new()
+        .with_assets(DesktopAssets)
+        .run(|cx: &mut App| {
+            let _ = cx.text_system().add_fonts(DesktopAssets::font_bytes());
+            let bounds = Bounds::centered(None, size(px(1360.0), px(860.0)), cx);
+            cx.open_window(Theme::window_options(bounds), |_, cx| {
+                cx.new(|_| ShellView::new())
+            })
+            .expect("open Multiplexer window");
+            cx.activate(true);
+        });
 }

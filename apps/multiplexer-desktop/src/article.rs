@@ -1,6 +1,8 @@
 //! GPUI projection of [`multiplexer_shell::parse_article`].
 
-use gpui::{div, prelude::*, px, SharedString};
+use gpui::{div, font, prelude::*, px, SharedString};
+
+use crate::assets::MONO_FONT;
 
 use crate::theme::Theme;
 use multiplexer_shell::{parse_article, parse_inlines, ArticleBlock, InlineSpan};
@@ -53,6 +55,7 @@ fn render_block(block: ArticleBlock) -> gpui::AnyElement {
             .py_2()
             .rounded_lg()
             .bg(Theme::raised())
+            .font(font(MONO_FONT))
             .text_size(Theme::text_caption())
             .text_color(Theme::muted())
             .child(if lang.is_empty() {
@@ -76,6 +79,7 @@ fn render_inlines(text: &str) -> gpui::Div {
                     .px_1()
                     .rounded_lg()
                     .bg(Theme::raised())
+                    .font(font(MONO_FONT))
                     .text_color(Theme::good())
                     .child(t)
                     .into_any(),

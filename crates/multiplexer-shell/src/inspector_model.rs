@@ -125,23 +125,23 @@ fn session_rows(ws: &Workspace) -> Vec<ListRowSpec> {
     };
     [
         ListRowSpec::new("session:project", "Project")
-            .with_icon(ChromeGlyph::Folder.mark())
+            .with_icon(ChromeGlyph::Folder.icon_file())
             .with_subtitle(&ws.project),
         ListRowSpec::new("session:model", "Model")
-            .with_icon(ChromeGlyph::Sparkle.mark())
+            .with_icon(ChromeGlyph::Sparkle.icon_file())
             .with_subtitle(&ws.model)
             .with_badge(BadgeSpec::new(Tone::Accent, ws.model.clone())),
         ListRowSpec::new("session:connection", "Connection")
-            .with_icon(ChromeGlyph::Activity.mark())
+            .with_icon(ChromeGlyph::Activity.icon_file())
             .with_subtitle(ws.connection.status_label()),
         ListRowSpec::new("session:id", "Session")
-            .with_icon(ChromeGlyph::Agent.mark())
+            .with_icon(ChromeGlyph::Agent.icon_file())
             .with_subtitle(sid),
         ListRowSpec::new("session:threads", "Threads")
-            .with_icon(ChromeGlyph::Chat.mark())
+            .with_icon(ChromeGlyph::Chat.icon_file())
             .with_meta(ws.threads.len().to_string()),
         ListRowSpec::new("session:turns", "Turns")
-            .with_icon(ChromeGlyph::Activity.mark())
+            .with_icon(ChromeGlyph::Activity.icon_file())
             .with_subtitle(format!("{} local", ws.usage_turns))
             .with_meta(format!("{} tok", ws.usage_tokens)),
     ]
@@ -152,9 +152,8 @@ fn session_rows(ws: &Workspace) -> Vec<ListRowSpec> {
 
 fn core_rows(ws: &Workspace) -> Vec<ListRowSpec> {
     if ws.cores.is_empty() {
-        return vec![
-            ListRowSpec::new("core:empty", "No core samples").with_icon(ChromeGlyph::Cpu.mark())
-        ];
+        return vec![ListRowSpec::new("core:empty", "No core samples")
+            .with_icon(ChromeGlyph::Cpu.icon_file())];
     }
     ws.cores
         .iter()
@@ -165,7 +164,7 @@ fn core_rows(ws: &Workspace) -> Vec<ListRowSpec> {
                 None
             };
             let mut row = ListRowSpec::new(format!("core:{}", c.index), format!("cpu{}", c.index))
-                .with_icon(ChromeGlyph::Cpu.mark())
+                .with_icon(ChromeGlyph::Cpu.icon_file())
                 .with_subtitle(format!("{:.1}%", c.usage))
                 .with_meta(crate::usage_bar(c.usage, 10));
             row.badge = badge;
@@ -178,7 +177,7 @@ fn mcp_rows(ws: &Workspace) -> Vec<ListRowSpec> {
     const SUPERVISED: &str = "inventory flag (no child)";
     if ws.mcp.is_empty() {
         return vec![ListRowSpec::new("mcp:empty", "No MCP servers")
-            .with_icon(ChromeGlyph::Plug.mark())
+            .with_icon(ChromeGlyph::Plug.icon_file())
             .with_subtitle(SUPERVISED)];
     }
     ws.mcp
@@ -187,7 +186,7 @@ fn mcp_rows(ws: &Workspace) -> Vec<ListRowSpec> {
             let icon = BrandIcon::from_name(&m.name)
                 .or_else(|| BrandIcon::from_name(&m.command))
                 .map(|b| b.slug().to_string())
-                .unwrap_or_else(|| ChromeGlyph::Plug.mark().to_string());
+                .unwrap_or_else(|| ChromeGlyph::Plug.icon_file().to_string());
             let tone = match m.state {
                 crate::workspace::McpLife::Ready => Tone::Neutral,
                 crate::workspace::McpLife::Crashed | crate::workspace::McpLife::Failed => {
@@ -208,15 +207,14 @@ fn mcp_rows(ws: &Workspace) -> Vec<ListRowSpec> {
 
 fn checkpoint_rows(ws: &Workspace) -> Vec<ListRowSpec> {
     if ws.checkpoints.is_empty() {
-        return vec![
-            ListRowSpec::new("point:empty", "No checkpoints").with_icon(ChromeGlyph::Flag.mark())
-        ];
+        return vec![ListRowSpec::new("point:empty", "No checkpoints")
+            .with_icon(ChromeGlyph::Flag.icon_file())];
     }
     ws.checkpoints
         .iter()
         .map(|c| {
             let mut row = ListRowSpec::new(format!("point:{}", c.id), c.label.clone())
-                .with_icon(ChromeGlyph::Flag.mark())
+                .with_icon(ChromeGlyph::Flag.icon_file())
                 .with_subtitle(c.id.clone());
             row.selected = ws.selected_checkpoint.as_deref() == Some(c.id.as_str());
             mark_expanded(row, ws)
@@ -231,7 +229,7 @@ fn git_rows(ws: &Workspace) -> Vec<ListRowSpec> {
         .enumerate()
         .map(|(i, path)| {
             let mut row = ListRowSpec::new(format!("git:wt:{i}"), path.clone())
-                .with_icon(ChromeGlyph::Git.mark());
+                .with_icon(ChromeGlyph::Git.icon_file());
             row.selected = ws.selected_worktree == Some(i);
             mark_expanded(row, ws)
         })
@@ -239,13 +237,15 @@ fn git_rows(ws: &Workspace) -> Vec<ListRowSpec> {
     if !ws.git_status.is_empty() {
         rows.push(mark_expanded(
             ListRowSpec::new("git:status", "git status")
-                .with_icon(ChromeGlyph::Diff.mark())
+                .with_icon(ChromeGlyph::Diff.icon_file())
                 .with_subtitle(ws.git_status.lines().next().unwrap_or("").to_owned()),
             ws,
         ));
     }
     if rows.is_empty() {
-        rows.push(ListRowSpec::new("git:empty", "No worktrees").with_icon(ChromeGlyph::Git.mark()));
+        rows.push(
+            ListRowSpec::new("git:empty", "No worktrees").with_icon(ChromeGlyph::Git.icon_file()),
+        );
     }
     rows
 }
@@ -260,7 +260,7 @@ fn term_rows(ws: &Workspace) -> Vec<ListRowSpec> {
         .map(|(i, line)| {
             mark_expanded(
                 ListRowSpec::new(format!("term:{i}"), line.clone())
-                    .with_icon(ChromeGlyph::Terminal.mark()),
+                    .with_icon(ChromeGlyph::Terminal.icon_file()),
                 ws,
             )
         })
@@ -269,7 +269,7 @@ fn term_rows(ws: &Workspace) -> Vec<ListRowSpec> {
         0,
         mark_expanded(
             ListRowSpec::new("term:draft", "Draft")
-                .with_icon(ChromeGlyph::Terminal.mark())
+                .with_icon(ChromeGlyph::Terminal.icon_file())
                 .with_subtitle(if ws.term_draft.is_empty() {
                     "(empty)".into()
                 } else {
@@ -284,7 +284,7 @@ fn term_rows(ws: &Workspace) -> Vec<ListRowSpec> {
 fn skill_rows(ws: &Workspace) -> Vec<ListRowSpec> {
     if ws.skill_items.is_empty() && ws.skills.is_empty() {
         return vec![ListRowSpec::new("skill:empty", "No skills")
-            .with_icon(ChromeGlyph::Sparkle.mark())
+            .with_icon(ChromeGlyph::Sparkle.icon_file())
             .with_subtitle(".grok/skills")];
     }
     if !ws.skill_items.is_empty() {
@@ -295,7 +295,7 @@ fn skill_rows(ws: &Workspace) -> Vec<ListRowSpec> {
                 let flag = if s.enabled { "on" } else { "off" };
                 mark_expanded(
                     ListRowSpec::new(format!("skill:{}", s.name), s.name.clone())
-                        .with_icon(ChromeGlyph::Sparkle.mark())
+                        .with_icon(ChromeGlyph::Sparkle.icon_file())
                         .with_subtitle(format!("{} · {flag} · not loaded into grok", s.source))
                         .with_badge(BadgeSpec::new(
                             if s.enabled { Tone::Good } else { Tone::Neutral },
@@ -311,7 +311,7 @@ fn skill_rows(ws: &Workspace) -> Vec<ListRowSpec> {
         .map(|s| {
             mark_expanded(
                 ListRowSpec::new(format!("skill:{s}"), s.clone())
-                    .with_icon(ChromeGlyph::Sparkle.mark()),
+                    .with_icon(ChromeGlyph::Sparkle.icon_file()),
                 ws,
             )
         })
@@ -321,16 +321,16 @@ fn skill_rows(ws: &Workspace) -> Vec<ListRowSpec> {
 fn file_rows(ws: &Workspace) -> Vec<ListRowSpec> {
     if ws.files.is_empty() {
         return vec![
-            ListRowSpec::new("file:empty", "No files").with_icon(ChromeGlyph::Folder.mark())
+            ListRowSpec::new("file:empty", "No files").with_icon(ChromeGlyph::Folder.icon_file())
         ];
     }
     ws.files_visible()
         .into_iter()
         .map(|p| {
             let icon = if p.ends_with('/') {
-                ChromeGlyph::Folder.mark()
+                ChromeGlyph::Folder.icon_file()
             } else {
-                ChromeGlyph::Diff.mark()
+                ChromeGlyph::Diff.icon_file()
             };
             let selected = ws.selected_file.as_deref() == Some(p.as_str());
             let leaf = crate::persist::leaf_name(&p);
@@ -346,9 +346,8 @@ fn file_rows(ws: &Workspace) -> Vec<ListRowSpec> {
 
 fn activity_rows(ws: &Workspace) -> Vec<ListRowSpec> {
     if ws.terminal_log.is_empty() {
-        return vec![
-            ListRowSpec::new("act:empty", "No activity").with_icon(ChromeGlyph::Activity.mark())
-        ];
+        return vec![ListRowSpec::new("act:empty", "No activity")
+            .with_icon(ChromeGlyph::Activity.icon_file())];
     }
     let mut rows: Vec<ListRowSpec> = ws
         .terminal_log
@@ -359,7 +358,7 @@ fn activity_rows(ws: &Workspace) -> Vec<ListRowSpec> {
         .map(|(i, line)| {
             mark_expanded(
                 ListRowSpec::new(format!("act:{i}"), line.clone())
-                    .with_icon(ChromeGlyph::Activity.mark()),
+                    .with_icon(ChromeGlyph::Activity.icon_file()),
                 ws,
             )
         })
@@ -368,7 +367,7 @@ fn activity_rows(ws: &Workspace) -> Vec<ListRowSpec> {
         0,
         mark_expanded(
             ListRowSpec::new("act:status", if ws.busy { "running" } else { "idle" })
-                .with_icon(ChromeGlyph::Activity.mark())
+                .with_icon(ChromeGlyph::Activity.icon_file())
                 .with_badge(BadgeSpec::new(
                     if ws.busy { Tone::Warn } else { Tone::Good },
                     if ws.busy { "busy" } else { "idle" },
@@ -382,7 +381,7 @@ fn activity_rows(ws: &Workspace) -> Vec<ListRowSpec> {
 fn agent_rows(ws: &Workspace) -> Vec<ListRowSpec> {
     if ws.threads.is_empty() {
         return vec![ListRowSpec::new("agent:empty", "No local threads")
-            .with_icon(ChromeGlyph::Agent.mark())];
+            .with_icon(ChromeGlyph::Agent.icon_file())];
     }
     ws.threads
         .iter()
@@ -392,7 +391,7 @@ fn agent_rows(ws: &Workspace) -> Vec<ListRowSpec> {
                 format!("agent:{}", t.id),
                 crate::persist::thread_leaf_title(&t.title, &t.id),
             )
-            .with_icon(ChromeGlyph::Agent.mark())
+            .with_icon(ChromeGlyph::Agent.icon_file())
             .with_subtitle(t.status.clone())
             .with_meta(format!("{} · {} msgs", t.model, t.messages.len()));
             row.selected = i == ws.selected;
@@ -404,14 +403,14 @@ fn agent_rows(ws: &Workspace) -> Vec<ListRowSpec> {
 fn diff_rows(ws: &Workspace) -> Vec<ListRowSpec> {
     if ws.diff_rows.is_empty() {
         return vec![ListRowSpec::new("diff:empty", "No working-tree diffs")
-            .with_icon(ChromeGlyph::Diff.mark())
+            .with_icon(ChromeGlyph::Diff.icon_file())
             .with_subtitle(ws.diff_sort.label())];
     }
     ws.visible_diffs()
         .into_iter()
         .map(|d| {
             let mut row = ListRowSpec::new(format!("diff:{}", d.path), d.path.clone())
-                .with_icon(ChromeGlyph::Diff.mark())
+                .with_icon(ChromeGlyph::Diff.icon_file())
                 .with_subtitle(d.status.clone());
             if d.last_turn {
                 row = row.with_badge(BadgeSpec::new(Tone::Accent, "turn"));
@@ -430,7 +429,7 @@ fn browser_rows(ws: &Workspace) -> Vec<ListRowSpec> {
     };
     vec![mark_expanded(
         ListRowSpec::new("browser:slot", "System browser")
-            .with_icon(ChromeGlyph::Browser.mark())
+            .with_icon(ChromeGlyph::Browser.icon_file())
             .with_subtitle(url)
             .with_meta("CDP later"),
         ws,

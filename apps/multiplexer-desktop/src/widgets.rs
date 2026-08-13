@@ -1,10 +1,30 @@
 //! Shared GPUI primitives. No raw `hsla(` in `main.rs`.
 
-use gpui::{div, prelude::*, px, Context, MouseButton, SharedString};
+use gpui::{div, prelude::*, px, svg, Context, MouseButton, SharedString};
 
 use crate::theme::Theme;
 use crate::ShellView;
-use multiplexer_shell::EmptyStateSpec;
+use multiplexer_shell::{ChromeGlyph, EmptyStateSpec};
+
+pub fn chrome_icon(glyph: ChromeGlyph, size: f32) -> gpui::AnyElement {
+    svg()
+        .path(glyph.icon_file())
+        .size(px(size))
+        .flex_shrink_0()
+        .into_any()
+}
+
+pub fn path_icon(path: &str, size: f32) -> gpui::AnyElement {
+    if path.ends_with(".svg") {
+        svg()
+            .path(SharedString::from(path.to_owned()))
+            .size(px(size))
+            .flex_shrink_0()
+            .into_any()
+    } else {
+        div().text_size(px(size)).child(path.to_owned()).into_any()
+    }
+}
 
 pub fn glass_pane() -> gpui::Div {
     div().bg(Theme::ink()).overflow_hidden().min_h_0()
@@ -130,7 +150,7 @@ pub fn primary_btn(
 }
 
 pub fn icon_btn(
-    mark: &'static str,
+    glyph: ChromeGlyph,
     hint: &'static str,
     cx: &mut Context<ShellView>,
     on_click: impl Fn(&mut ShellView, &mut Context<ShellView>) + 'static,
@@ -151,12 +171,12 @@ pub fn icon_btn(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| on_click(this, cx)),
         )
-        .child(mark)
+        .child(chrome_icon(glyph, 16.0))
         .into_any()
 }
 
 pub fn rail_icon(
-    mark: &'static str,
+    glyph: ChromeGlyph,
     hint: impl Into<String>,
     on: bool,
     cx: &mut Context<ShellView>,
@@ -183,7 +203,7 @@ pub fn rail_icon(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| on_click(this, cx)),
         )
-        .child(mark)
+        .child(chrome_icon(glyph, 16.0))
         .into_any()
 }
 

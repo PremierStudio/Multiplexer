@@ -76,19 +76,24 @@ impl InspectorTab {
     }
 
     pub fn glyph(self) -> &'static str {
+        self.icon().mark()
+    }
+
+    pub fn icon(self) -> crate::icons::ChromeGlyph {
+        use crate::icons::ChromeGlyph;
         match self {
-            Self::Session => "◎",
-            Self::Resources => "▣",
-            Self::Mcp => "⬡",
-            Self::Checkpoints => "⚑",
-            Self::Git => "⎇",
-            Self::Terminal => ">_",
-            Self::Skills => "✦",
-            Self::Files => "▤",
-            Self::Activity => "●",
-            Self::Agents => "⚡",
-            Self::Diff => "±",
-            Self::Browser => "⧉",
+            Self::Session => ChromeGlyph::Session,
+            Self::Resources => ChromeGlyph::Cpu,
+            Self::Mcp => ChromeGlyph::Plug,
+            Self::Checkpoints => ChromeGlyph::Flag,
+            Self::Git => ChromeGlyph::Git,
+            Self::Terminal => ChromeGlyph::Terminal,
+            Self::Skills => ChromeGlyph::Skills,
+            Self::Files => ChromeGlyph::Folder,
+            Self::Activity => ChromeGlyph::Activity,
+            Self::Agents => ChromeGlyph::Agent,
+            Self::Diff => ChromeGlyph::Diff,
+            Self::Browser => ChromeGlyph::Browser,
         }
     }
 
@@ -161,11 +166,16 @@ impl LeftSection {
     }
 
     pub fn glyph(self) -> &'static str {
+        self.icon().mark()
+    }
+
+    pub fn icon(self) -> crate::icons::ChromeGlyph {
+        use crate::icons::ChromeGlyph;
         match self {
-            Self::Threads => "☰",
-            Self::Agents => "⚡",
-            Self::Files => "▤",
-            Self::Activity => "●",
+            Self::Threads => ChromeGlyph::Chat,
+            Self::Agents => ChromeGlyph::Agent,
+            Self::Files => ChromeGlyph::Folder,
+            Self::Activity => ChromeGlyph::Activity,
         }
     }
 }

@@ -3,13 +3,14 @@
 use gpui::{div, prelude::*, px, Context, MouseButton, SharedString};
 
 use crate::theme::Theme;
+use crate::widgets::{chrome_icon, path_icon};
 use crate::ShellView;
-use multiplexer_shell::{ListRowSpec, Tone};
+use multiplexer_shell::{ChromeGlyph, ListRowSpec, Tone};
 
 #[allow(clippy::too_many_arguments)]
 pub fn list_row(
     id: impl Into<String>,
-    icon: &'static str,
+    icon: ChromeGlyph,
     title: impl Into<String>,
     subtitle: impl Into<String>,
     meta: impl Into<String>,
@@ -56,7 +57,11 @@ pub fn list_row(
                 .gap_2()
                 .items_center()
                 .overflow_hidden()
-                .child(div().text_color(Theme::muted()).child(icon))
+                .child(
+                    div()
+                        .text_color(Theme::muted())
+                        .child(chrome_icon(icon, 15.0)),
+                )
                 .child(
                     div()
                         .flex_1()
@@ -137,7 +142,11 @@ pub fn inspector_row_el(
                 .flex()
                 .gap_2()
                 .items_center()
-                .child(div().text_color(Theme::muted()).child(icon))
+                .child(
+                    div()
+                        .text_color(Theme::muted())
+                        .child(path_icon(&icon, 15.0)),
+                )
                 .child(
                     div()
                         .flex_1()

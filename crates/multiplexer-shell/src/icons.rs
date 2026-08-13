@@ -25,10 +25,12 @@ pub enum ChromeGlyph {
     Diff,
     Activity,
     Palette,
+    Session,
+    Skills,
 }
 
 impl ChromeGlyph {
-    pub fn all() -> [ChromeGlyph; 22] {
+    pub fn all() -> [ChromeGlyph; 24] {
         [
             Self::Chat,
             Self::Agent,
@@ -52,6 +54,8 @@ impl ChromeGlyph {
             Self::Diff,
             Self::Activity,
             Self::Palette,
+            Self::Session,
+            Self::Skills,
         ]
     }
 
@@ -79,6 +83,38 @@ impl ChromeGlyph {
             Self::Diff => "±",
             Self::Activity => "●",
             Self::Palette => "⌘",
+            Self::Session => "◉",
+            Self::Skills => "✦",
+        }
+    }
+
+    /// Vendored Lucide SVG path (ISC). Desktop paints these via GPUI `svg()`.
+    pub fn icon_file(self) -> &'static str {
+        match self {
+            Self::Chat => "icons/message-square.svg",
+            Self::Agent => "icons/zap.svg",
+            Self::Folder => "icons/folder.svg",
+            Self::Git => "icons/git-branch.svg",
+            Self::Terminal => "icons/square-terminal.svg",
+            Self::Cpu => "icons/cpu.svg",
+            Self::Plug => "icons/unplug.svg",
+            Self::Flag => "icons/flag.svg",
+            Self::Search => "icons/search.svg",
+            Self::Plus => "icons/plus.svg",
+            Self::Close => "icons/x.svg",
+            Self::Chevron => "icons/chevron-right.svg",
+            Self::Play => "icons/play.svg",
+            Self::Stop => "icons/square.svg",
+            Self::Copy => "icons/copy.svg",
+            Self::Settings => "icons/settings.svg",
+            Self::Sparkle => "icons/sparkles.svg",
+            Self::Layout => "icons/panel-left.svg",
+            Self::Browser => "icons/globe.svg",
+            Self::Diff => "icons/file-diff.svg",
+            Self::Activity => "icons/activity.svg",
+            Self::Palette => "icons/command.svg",
+            Self::Session => "icons/circle-user.svg",
+            Self::Skills => "icons/book-open.svg",
         }
     }
 }
@@ -181,12 +217,22 @@ mod tests {
 
     #[test]
     fn chrome_glyph_catalog() {
-        assert_eq!(ChromeGlyph::all().len(), 22);
+        assert_eq!(ChromeGlyph::all().len(), 24);
         assert_eq!(ChromeGlyph::Palette.mark(), "⌘");
         assert!(!ChromeGlyph::Chat.mark().is_empty());
+        let mut files = std::collections::BTreeSet::new();
         for g in ChromeGlyph::all() {
             assert!(!g.mark().is_empty());
+            let file = g.icon_file();
+            assert!(file.starts_with("icons/"), "{file}");
+            assert!(file.ends_with(".svg"), "{file}");
+            assert!(files.insert(file), "duplicate icon {file}");
         }
+        assert_eq!(ChromeGlyph::Chat.icon_file(), "icons/message-square.svg");
+        assert_ne!(
+            ChromeGlyph::Chat.icon_file(),
+            ChromeGlyph::Folder.icon_file()
+        );
     }
 
     #[test]
