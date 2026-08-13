@@ -13,6 +13,7 @@ mod listen;
 mod provider_bridge;
 mod runtime;
 mod server;
+mod stubs;
 mod terms;
 mod worktree_create;
 

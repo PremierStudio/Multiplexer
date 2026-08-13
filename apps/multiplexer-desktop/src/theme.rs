@@ -1,13 +1,41 @@
 //! GPUI adapter over [`multiplexer_theme::ThemeTokens`].
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use gpui::{hsla, point, px, BoxShadow, Hsla, Pixels};
-use multiplexer_theme::{HslaTuple, ThemeTokens};
+use multiplexer_theme::{Density, HslaTuple, ThemeMode, ThemeTokens, TypeScale};
+
+static THEME_MODE: AtomicU8 = AtomicU8::new(0);
+static THEME_DENSITY: AtomicU8 = AtomicU8::new(0);
 
 pub struct Theme;
 
 impl Theme {
+    pub fn set_mode(mode: ThemeMode) {
+        THEME_MODE.store(
+            match mode {
+                ThemeMode::Dark => 0,
+                ThemeMode::Light => 1,
+            },
+            Ordering::Relaxed,
+        );
+    }
+
+    pub fn set_density(density: Density) {
+        THEME_DENSITY.store(
+            match density {
+                Density::Comfortable => 0,
+                Density::Compact => 1,
+            },
+            Ordering::Relaxed,
+        );
+    }
+
     pub fn tokens() -> ThemeTokens {
-        ThemeTokens::dark()
+        match THEME_MODE.load(Ordering::Relaxed) {
+            1 => ThemeTokens::light(),
+            _ => ThemeTokens::dark(),
+        }
     }
 
     fn c(t: HslaTuple) -> Hsla {
@@ -68,6 +96,24 @@ impl Theme {
     pub fn panel_radius() -> Pixels {
         px(multiplexer_theme::Radius::MD)
     }
+    pub fn text_ui() -> Pixels {
+        px(TypeScale::UI)
+    }
+    pub fn text_caption() -> Pixels {
+        px(TypeScale::CAPTION)
+    }
+    pub fn text_body() -> Pixels {
+        px(TypeScale::BODY)
+    }
+    pub fn row_height() -> Pixels {
+        match THEME_DENSITY.load(Ordering::Relaxed) {
+            1 => px(44.0),
+            _ => px(56.0),
+        }
+    }
+    pub fn icon_size() -> Pixels {
+        px(32.0)
+    }
     pub fn shadow() -> Vec<BoxShadow> {
         vec![
             BoxShadow {
@@ -89,11 +135,29 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use multiplexer_theme::TypeScale;
 
     #[test]
     fn adapter_glass_is_translucent() {
         let g = Theme::glass();
         assert!(g.a < 0.55);
         assert!(Theme::glass_ultra().a < g.a);
+    }
+
+    #[test]
+    fn adapter_type_scale_matches_tokens() {
+        assert_eq!(Theme::text_ui(), px(TypeScale::UI));
+        assert_eq!(Theme::text_caption(), px(TypeScale::CAPTION));
+        assert_eq!(Theme::text_body(), px(TypeScale::BODY));
+        Theme::set_density(Density::Comfortable);
+        assert_eq!(Theme::row_height(), px(56.0));
+        Theme::set_density(Density::Compact);
+        assert_eq!(Theme::row_height(), px(44.0));
+        Theme::set_density(Density::Comfortable);
+        assert_eq!(Theme::icon_size(), px(32.0));
+        Theme::set_mode(ThemeMode::Light);
+        assert_eq!(Theme::tokens().mode, ThemeMode::Light);
+        Theme::set_mode(ThemeMode::Dark);
+        assert_eq!(Theme::tokens().mode, ThemeMode::Dark);
     }
 }

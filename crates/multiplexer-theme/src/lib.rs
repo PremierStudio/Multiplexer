@@ -92,12 +92,14 @@ mod tests {
 
     #[test]
     fn radius_and_motion_have_named_steps() {
-        assert!(Radius::XS < Radius::SM);
-        assert!(Radius::SM < Radius::MD);
-        assert!(Radius::MD < Radius::LG);
-        assert!(Radius::LG < Radius::XL);
-        assert!(Motion::FAST.ms < Motion::NORMAL.ms);
-        assert!(Motion::NORMAL.ms < Motion::SLOW.ms);
+        assert_eq!(
+            [Radius::XS, Radius::SM, Radius::MD, Radius::LG, Radius::XL],
+            [4.0, 8.0, 12.0, 16.0, 22.0]
+        );
+        assert_eq!(
+            [Motion::FAST.ms, Motion::NORMAL.ms, Motion::SLOW.ms],
+            [90, 160, 240]
+        );
     }
 
     #[test]

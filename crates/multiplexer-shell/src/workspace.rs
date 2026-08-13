@@ -292,6 +292,9 @@ pub struct Workspace {
     pub wt_branch: String,
     pub wt_create_branch: bool,
     pub settings_open: bool,
+    pub file_expanded: Vec<String>,
+    pub usage_turns: u64,
+    pub usage_tokens: u64,
     next_id: u64,
     next_notice: u64,
 }
@@ -337,6 +340,9 @@ impl Workspace {
             wt_branch: "feat".into(),
             wt_create_branch: true,
             settings_open: false,
+            file_expanded: Vec::new(),
+            usage_turns: 0,
+            usage_tokens: 0,
             next_id: 1,
             next_notice: 1,
         };
@@ -469,6 +475,7 @@ impl Workspace {
             thread.status = "running".to_owned();
         }
         self.busy = true;
+        self.usage_turns = self.usage_turns.saturating_add(1);
         Some(text)
     }
 
@@ -636,13 +643,14 @@ impl Workspace {
             self.models.join(", ")
         };
         format!(
-            "Project\n{}\n\nModel\n{}\n\nConnection\n{}\n\nSession\n{}\n\nThreads\n{}\n\nModels\n{}\n\nPalette\n{}\n\nHelp\n{}",
+            "Project\n{}\n\nModel\n{}\n\nConnection\n{}\n\nSession\n{}\n\nThreads\n{}\n\nModels\n{}\n\nTurns\n{}\n\nPalette\n{}\n\nHelp\n{}",
             self.project,
             self.model,
             self.connection.status_label(),
             session_id.unwrap_or("(none yet)"),
             self.threads.len(),
             models,
+            self.usage_turns,
             if self.palette_open { "open" } else { "closed" },
             if self.help_open { "open" } else { "closed" },
         )
@@ -857,6 +865,57 @@ impl Workspace {
         }
     }
 
+    pub fn toggle_file_expand(&mut self, path: impl Into<String>) -> bool {
+        let path = path.into();
+        if !path.ends_with('/')
+            && !self
+                .files
+                .iter()
+                .any(|f| f == &path || f == &format!("{path}/"))
+        {
+            return false;
+        }
+        let key = if path.ends_with('/') {
+            path
+        } else {
+            format!("{path}/")
+        };
+        if let Some(i) = self.file_expanded.iter().position(|p| p == &key) {
+            self.file_expanded.remove(i);
+        } else {
+            self.file_expanded.push(key);
+        }
+        true
+    }
+
+    pub fn files_visible(&self) -> Vec<String> {
+        self.files
+            .iter()
+            .filter(|path| ancestors_expanded(self, path))
+            .cloned()
+            .collect()
+    }
+
+    pub fn select_model(&mut self, model: impl Into<String>) -> bool {
+        let model = model.into();
+        if self.model == model {
+            return false;
+        }
+        if self.models.iter().any(|m| m == &model) {
+            self.model = model;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn usage_lines(&self) -> String {
+        format!(
+            "Turns\n{}\n\nTokens\n{}\n\nNote\nlocal snapshot only",
+            self.usage_turns, self.usage_tokens
+        )
+    }
+
     pub fn insert_file_mention(&mut self) -> bool {
         let Some(path) = self.selected_file.clone() else {
             return false;
@@ -918,6 +977,33 @@ impl Workspace {
     }
 }
 
+fn ancestors_expanded(ws: &Workspace, path: &str) -> bool {
+    let trimmed = path.trim_end_matches('/');
+    let parts: Vec<&str> = trimmed.split('/').collect();
+    if parts.len() <= 1 {
+        return true;
+    }
+    let mut prefix = String::new();
+    for part in parts.iter().take(parts.len() - 1) {
+        if !prefix.is_empty() {
+            prefix.push('/');
+        }
+        prefix.push_str(part);
+        let dir = format!("{prefix}/");
+        let listed = ws.files.iter().any(|f| f == &dir || f == &prefix);
+        if listed {
+            let open = ws
+                .file_expanded
+                .iter()
+                .any(|e| e == &dir || e.trim_end_matches('/') == prefix);
+            if !open {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// Tiny 8-tick bar. `usage` is a percent. NaN and non-finite values are empty.
 fn tiny_usage_bar(usage: f32) -> String {
     let width = 8;
@@ -962,6 +1048,7 @@ mod tests {
     fn send_draft_creates_user_message_and_renames_thread() {
         let mut ws = Workspace::new("p", "m");
         assert_eq!(ws.send_draft(), None);
+        assert_eq!(ws.usage_turns, 0);
         ws.set_draft("  hello world  ");
         assert_eq!(ws.send_draft().as_deref(), Some("hello world"));
         let t = ws.selected_thread().unwrap();
@@ -970,6 +1057,10 @@ mod tests {
         assert_eq!(t.messages[0].role, Role::User);
         assert_eq!(t.status, "running");
         assert!(ws.draft.is_empty());
+        assert_eq!(ws.usage_turns, 1);
+        assert!(ws.session_detail(None).contains("Turns\n1"));
+        assert!(!ws.select_model("m"));
+        assert!(!ws.select_model("nope"));
     }
 
     #[test]
@@ -1120,8 +1211,10 @@ mod tests {
 
     #[test]
     fn chrome_resize_clamps_and_reopens() {
-        let mut c = ChromeLayout::default();
-        c.left_open = false;
+        let mut c = ChromeLayout {
+            left_open: false,
+            ..ChromeLayout::default()
+        };
         c.set_left_width(80.0);
         assert_eq!(c.left_width, LEFT_WIDTH_MIN);
         assert!(c.left_open);
@@ -1184,13 +1277,22 @@ mod tests {
     #[test]
     fn file_tree_select_expand_and_mention() {
         let mut ws = Workspace::new("p", "m");
-        ws.set_files(vec!["src/lib.rs".into(), "Cargo.toml".into()]);
-        assert!(!ws.select_file("missing.rs"));
+        ws.set_files(vec![
+            "src/".into(),
+            "src/lib.rs".into(),
+            "Cargo.toml".into(),
+        ]);
+        assert!(ws.files_visible().contains(&"src/".into()));
+        assert!(ws.files_visible().contains(&"Cargo.toml".into()));
+        assert!(!ws.files_visible().contains(&"src/lib.rs".into()));
+        assert!(ws.toggle_file_expand("src/"));
+        assert!(ws.files_visible().contains(&"src/lib.rs".into()));
         assert!(ws.select_file("src/lib.rs"));
-        assert_eq!(ws.selected_file.as_deref(), Some("src/lib.rs"));
         ws.set_draft("see");
         assert!(ws.insert_file_mention());
         assert!(ws.draft.contains("`@src/lib.rs`"));
+        assert!(ws.toggle_file_expand("src/"));
+        assert!(!ws.files_visible().contains(&"src/lib.rs".into()));
     }
 
     #[test]

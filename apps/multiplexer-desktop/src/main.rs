@@ -26,11 +26,12 @@ use multiplexer_mcp::{
 use multiplexer_resman::sample_cores;
 use multiplexer_server::Server;
 use multiplexer_shell::{
-    apply_layout_action, delete_forward, format_line, help_text, insert_at, inspector_rows,
-    move_end, move_home, move_left, move_right, move_word_left, move_word_right, parse_builtin,
-    parse_slash, status_from, status_line, visible_tail, BuiltinCmd, CheckpointRow, ChromeGlyph,
-    ClientAction, CoreRow, InspectorTab, LeftSection, ListRowSpec, McpRow, PaletteState, Role,
-    SlashCommand, TermLineKind, Workspace, TERM_PROMPT,
+    apply_layout_action, default_items, delete_forward, detect_remotes, empty_state_tiles,
+    format_line, help_text, insert_at, inspector_rows, move_end, move_home, move_left, move_right,
+    move_word_left, move_word_right, palette_hits, parse_builtin, parse_slash, row_detail,
+    status_from, status_line, visible_tail, BuiltinCmd, CheckpointRow, ChromeGlyph, ClientAction,
+    CoreRow, EmptyStateSpec, InspectorTab, LeftSection, ListRowSpec, McpRow, NoticeKind,
+    PaletteState, RemoteRow, Role, SearchKind, SlashCommand, TermLineKind, Workspace, TERM_PROMPT,
 };
 use multiplexer_wire::codec::{decode_frame, encode_frame};
 use multiplexer_wire::jsonrpc::{Id, Message, Request};
@@ -67,6 +68,7 @@ struct ShellView {
     ignore_turn: bool,
     last_core_sample: Instant,
     flash: Option<String>,
+    remotes: Vec<RemoteRow>,
 }
 
 impl ShellView {
@@ -143,10 +145,14 @@ impl ShellView {
             ignore_turn: false,
             last_core_sample: Instant::now(),
             flash: None,
+            remotes: detect_remotes(tailscale_which().as_deref()),
         };
+        view.apply_theme();
+        view.bootstrap_catalogs();
         view.refresh_worktrees();
         view.refresh_reminder();
-        view.term_meta("ready  grok -p off the UI thread  Ctrl+K palette  F1 help");
+        view.run_shell("git status --short --branch");
+        view.term_meta("ready  grok -p off the UI thread  Ctrl+K palette  F1 help  F2 settings");
         assert!(controls::no_dead_labels());
         assert_eq!(controls::REQUIRED_IDS.len(), controls::all_controls().len());
         assert!(controls::control_by_id("send").is_some());
@@ -168,6 +174,131 @@ impl ShellView {
                 .pending_approval()
                 .map(|a| a.request_id.clone()),
             model: self.workspace.model.clone(),
+            wt_path: self.workspace.wt_path.clone(),
+            wt_branch: self.workspace.wt_branch.clone(),
+            wt_create_branch: self.workspace.wt_create_branch,
+        }
+    }
+
+    fn apply_theme(&self) {
+        Theme::set_mode(self.workspace.settings.mode);
+        Theme::set_density(self.workspace.settings.density);
+    }
+
+    fn bootstrap_catalogs(&mut self) {
+        let models = self
+            .server
+            .handle_frame(&rpc("ml", methods::MODEL_LIST, json!({})));
+        if let Some(list) = models_from(&models) {
+            if !list.is_empty() {
+                self.workspace.set_models(list);
+            }
+        }
+        let usage = self
+            .server
+            .handle_frame(&rpc("tu", methods::TELEMETRY_USAGE, json!({})));
+        if let Some((turns, tokens, note)) = usage_from(&usage) {
+            self.workspace.usage_turns = turns.max(self.workspace.usage_turns);
+            self.workspace.usage_tokens = tokens.max(self.workspace.usage_tokens);
+            if !note.is_empty() {
+                self.term_meta(&format!("usage {note}"));
+            }
+        }
+        let remote_frames = self
+            .server
+            .handle_frame(&rpc("rl", methods::REMOTE_LIST, json!({})));
+        if let Some(rows) = remotes_from(&remote_frames) {
+            if !rows.is_empty() {
+                let mut merged = rows;
+                for extra in detect_remotes(tailscale_which().as_deref()) {
+                    if !merged.iter().any(|r| r.id == extra.id) {
+                        merged.push(extra);
+                    }
+                }
+                self.remotes = merged;
+            }
+        }
+    }
+
+    fn create_worktree(&mut self) {
+        let path = self.workspace.wt_path.clone();
+        let branch = self.workspace.wt_branch.clone();
+        if path.trim().is_empty() || branch.trim().is_empty() {
+            self.workspace
+                .push_notice(NoticeKind::Warn, "set path and branch first");
+            return;
+        }
+        let frames = self.server.handle_frame(&rpc(
+            "wtc",
+            methods::GIT_WORKTREE_CREATE,
+            json!({
+                "cwd": self.workspace.project,
+                "path": path,
+                "branch": branch,
+                "create_branch": self.workspace.wt_create_branch,
+            }),
+        ));
+        if let Some(err) = first_error(&frames) {
+            self.workspace.push_notice(NoticeKind::Danger, err);
+        } else {
+            self.workspace
+                .push_notice(NoticeKind::Good, "worktree create accepted");
+            self.refresh_worktrees();
+        }
+    }
+
+    fn activate_inspector_row(&mut self, id: &str) {
+        self.workspace.toggle_right_row(id.to_owned());
+        if let Some(path) = id.strip_prefix("file:") {
+            if path.ends_with('/') {
+                let _ = self.workspace.toggle_file_expand(path);
+            } else {
+                let _ = self.workspace.select_file(path);
+            }
+        } else if let Some(cid) = id.strip_prefix("point:") {
+            self.workspace.select_checkpoint(Some(cid.to_owned()));
+        } else if let Some(aid) = id.strip_prefix("agent:") {
+            if let Some(i) = self.workspace.threads.iter().position(|t| t.id == aid) {
+                let _ = self.workspace.select(i);
+            }
+        } else if let Some(rest) = id.strip_prefix("git:wt:") {
+            if let Ok(i) = rest.parse::<usize>() {
+                self.workspace.selected_worktree = Some(i);
+            }
+        }
+    }
+
+    fn activate_palette(&mut self, cx: &mut Context<Self>) {
+        let query = self.palette.query.clone();
+        let selected = self.palette.selected;
+        self.palette.close();
+        self.workspace.close_palette();
+        self.focus = Focus::Composer;
+        if query.is_empty() {
+            if let Some(item) = default_items().get(selected).copied() {
+                self.dispatch(item.action, cx);
+            }
+            return;
+        }
+        let hits = palette_hits(&self.workspace, &query);
+        let Some(hit) = hits.get(selected).cloned() else {
+            return;
+        };
+        match hit.kind {
+            SearchKind::Thread => {
+                if let Some(i) = self.workspace.threads.iter().position(|t| t.id == hit.id) {
+                    self.dispatch(ClientAction::SelectThread(i), cx);
+                }
+            }
+            SearchKind::File => {
+                let _ = self.workspace.select_file(&hit.id);
+                self.dispatch(ClientAction::SelectTab(InspectorTab::Files), cx);
+            }
+            SearchKind::Command => {
+                if let Some(item) = default_items().into_iter().find(|i| i.id == hit.id) {
+                    self.dispatch(item.action, cx);
+                }
+            }
         }
     }
 
@@ -194,8 +325,11 @@ impl ShellView {
                         }
                     }
                     ClientAction::ToggleHelp => {}
-                    ClientAction::CycleModel => {
+                    ClientAction::CycleModel | ClientAction::SelectModel => {
                         self.term_meta(&format!("model {}", self.workspace.model));
+                    }
+                    ClientAction::ToggleSettings => {
+                        self.apply_theme();
                     }
                     _ => {}
                 }
@@ -221,6 +355,10 @@ impl ShellView {
             ClientAction::CopyLastMessage => self.copy_last_message(cx),
             ClientAction::Approve => self.respond_approval("allow"),
             ClientAction::Deny => self.respond_approval("deny"),
+            ClientAction::CreateWorktree => self.create_worktree(),
+            ClientAction::StartMcp | ClientAction::StopMcp => {
+                let _ = apply_layout_action(&mut self.workspace, action);
+            }
             other => {
                 let _ = apply_layout_action(&mut self.workspace, other);
             }
@@ -240,12 +378,7 @@ impl ShellView {
             }
             InspectorAction::CopySession => self.copy_session(cx),
             InspectorAction::RunGitStatus => self.run_shell("git status"),
-            InspectorAction::NewWorktreeHint => {
-                self.workspace
-                    .set_draft("git worktree add ../mux-feat -b feat");
-                self.focus = Focus::Composer;
-                self.term_meta("edit the worktree command, then Enter to send or run it in Term");
-            }
+            InspectorAction::NewWorktreeHint => self.create_worktree(),
             InspectorAction::StartMcp => {
                 if let Some(id) = self.workspace.right_expanded_id.clone() {
                     if let Some(name) = id.strip_prefix("mcp:") {
@@ -623,6 +756,13 @@ impl ShellView {
                         } else {
                             self.workspace.push_assistant(text.to_owned());
                         }
+                        let estimate = ((text.chars().count() / 4) as u64).max(1);
+                        self.workspace.usage_tokens =
+                            self.workspace.usage_tokens.saturating_add(estimate);
+                        self.workspace.push_notice(
+                            multiplexer_shell::NoticeKind::Good,
+                            format!("turn complete · ~{estimate} tok"),
+                        );
                     } else {
                         let err = out.stderr.trim();
                         self.workspace.mark_error(if err.is_empty() {
@@ -853,18 +993,23 @@ impl ShellView {
 
     fn palette_key(&mut self, key: &str, control: bool, cx: &mut Context<Self>) {
         if key == "enter" {
-            if let Some(item) = self.palette.active_item() {
-                self.palette.close();
-                self.workspace.close_palette();
-                self.focus = Focus::Composer;
-                self.dispatch(item.action, cx);
-            }
+            self.activate_palette(cx);
             return;
         }
         if key == "up" {
-            self.palette.move_up();
+            let n = palette_hits(&self.workspace, &self.palette.query).len();
+            if n > 0 {
+                self.palette.selected = if self.palette.selected == 0 {
+                    n - 1
+                } else {
+                    self.palette.selected - 1
+                };
+            }
         } else if key == "down" {
-            self.palette.move_down();
+            let n = palette_hits(&self.workspace, &self.palette.query).len();
+            if n > 0 {
+                self.palette.selected = (self.palette.selected + 1) % n;
+            }
         } else if key == "backspace" {
             let mut q = self.palette.query.clone();
             q.pop();
@@ -904,6 +1049,7 @@ impl ShellView {
 impl Render for ShellView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.pump(window);
+        self.apply_theme();
         let win_w = f32::from(window.viewport_size().width);
         let mut root = div()
             .flex()
@@ -911,7 +1057,7 @@ impl Render for ShellView {
             .size_full()
             .bg(Theme::ink())
             .text_color(Theme::text())
-            .text_sm()
+            .text_size(Theme::text_ui())
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 this.handle_key(event, cx);
             }))
@@ -1007,6 +1153,18 @@ impl ShellView {
                     )),
             )
             .child(div().flex_1())
+            .child(pill(
+                format!("{} turns", self.workspace.usage_turns),
+                ChromeGlyph::Activity.mark(),
+            ))
+            .child(pill(
+                self.remotes
+                    .iter()
+                    .map(|r| r.label.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" · "),
+                ChromeGlyph::Plug.mark(),
+            ))
             .child(if self.workspace.busy {
                 div().child(icon_btn(
                     ChromeGlyph::Stop.mark(),
@@ -1035,7 +1193,23 @@ impl ShellView {
                 this.dispatch(ClientAction::ToggleHelp, cx);
             }))
             .child(icon_btn(
+                ChromeGlyph::Terminal.mark(),
+                "Terminal",
+                cx,
+                |this, cx| this.dispatch(ClientAction::ToggleBottom, cx),
+            ))
+            .child(icon_btn(
                 ChromeGlyph::Settings.mark(),
+                "Settings",
+                cx,
+                |this, cx| this.dispatch(ClientAction::ToggleSettings, cx),
+            ))
+            .child(icon_btn("↺", "Reset layout", cx, |this, cx| {
+                this.workspace.reset_outlook_chrome();
+                cx.notify();
+            }))
+            .child(icon_btn(
+                "▣",
                 if right_on {
                     "Hide inspector"
                 } else {
@@ -1052,7 +1226,7 @@ impl ShellView {
         let section = self.workspace.left_section;
         let selected = self.workspace.selected;
         let threads = self.workspace.threads.clone();
-        let files = self.workspace.files.clone();
+        let files = self.workspace.files_visible();
         let activity = self.workspace.terminal_log.clone();
         let sessions = match &self.workspace.connection {
             multiplexer_shell::ConnectionState::Connected { session_ids } => session_ids.clone(),
@@ -1201,7 +1375,12 @@ impl ShellView {
                             false,
                             cx,
                             move |this, cx| {
-                                this.term_meta(&format!("file {p}"));
+                                if p.ends_with('/') {
+                                    this.workspace.toggle_file_expand(&p);
+                                } else {
+                                    let _ = this.workspace.select_file(&p);
+                                    this.workspace.inspector = InspectorTab::Files;
+                                }
                                 cx.notify();
                             },
                         )
@@ -1320,7 +1499,14 @@ impl ShellView {
                 .flex()
                 .flex_col()
                 .py_1()
-                .children(rows.into_iter().map(|row| inspector_row_el(row, cx))),
+                .children(rows.into_iter().map(|row| {
+                    let detail = if row.expanded {
+                        row_detail(&self.workspace, &row.id)
+                    } else {
+                        String::new()
+                    };
+                    inspector_row_el(row, detail, cx)
+                })),
         )
     }
 
@@ -1415,9 +1601,8 @@ impl ShellView {
                                 this.run_shell("git status");
                                 cx.notify();
                             }))
-                            .child(chip("List project files", cx, |this, cx| {
-                                this.workspace.inspector = InspectorTab::Files;
-                                this.workspace.left_section = LeftSection::Files;
+                            .child(chip("Run the tests", cx, |this, cx| {
+                                this.run_shell("cargo test --workspace --offline");
                                 cx.notify();
                             }))
                             .child(chip("Copy last", cx, |this, cx| {
@@ -1567,7 +1752,12 @@ impl ShellView {
                     .id(SharedString::from(format!("notice-{id}")))
                     .px_3()
                     .py_1()
-                    .bg(Theme::accent_muted())
+                    .bg(match n.kind {
+                        NoticeKind::Good => hsla(0.38, 0.45, 0.22, 0.70),
+                        NoticeKind::Warn => hsla(0.12, 0.55, 0.24, 0.70),
+                        NoticeKind::Danger => hsla(0.02, 0.60, 0.24, 0.75),
+                        NoticeKind::Info => Theme::accent_muted(),
+                    })
                     .border_b_1()
                     .border_color(Theme::hairline())
                     .flex()
@@ -1590,6 +1780,14 @@ impl ShellView {
         let mode = format!("{:?}", self.workspace.settings.mode);
         let density = format!("{:?}", self.workspace.settings.density);
         let model = self.workspace.settings.default_model.clone();
+        let models = self.workspace.models.clone();
+        let remotes = self.remotes.clone();
+        let turns = self.workspace.usage_turns;
+        let tokens = self.workspace.usage_tokens;
+        let wt = format!(
+            "{}  {}  create={}",
+            self.workspace.wt_path, self.workspace.wt_branch, self.workspace.wt_create_branch
+        );
         div()
             .id("settings")
             .absolute()
@@ -1598,7 +1796,7 @@ impl ShellView {
             .size_full()
             .flex()
             .justify_center()
-            .pt(px(72.0))
+            .pt(px(56.0))
             .bg(hsla(0.64, 0.20, 0.04, 0.45))
             .on_mouse_down(
                 MouseButton::Left,
@@ -1609,43 +1807,132 @@ impl ShellView {
             )
             .child(
                 div()
-                    .w(px(420.0))
+                    .w(px(520.0))
                     .rounded_xl()
                     .bg(Theme::glass_strong())
                     .border_1()
                     .border_color(Theme::hairline_bright())
                     .shadow(Theme::shadow())
                     .p_4()
-                    .child("Settings")
+                    .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                    .child(
+                        div()
+                            .text_size(Theme::text_body())
+                            .text_color(Theme::accent())
+                            .child("Settings"),
+                    )
                     .child(div().text_color(Theme::muted()).mt_2().child(format!(
-                        "Theme {mode}   Density {density}   Default model {model}"
+                        "Theme {mode}   Density {density}   Default {model}"
                     )))
                     .child(
                         div()
                             .mt_2()
                             .flex()
                             .gap_2()
+                            .flex_wrap()
                             .child(ghost_btn("Theme", "cycle", cx, |this, cx| {
                                 this.workspace.settings.cycle_mode();
+                                this.apply_theme();
                                 cx.notify();
                             }))
                             .child(ghost_btn("Density", "cycle", cx, |this, cx| {
                                 this.workspace.settings.cycle_density();
+                                this.apply_theme();
+                                cx.notify();
+                            }))
+                            .child(ghost_btn("Use model", "apply", cx, |this, cx| {
+                                this.dispatch(ClientAction::SelectModel, cx);
+                            }))
+                            .child(ghost_btn("New WT", "git", cx, |this, cx| {
+                                this.create_worktree();
+                                cx.notify();
+                            }))
+                            .child(ghost_btn("Create branch", "toggle", cx, |this, cx| {
+                                this.workspace.wt_create_branch = !this.workspace.wt_create_branch;
                                 cx.notify();
                             }))
                             .child(ghost_btn("Close", "F2", cx, |this, cx| {
                                 this.workspace.settings_open = false;
                                 cx.notify();
                             })),
-                    ),
+                    )
+                    .child(
+                        div()
+                            .mt_3()
+                            .text_color(Theme::faint())
+                            .child("Models (click to select)"),
+                    )
+                    .children(models.into_iter().map(|m| {
+                        let shown = m.clone();
+                        let pick = m.clone();
+                        div()
+                            .id(SharedString::from(format!("set-model-{shown}")))
+                            .mt_1()
+                            .px_2()
+                            .py_1()
+                            .rounded_lg()
+                            .bg(if shown == self.workspace.model {
+                                Theme::selection()
+                            } else {
+                                Theme::glass_ultra()
+                            })
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.workspace.settings.set_default_model(pick.clone());
+                                    let _ = this.workspace.select_model(pick.clone());
+                                    let frames = this.server.handle_frame(&rpc(
+                                        "ms",
+                                        methods::MODEL_SELECT,
+                                        json!({ "model": pick }),
+                                    ));
+                                    if let Some(err) = first_error(&frames) {
+                                        this.workspace.push_notice(NoticeKind::Warn, err);
+                                    } else {
+                                        this.workspace
+                                            .push_notice(NoticeKind::Good, format!("model {pick}"));
+                                    }
+                                    cx.notify();
+                                }),
+                            )
+                            .child(shown)
+                    }))
+                    .child(div().mt_3().text_color(Theme::faint()).child(format!(
+                        "Usage  {turns} turns  {tokens} tok (local snapshot)"
+                    )))
+                    .child(
+                        div()
+                            .mt_2()
+                            .text_color(Theme::faint())
+                            .child(format!("Worktree draft  {wt}")),
+                    )
+                    .child(
+                        div()
+                            .mt_3()
+                            .text_color(Theme::faint())
+                            .child("Remotes (detect only, no Tailscale Serve)"),
+                    )
+                    .children(remotes.into_iter().map(|r| {
+                        div()
+                            .id(SharedString::from(format!("remote-{}", r.id)))
+                            .mt_1()
+                            .px_2()
+                            .py_1()
+                            .rounded_lg()
+                            .bg(Theme::glass_ultra())
+                            .child(format!("{}  ·  {}  ·  {}", r.label, r.kind, r.id))
+                    })),
             )
     }
 
     fn terminal_strip(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let tail_n = if self.workspace.bottom_open { 14 } else { 4 };
         let lines = if self.workspace.terminal_log.is_empty() {
-            "Terminal: type a command and Enter. Builtins: clear, help, cores, mcp, git.".to_owned()
+            "Terminal: type a command and Enter. Builtins: clear, help, cores, mcp, git, points, skills."
+                .to_owned()
         } else {
-            visible_tail(&self.workspace.terminal_log, 4)
+            visible_tail(&self.workspace.terminal_log, tail_n)
         };
         let draft = if self.workspace.term_draft.is_empty() {
             format!("{TERM_PROMPT}  git status, dir, clear")
@@ -1712,8 +1999,28 @@ impl ShellView {
     fn status_bar(&self) -> impl IntoElement {
         let s = status_from(&self.workspace, self.session_id.clone());
         let extra = self.flash.clone().unwrap_or_default();
+        let ready = self
+            .workspace
+            .mcp
+            .iter()
+            .filter(|m| m.state == multiplexer_shell::McpLife::Ready)
+            .count();
+        let cores = self.workspace.cores.len();
+        let remotes = self
+            .remotes
+            .iter()
+            .map(|r| r.id.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let live = format!(
+            "{}   ·   {} turns  {} tok  mcp {ready}/{}  cpu {cores}  remotes {remotes}",
+            status_line(&s),
+            self.workspace.usage_turns,
+            self.workspace.usage_tokens,
+            self.workspace.mcp.len(),
+        );
         glass_bar()
-            .h(px(26.0))
+            .h(px(28.0))
             .px_3()
             .rounded_none()
             .border_t_1()
@@ -1722,15 +2029,15 @@ impl ShellView {
                     .flex_1()
                     .text_color(Theme::muted())
                     .child(if extra.is_empty() {
-                        status_line(&s)
+                        live
                     } else {
-                        format!("{}   ·   {extra}", status_line(&s))
+                        format!("{live}   ·   {extra}")
                     }),
             )
     }
 
     fn palette_overlay(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let items = multiplexer_shell::filter_items(&self.palette.query);
+        let hits = palette_hits(&self.workspace, &self.palette.query);
         let selected = self.palette.selected;
         div()
             .id("palette")
@@ -1750,7 +2057,7 @@ impl ShellView {
             )
             .child(
                 div()
-                    .w(px(520.0))
+                    .w(px(560.0))
                     .rounded_xl()
                     .bg(Theme::glass_strong())
                     .border_1()
@@ -1766,17 +2073,21 @@ impl ShellView {
                             .rounded_lg()
                             .bg(hsla(0.0, 0.0, 1.0, 0.06))
                             .child(if self.palette.query.is_empty() {
-                                SharedString::from("Type to filter commands…")
+                                SharedString::from("Search threads, files, commands…")
                             } else {
                                 SharedString::from(self.palette.query.clone())
                             }),
                     )
-                    .children(items.into_iter().enumerate().take(12).map(|(i, item)| {
-                        let action = item.action;
+                    .children(hits.into_iter().enumerate().take(14).map(|(i, hit)| {
+                        let kind = match hit.kind {
+                            SearchKind::Thread => "thread",
+                            SearchKind::File => "file",
+                            SearchKind::Command => "cmd",
+                        };
                         div()
                             .id(SharedString::from(format!("pal-{i}")))
                             .px_2()
-                            .py_1()
+                            .py_2()
                             .rounded_lg()
                             .bg(if i == selected {
                                 hsla(0.58, 0.40, 0.28, 0.50)
@@ -1787,13 +2098,11 @@ impl ShellView {
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, _, _, cx| {
-                                    this.palette.close();
-                                    this.workspace.close_palette();
-                                    this.focus = Focus::Composer;
-                                    this.dispatch(action, cx);
+                                    this.palette.selected = i;
+                                    this.activate_palette(cx);
                                 }),
                             )
-                            .child(format!("{}   {}", item.label, item.hint))
+                            .child(format!("{}  {}   {}", kind, hit.title, hit.hint))
                     })),
             )
     }
@@ -1827,7 +2136,7 @@ impl ShellView {
                     .p_4()
                     .child("Keyboard")
                     .child(div().text_color(Theme::muted()).mt_2().child(
-                        "Enter send   Shift+Enter newline   Ctrl+K palette   F1 help\nCtrl+N new chat   Ctrl+[ / ] rails   Ctrl+. stop   Ctrl+S checkpoint\nTab focuses the terminal   Esc closes overlays\nSlash: /new /stop /help /cp /cores /mcp /git /term /skills /model\nTerm builtins: clear  help  cores  mcp  git  points",
+                        "Enter send   Shift+Enter newline   Ctrl+K palette   F1 help   F2 settings\nCtrl+N new chat   Ctrl+[ / ] rails   Ctrl+` terminal   Ctrl+. stop   Ctrl+S checkpoint\nCtrl+Shift+L reset layout   Tab focuses the terminal   Esc closes overlays\nSlash: /new /stop /help /cp /cores /mcp /git /term /skills /model\nTerm builtins: clear  help  cores  mcp  git  points  skills\nPalette searches threads, files, and commands together.",
                     )),
             )
     }
@@ -1879,6 +2188,7 @@ fn glass_bar() -> gpui::Div {
 }
 
 fn empty_center() -> gpui::Div {
+    let spec = EmptyStateSpec::chat();
     div()
         .flex_1()
         .flex()
@@ -1889,14 +2199,21 @@ fn empty_center() -> gpui::Div {
         .text_color(Theme::muted())
         .child(
             div()
+                .text_size(Theme::text_body())
                 .text_color(Theme::accent())
-                .child(ChromeGlyph::Sparkle.mark()),
+                .child(format!("{}  {}", ChromeGlyph::Sparkle.mark(), spec.title)),
         )
-        .child(div().child("A control surface for your agents"))
+        .child(div().child(spec.body))
+        .child(
+            div()
+                .text_size(Theme::text_caption())
+                .text_color(Theme::faint())
+                .child(empty_state_tiles().join("   ·   ")),
+        )
         .child(
             div()
                 .text_color(Theme::faint())
-                .child("Ctrl+K palette   F1 help   Ctrl+` terminal"),
+                .child("Ctrl+K palette   F1 help   F2 settings   Ctrl+` terminal"),
         )
 }
 
@@ -1929,8 +2246,8 @@ fn icon_btn(
 ) -> impl IntoElement {
     div()
         .id(SharedString::from(format!("icon-{hint}")))
-        .w(px(32.0))
-        .h(px(32.0))
+        .w(Theme::icon_size())
+        .h(Theme::icon_size())
         .rounded_lg()
         .flex()
         .items_center()
@@ -1984,6 +2301,7 @@ fn list_row(
         .id(SharedString::from(id))
         .mx_2()
         .mb_1()
+        .h(Theme::row_height())
         .px_3()
         .py_2()
         .rounded_xl()
@@ -2029,8 +2347,13 @@ fn list_row(
         .into_any()
 }
 
-fn inspector_row_el(row: ListRowSpec, cx: &mut Context<ShellView>) -> impl IntoElement {
+fn inspector_row_el(
+    row: ListRowSpec,
+    detail: String,
+    cx: &mut Context<ShellView>,
+) -> impl IntoElement {
     let id = row.id.clone();
+    let click_id = id.clone();
     let title = row.title.clone();
     let subtitle = row.subtitle.clone();
     let meta = row.meta.clone();
@@ -2038,10 +2361,12 @@ fn inspector_row_el(row: ListRowSpec, cx: &mut Context<ShellView>) -> impl IntoE
     let selected = row.selected || row.expanded;
     let expanded = row.expanded;
     let badge = row.badge.clone();
+    let body = if !detail.is_empty() { detail } else { meta };
     div()
         .id(SharedString::from(id.clone()))
         .mx_2()
         .mb_1()
+        .min_h(Theme::row_height())
         .px_3()
         .py_2()
         .rounded_xl()
@@ -2051,12 +2376,16 @@ fn inspector_row_el(row: ListRowSpec, cx: &mut Context<ShellView>) -> impl IntoE
             Theme::glass_ultra()
         })
         .border_1()
-        .border_color(Theme::hairline())
+        .border_color(if selected {
+            Theme::hairline_bright()
+        } else {
+            Theme::hairline()
+        })
         .cursor_pointer()
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| {
-                this.workspace.toggle_right_row(id.clone());
+                this.activate_inspector_row(&click_id);
                 cx.notify();
             }),
         )
@@ -2089,8 +2418,15 @@ fn inspector_row_el(row: ListRowSpec, cx: &mut Context<ShellView>) -> impl IntoE
         } else {
             div().text_color(Theme::muted()).child(subtitle)
         })
-        .child(if expanded && !meta.is_empty() {
-            div().text_color(Theme::faint()).child(meta)
+        .child(if expanded && !body.is_empty() {
+            div()
+                .mt_1()
+                .px_2()
+                .py_1()
+                .rounded_lg()
+                .bg(hsla(0.0, 0.0, 1.0, 0.04))
+                .text_color(Theme::faint())
+                .child(body)
         } else {
             div()
         })
@@ -2202,6 +2538,75 @@ fn session_id_from(frames: &[String]) -> Option<String> {
             if let Some(id) = r.result.get("session_id").and_then(Value::as_str) {
                 return Some(id.to_owned());
             }
+        }
+    }
+    None
+}
+
+fn tailscale_which() -> Option<String> {
+    let out = std::process::Command::new("where.exe")
+        .arg("tailscale")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let first = text.lines().next()?.trim();
+    if first.is_empty() {
+        None
+    } else {
+        Some(first.to_owned())
+    }
+}
+
+fn models_from(frames: &[String]) -> Option<Vec<String>> {
+    for f in frames {
+        if let Ok(Message::Response(r)) = decode_frame(f) {
+            let arr = r.result.get("models")?.as_array()?;
+            return Some(
+                arr.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect(),
+            );
+        }
+    }
+    None
+}
+
+fn usage_from(frames: &[String]) -> Option<(u64, u64, String)> {
+    for f in frames {
+        if let Ok(Message::Response(r)) = decode_frame(f) {
+            let turns = r.result.get("turns")?.as_u64()?;
+            let tokens = r.result.get("tokens")?.as_u64()?;
+            let note = r
+                .result
+                .get("note")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            return Some((turns, tokens, note));
+        }
+    }
+    None
+}
+
+fn remotes_from(frames: &[String]) -> Option<Vec<RemoteRow>> {
+    for f in frames {
+        if let Ok(Message::Response(r)) = decode_frame(f) {
+            let arr = r.result.get("remotes")?.as_array()?;
+            return Some(
+                arr.iter()
+                    .filter_map(|row| {
+                        Some(RemoteRow {
+                            id: row.get("id")?.as_str()?.to_owned(),
+                            kind: row.get("kind")?.as_str()?.to_owned(),
+                            label: row.get("label")?.as_str()?.to_owned(),
+                        })
+                    })
+                    .collect(),
+            );
         }
     }
     None

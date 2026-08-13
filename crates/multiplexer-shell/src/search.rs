@@ -83,4 +83,15 @@ mod tests {
         assert_eq!(files[0].kind, SearchKind::File);
         assert!(search_workspace(&ws, "zzz-none").is_empty());
     }
+
+    #[test]
+    fn search_hits_rank_files_threads_commands() {
+        let mut ws = Workspace::new("p", "m");
+        ws.threads[0].title = "Alpha thread".into();
+        ws.set_files(vec!["src/main.rs".into(), "Cargo.toml".into()]);
+        let hits = search_workspace(&ws, "a");
+        assert!(hits.iter().any(|h| h.kind == SearchKind::File));
+        assert!(hits.iter().any(|h| h.kind == SearchKind::Thread));
+        assert!(hits.iter().any(|h| h.kind == SearchKind::Command));
+    }
 }

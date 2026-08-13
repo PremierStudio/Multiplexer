@@ -1,5 +1,10 @@
 //! Headless UI specs. Desktop projects these into GPUI.
 
+pub const HEIGHT_COMPACT: u16 = 32;
+pub const HEIGHT_ROW: u16 = 36;
+pub const HEIGHT_COMFORT: u16 = 44;
+pub const HEIGHT_CARD: u16 = 56;
+
 /// Visual treatment of a button.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ButtonKind {
@@ -56,8 +61,8 @@ impl ButtonSpec {
 
     pub fn height(self) -> u16 {
         match self.kind {
-            ButtonKind::Icon => 32,
-            _ => 36,
+            ButtonKind::Icon | ButtonKind::Ghost => HEIGHT_COMPACT,
+            ButtonKind::Primary | ButtonKind::Danger => HEIGHT_COMFORT,
         }
     }
 }
@@ -141,11 +146,7 @@ impl ListRowSpec {
     }
 
     pub fn height(&self) -> u16 {
-        if self.expanded {
-            88
-        } else {
-            44
-        }
+        HEIGHT_CARD
     }
 }
 
@@ -156,6 +157,12 @@ pub struct TabSpec {
     pub label: String,
     pub selected: bool,
     pub count: usize,
+}
+
+impl TabSpec {
+    pub fn height() -> u16 {
+        HEIGHT_ROW
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,6 +180,10 @@ impl EmptyStateSpec {
             action: "New chat".into(),
         }
     }
+
+    pub fn tiles() -> [&'static str; 4] {
+        empty_state_tiles()
+    }
 }
 
 /// Suggestion tiles on the empty center.
@@ -181,7 +192,7 @@ pub fn empty_state_tiles() -> [&'static str; 4] {
         "What can you do?",
         "Summarize this repo",
         "git status",
-        "List project files",
+        "Run the tests",
     ]
 }
 
@@ -195,14 +206,14 @@ mod tests {
         let mut on = idle.clone();
         on.selected = true;
         assert_ne!(idle, on);
-        assert_eq!(idle.height(), 44);
+        assert_eq!(idle.height(), HEIGHT_CARD);
         assert_eq!(
             ListRowSpec {
                 expanded: true,
                 ..idle.clone()
             }
             .height(),
-            88
+            HEIGHT_CARD
         );
     }
 
@@ -221,10 +232,60 @@ mod tests {
         assert!(!e.action.is_empty());
         assert!(!e.title.is_empty());
         assert_eq!(empty_state_tiles().len(), 4);
-        assert_eq!(ButtonSpec::icon("⌘", "palette").height(), 32);
+        assert_eq!(ButtonSpec::icon("⌘", "palette").height(), HEIGHT_COMPACT);
         assert_eq!(
             ButtonSpec::primary("Send", "enter").kind,
             ButtonKind::Primary
         );
+    }
+
+    #[test]
+    fn kit_heights_are_32_36_44_56() {
+        assert_eq!(HEIGHT_COMPACT, 32);
+        assert_eq!(HEIGHT_ROW, 36);
+        assert_eq!(HEIGHT_COMFORT, 44);
+        assert_eq!(HEIGHT_CARD, 56);
+        assert_eq!(TabSpec::height(), HEIGHT_ROW);
+        assert_eq!(ButtonSpec::icon("⌘", "palette").height(), HEIGHT_COMPACT);
+        assert_eq!(ButtonSpec::ghost("Hide", "h").height(), HEIGHT_COMPACT);
+        assert_eq!(
+            ButtonSpec::primary("Send", "enter").height(),
+            HEIGHT_COMFORT
+        );
+        let danger = ButtonSpec {
+            kind: ButtonKind::Danger,
+            label: "Deny".into(),
+            hint: "n".into(),
+            icon: String::new(),
+            enabled: true,
+            busy: false,
+        };
+        assert_eq!(danger.height(), HEIGHT_COMFORT);
+        let idle = ListRowSpec::new("a", "Alpha");
+        assert_eq!(idle.height(), HEIGHT_CARD);
+        assert_eq!(
+            ListRowSpec {
+                expanded: true,
+                ..idle
+            }
+            .height(),
+            HEIGHT_CARD
+        );
+    }
+
+    #[test]
+    fn empty_tiles_include_run_the_tests() {
+        let tiles = empty_state_tiles();
+        assert_eq!(
+            tiles,
+            [
+                "What can you do?",
+                "Summarize this repo",
+                "git status",
+                "Run the tests",
+            ]
+        );
+        assert_eq!(EmptyStateSpec::tiles(), tiles);
+        assert!(tiles.contains(&"Run the tests"));
     }
 }

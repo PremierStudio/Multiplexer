@@ -20,6 +20,76 @@ pub fn inspector_rows(ws: &Workspace) -> Vec<ListRowSpec> {
     }
 }
 
+/// Expanded copy for one inspector row id.
+pub fn row_detail(ws: &Workspace, id: &str) -> String {
+    if id == "session:project" {
+        return ws.project.clone();
+    }
+    if id == "session:model" {
+        return ws.model.clone();
+    }
+    if id == "session:connection" {
+        return ws.connection.status_label().to_owned();
+    }
+    if id == "session:id" {
+        return match &ws.connection {
+            crate::ConnectionState::Connected { session_ids } => session_ids
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "(none)".into()),
+            _ => "(none yet)".into(),
+        };
+    }
+    if id == "session:threads" {
+        return ws.threads.len().to_string();
+    }
+    if id == "session:turns" {
+        return ws.usage_lines();
+    }
+    if id == "git:status" {
+        return ws.git_status.clone();
+    }
+    if let Some(name) = id.strip_prefix("mcp:") {
+        return ws
+            .mcp
+            .iter()
+            .find(|m| m.name == name)
+            .map(|m| {
+                format!(
+                    "{} {} supervised (in-process table)",
+                    m.command,
+                    m.state.label()
+                )
+            })
+            .unwrap_or_default();
+    }
+    if let Some(path) = id.strip_prefix("file:") {
+        let selected = ws.selected_file.as_deref() == Some(path);
+        return if selected {
+            format!("{path} selected")
+        } else {
+            format!("{path} not selected")
+        };
+    }
+    if let Some(cid) = id.strip_prefix("point:") {
+        return ws
+            .checkpoints
+            .iter()
+            .find(|c| c.id == cid)
+            .map(|c| c.label.clone())
+            .unwrap_or_default();
+    }
+    if let Some(aid) = id.strip_prefix("agent:") {
+        return ws
+            .threads
+            .iter()
+            .find(|t| t.id == aid)
+            .map(|t| format!("{} {}", t.title, t.status))
+            .unwrap_or_default();
+    }
+    String::new()
+}
+
 fn mark_expanded(mut row: ListRowSpec, ws: &Workspace) -> ListRowSpec {
     row.expanded = ws.right_expanded_id.as_deref() == Some(row.id.as_str());
     row
@@ -50,6 +120,10 @@ fn session_rows(ws: &Workspace) -> Vec<ListRowSpec> {
         ListRowSpec::new("session:threads", "Threads")
             .with_icon(ChromeGlyph::Chat.mark())
             .with_meta(ws.threads.len().to_string()),
+        ListRowSpec::new("session:turns", "Turns")
+            .with_icon(ChromeGlyph::Activity.mark())
+            .with_subtitle(format!("{} local", ws.usage_turns))
+            .with_meta(format!("{} tok", ws.usage_tokens)),
     ]
     .into_iter()
     .map(|r| mark_expanded(r, ws))
@@ -81,10 +155,11 @@ fn core_rows(ws: &Workspace) -> Vec<ListRowSpec> {
 }
 
 fn mcp_rows(ws: &Workspace) -> Vec<ListRowSpec> {
+    const SUPERVISED: &str = "supervised (in-process table)";
     if ws.mcp.is_empty() {
         return vec![ListRowSpec::new("mcp:empty", "No MCP servers")
             .with_icon(ChromeGlyph::Plug.mark())
-            .with_subtitle("~/.grok/config.toml")];
+            .with_subtitle(SUPERVISED)];
     }
     ws.mcp
         .iter()
@@ -103,7 +178,7 @@ fn mcp_rows(ws: &Workspace) -> Vec<ListRowSpec> {
             mark_expanded(
                 ListRowSpec::new(format!("mcp:{}", m.name), m.name.clone())
                     .with_icon(icon)
-                    .with_subtitle(m.command.clone())
+                    .with_subtitle(format!("{} · {SUPERVISED}", m.command))
                     .with_badge(BadgeSpec::new(tone, m.state.label())),
                 ws,
             )
@@ -210,18 +285,23 @@ fn file_rows(ws: &Workspace) -> Vec<ListRowSpec> {
             ListRowSpec::new("file:empty", "No files").with_icon(ChromeGlyph::Folder.mark())
         ];
     }
-    ws.files
-        .iter()
+    ws.files_visible()
+        .into_iter()
         .map(|p| {
             let icon = if p.ends_with('/') {
                 ChromeGlyph::Folder.mark()
             } else {
                 ChromeGlyph::Diff.mark()
             };
-            mark_expanded(
-                ListRowSpec::new(format!("file:{p}"), p.clone()).with_icon(icon),
-                ws,
-            )
+            let selected = ws.selected_file.as_deref() == Some(p.as_str());
+            let title = if selected {
+                format!("* {p}")
+            } else {
+                p.clone()
+            };
+            let mut row = ListRowSpec::new(format!("file:{p}"), title).with_icon(icon);
+            row.selected = selected;
+            mark_expanded(row, ws)
         })
         .collect()
 }
@@ -287,10 +367,36 @@ mod tests {
 
     #[test]
     fn session_rows_include_project() {
-        let ws = Workspace::new("demo", "grok");
+        let mut ws = Workspace::new("demo", "grok");
         let rows = inspector_rows(&ws);
         assert!(rows.iter().any(|r| r.id == "session:project"));
         assert!(rows.iter().any(|r| r.subtitle.contains("demo")));
+        assert!(rows.iter().any(|r| r.id == "session:turns"));
+        ws.usage_turns = 3;
+        ws.usage_tokens = 12;
+        assert!(row_detail(&ws, "session:turns").contains("Turns"));
+        assert!(row_detail(&ws, "session:turns").contains("3"));
+        assert_eq!(row_detail(&ws, "session:model"), "grok");
+        assert_eq!(row_detail(&ws, "session:connection"), "disconnected");
+        assert_eq!(row_detail(&ws, "session:threads"), "1");
+    }
+
+    #[test]
+    fn file_rows_hide_collapsed_children() {
+        let mut ws = Workspace::new("p", "m");
+        ws.inspector = InspectorTab::Files;
+        ws.set_files(vec![
+            "src/".into(),
+            "src/lib.rs".into(),
+            "Cargo.toml".into(),
+        ]);
+        let collapsed = inspector_rows(&ws);
+        assert!(collapsed.iter().any(|r| r.id == "file:src/"));
+        assert!(collapsed.iter().any(|r| r.id == "file:Cargo.toml"));
+        assert!(!collapsed.iter().any(|r| r.id == "file:src/lib.rs"));
+        assert!(ws.toggle_file_expand("src/"));
+        let open = inspector_rows(&ws);
+        assert!(open.iter().any(|r| r.id == "file:src/lib.rs"));
     }
 
     #[test]
@@ -306,6 +412,72 @@ mod tests {
         let rows = inspector_rows(&ws);
         assert_eq!(rows[0].id, "mcp:github");
         assert_eq!(rows[0].icon, "github-light");
+    }
+
+    #[test]
+    fn row_detail_mcp_says_supervised() {
+        let mut empty = Workspace::new("p", "m");
+        empty.inspector = InspectorTab::Mcp;
+        let empty_rows = inspector_rows(&empty);
+        assert!(empty_rows[0]
+            .subtitle
+            .contains("supervised (in-process table)"));
+
+        let mut ws = Workspace::new("p", "m");
+        ws.mcp.push(McpRow {
+            name: "github".into(),
+            command: "npx".into(),
+            transport: "stdio".into(),
+            state: crate::workspace::McpLife::Stopped,
+        });
+        let detail = row_detail(&ws, "mcp:github");
+        assert!(detail.contains("npx"));
+        assert!(detail.contains("stopped"));
+        assert!(detail.contains("supervised (in-process table)"));
+
+        ws.inspector = InspectorTab::Mcp;
+        let rows = inspector_rows(&ws);
+        assert!(rows[0].subtitle.contains("supervised (in-process table)"));
+    }
+
+    #[test]
+    fn file_row_marks_selected() {
+        let mut ws = Workspace::new("p", "m");
+        ws.inspector = InspectorTab::Files;
+        ws.files.push("src/lib.rs".into());
+        ws.files.push("Cargo.toml".into());
+        assert!(ws.select_file("src/lib.rs"));
+        let rows = inspector_rows(&ws);
+        let selected = rows.iter().find(|r| r.id == "file:src/lib.rs").unwrap();
+        assert!(selected.selected);
+        assert!(selected.title.starts_with("* "));
+        let other = rows.iter().find(|r| r.id == "file:Cargo.toml").unwrap();
+        assert!(!other.selected);
+        assert!(!other.title.starts_with("* "));
+        assert!(row_detail(&ws, "file:src/lib.rs").contains("src/lib.rs"));
+        assert!(row_detail(&ws, "file:src/lib.rs").contains("selected"));
+        assert!(row_detail(&ws, "file:Cargo.toml").contains("Cargo.toml"));
+        assert!(row_detail(&ws, "file:Cargo.toml").contains("not selected"));
+    }
+
+    #[test]
+    fn row_detail_resolves_session_git_point_agent() {
+        use crate::workspace::CheckpointRow;
+        let mut ws = Workspace::new("demo-proj", "m");
+        ws.set_git_status("## main");
+        ws.checkpoints.push(CheckpointRow {
+            id: "ck1".into(),
+            label: "start".into(),
+        });
+        let tid = ws.threads[0].id.clone();
+        assert_eq!(row_detail(&ws, "session:project"), "demo-proj");
+        assert_eq!(row_detail(&ws, "git:status"), "## main");
+        assert_eq!(row_detail(&ws, "point:ck1"), "start");
+        let agent = row_detail(&ws, &format!("agent:{tid}"));
+        assert!(agent.contains("New chat"));
+        assert!(agent.contains("idle"));
+        assert!(row_detail(&ws, "unknown:id").is_empty());
+        assert!(row_detail(&ws, "mcp:missing").is_empty());
     }
 
     #[test]

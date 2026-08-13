@@ -1,4 +1,4 @@
-# 13 — Server RPC vs desktop
+# 13: Server RPC vs desktop
 
 **Date:** 2026-08-12
 **Scope:** Wire method constants vs `Server::dispatch` vs desktop `rpc()` / inspector actions. Which unused methods can get a thin honest UI this wave (plan/36).
@@ -24,10 +24,10 @@ Plan/36 already said this. It is still true.
 | Bucket | N | Meaning |
 |---|---|---|
 | Wire constants in `methods.rs` | 71 | Includes `event` plus 70 client/control names |
-| Server `dispatch` arms | 18 | Everything else is `method not found` |
-| Desktop unique `rpc()` methods | 6 | Seven call sites; `git.worktrees` is used twice |
+| Server `dispatch` arms | 23 | 18 live + 5 honest stubs (`model.list/select`, `telemetry.usage`, `remote.list`, `fs.list`) |
+| Desktop unique `rpc()` methods | 11 | Start, interrupt, approval, worktrees, worktree.create, checkpoint create/revert, model.list/select, telemetry.usage, remote.list |
 | Wired and unused by desktop | 12 | Handler exists; UI never posts the frame |
-| Unwired constants | 53 | No router arm (52 requests + `event`) |
+| Unwired constants | 48 | Remaining request names + `event` |
 
 `event` is a server-push method name, not a client request. It is listed under unwired because `dispatch` never accepts it as a request. The desktop also never decodes notification frames from `handle_frame` except the specific result parsers (`session_id_from`, `worktree_paths`, `checkpoint_from`, `first_error`).
 
@@ -39,10 +39,15 @@ Desktop `rpc()` + `handle_frame` only. Shell `host_call` strings that the deskto
 |---|---|---|
 | `session.start` | `ensure_session` | First Send. Stores `session_id`, marks `Workspace` connected. Turns still go to `spawn_grok_turn`. |
 | `session.interrupt` | `interrupt` | Stop / `/stop` / Ctrl+.. Also sets `ignore_turn` so the `grok -p` worker is dropped, not killed through the server. |
-| `approval.respond` | `respond_approval` | Allow / Deny. Only fires if `pending_approval` is set. Desktop never ingest events, so this path is dead in the running app. |
+| `approval.respond` | `respond_approval` | Allow / Deny. Only fires if `pending_approval` is set. Desktop never ingests events, so this path is dead in the running app. |
 | `git.worktrees` | `refresh_worktrees`, `refresh_reminder` | Git Reload, boot, and after a turn. Paths only. Second path becomes the reminder bar. |
 | `checkpoint.create` | `create_checkpoint` | Points New, `/cp`, Ctrl+S. Label always `"manual"`. On RPC error, fabricates a local row. |
 | `checkpoint.revert` | `revert_checkpoint` | Points Revert. Pointer move only (see audit 18). |
+| `git.worktree.create` | `create_worktree` | Git New WT / Settings New WT / palette. Uses `wt_path`, `wt_branch`, `wt_create_branch`. |
+| `model.list` | `bootstrap_catalogs` | Seeds the model catalog (`grok`, `grok-4.6`, `fake`). |
+| `model.select` | Settings model rows | Ack only. Local `select_model` is the live selection. |
+| `telemetry.usage` | `bootstrap_catalogs` | Local snapshot (`turns`/`tokens`/`note`). Turns also increment on Send. |
+| `remote.list` | `bootstrap_catalogs` | `{ local }` plus Tailscale only if `where tailscale` found. No Serve. |
 
 ### Wired and unused
 
@@ -54,7 +59,7 @@ Router arm exists. No desktop `rpc()` call.
 | `session.get` | Snapshot | Session tab shows a locally cached id. |
 | `session.stop` | Stops the backend session | New chat / Delete set `session_id = None` and leave the server session alive. |
 | `turn.send` | `backend.send_turn`, drains events | Composer Send, chips, palette Send. All use `spawn_grok_turn` (`grok -p`). |
-| `git.worktree.create` | Real catalog create (`cwd`, `path`, `branch`, `create_branch`) | Git **New WT** pastes `git worktree add ../mux-feat -b feat` into the composer. |
+| `git.worktree.create` | Real catalog create (`cwd`, `path`, `branch`, `create_branch`) | Wired. See used table. |
 | `checkpoint.list` | Lists the in-memory catalog | Points tab is a local `Vec<CheckpointRow>` seeded at boot, never refreshed from list. |
 | `terminal.create` | `TerminalHub` id + spec | Term strip is `spawn_command` / `cmd.exe /C`. Hub is an in-memory stub (no PTY). |
 | `terminal.list` | Hub ids + alive flags | Term tab dumps `terminal_log`. |
@@ -178,7 +183,7 @@ The method string and `params_json` are never sent. The six live RPCs are handwr
 ### F3. Twelve wired methods have no desktop caller
 
 - **Severity:** Major
-- **Where:** `crates/multiplexer-server/src/server.rs` 129–147 vs `apps/multiplexer-desktop/src/main.rs` `handle_frame` sites
+- **Where:** `crates/multiplexer-server/src/server.rs` 129-147 vs `apps/multiplexer-desktop/src/main.rs` `handle_frame` sites
 - **Evidence:** Dispatch: `session.{start,list,get,stop,interrupt}`, `turn.send`, `approval.respond`, `git.worktrees`, `git.worktree.create`, `checkpoint.{list,create,revert}`, `terminal.{create,list,input,kill}`, `system.{ping,hello}`. Desktop unique methods: `session.interrupt`, `git.worktrees`, `checkpoint.create`, `checkpoint.revert`, `approval.respond`, `session.start`. Unused: `session.list`, `session.get`, `session.stop`, `turn.send`, `git.worktree.create`, `checkpoint.list`, `terminal.create`, `terminal.list`, `terminal.input`, `terminal.kill`, `system.ping`, `system.hello`.
 - **Why it matters:** The server surface the UI can tell the truth about is larger than the six calls. Points never lists. New chat never stops. Git never creates. Term never talks to the hub. Connection never hellos.
 - **This wave:** Wire the "Do this wave" table. Leave `turn.send` and `terminal.*` unlabeled as RPC.

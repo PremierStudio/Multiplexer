@@ -145,6 +145,11 @@ impl<B: SessionBackend> Server<B> {
             methods::TERMINAL_KILL => crate::terms::kill(&self.terminals, req),
             methods::SYSTEM_PING => vec![ok_frame(req.id, json!({ "pong": true }))],
             methods::SYSTEM_HELLO => self.system_hello(req),
+            methods::MODEL_LIST => crate::stubs::model_list(req),
+            methods::MODEL_SELECT => crate::stubs::model_select(req),
+            methods::TELEMETRY_USAGE => crate::stubs::telemetry_usage(req),
+            methods::REMOTE_LIST => crate::stubs::remote_list(req),
+            methods::FS_LIST => crate::stubs::fs_list(req),
             _ => vec![error_frame(
                 req.id,
                 RpcError::new(

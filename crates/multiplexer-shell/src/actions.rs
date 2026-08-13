@@ -28,6 +28,8 @@ pub enum ClientAction {
     RefreshGit,
     CycleFile,
     CopyLastMessage,
+    CreateWorktree,
+    SelectModel,
     SelectLeftSection(crate::workspace::LeftSection),
     ToggleBottom,
     StartMcp,
@@ -74,12 +76,32 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
             ws.toggle_bottom();
             true
         }
+        ClientAction::CreateWorktree => false,
+        ClientAction::SelectModel => {
+            let model = ws.settings.default_model.clone();
+            ws.select_model(model)
+        }
         ClientAction::InsertFileMention => ws.insert_file_mention(),
         ClientAction::ToggleSettings => {
             ws.settings_open = !ws.settings_open;
             true
         }
-        ClientAction::StartMcp | ClientAction::StopMcp => false,
+        ClientAction::StartMcp => {
+            let name = ws
+                .right_expanded_id
+                .as_deref()
+                .and_then(|id| id.strip_prefix("mcp:"))
+                .map(str::to_owned);
+            name.map(|n| ws.start_mcp(&n)).unwrap_or(false)
+        }
+        ClientAction::StopMcp => {
+            let name = ws
+                .right_expanded_id
+                .as_deref()
+                .and_then(|id| id.strip_prefix("mcp:"))
+                .map(str::to_owned);
+            name.map(|n| ws.stop_mcp(&n)).unwrap_or(false)
+        }
         ClientAction::DismissReminder => {
             if ws.reminder.is_none() {
                 false
@@ -133,7 +155,7 @@ mod tests {
         Workspace::new("p", "m")
     }
 
-    fn host_noops() -> [ClientAction; 14] {
+    fn host_noops() -> [ClientAction; 12] {
         [
             ClientAction::Send,
             ClientAction::Interrupt,
@@ -147,8 +169,6 @@ mod tests {
             ClientAction::RefreshGit,
             ClientAction::CycleFile,
             ClientAction::CopyLastMessage,
-            ClientAction::StartMcp,
-            ClientAction::StopMcp,
         ]
     }
 
@@ -398,6 +418,57 @@ mod tests {
             );
             assert_eq!(copy, snapshot, "{action:?} must not mutate workspace");
         }
+    }
+
+    #[test]
+    fn start_stop_mcp_follow_expanded_row() {
+        let mut ws = fresh();
+        ws.mcp.push(crate::workspace::McpRow {
+            name: "linear".into(),
+            command: "npx".into(),
+            transport: "stdio".into(),
+            state: crate::workspace::McpLife::Stopped,
+        });
+        assert!(!apply_layout_action(&mut ws, ClientAction::StartMcp));
+        ws.toggle_right_row("mcp:linear");
+        assert!(apply_layout_action(&mut ws, ClientAction::StartMcp));
+        assert_eq!(ws.mcp[0].state, crate::workspace::McpLife::Ready);
+        assert!(apply_layout_action(&mut ws, ClientAction::StopMcp));
+        assert_eq!(ws.mcp[0].state, crate::workspace::McpLife::Stopped);
+        ws.toggle_right_row("mcp:linear");
+        assert!(!apply_layout_action(&mut ws, ClientAction::StartMcp));
+    }
+
+    #[test]
+    fn select_model_applies_settings_default() {
+        let mut ws = fresh();
+        ws.set_models(vec!["grok".into(), "fake".into()]);
+        ws.settings.set_default_model("fake");
+        assert_eq!(ws.model, "grok");
+        assert!(apply_layout_action(&mut ws, ClientAction::SelectModel));
+        assert_eq!(ws.model, "fake");
+        assert!(!apply_layout_action(&mut ws, ClientAction::SelectModel));
+        ws.settings.set_default_model("missing");
+        assert!(!apply_layout_action(&mut ws, ClientAction::SelectModel));
+        assert_eq!(ws.model, "fake");
+    }
+
+    #[test]
+    fn settings_and_file_mention_actions() {
+        let mut ws = fresh();
+        assert!(!ws.settings_open);
+        assert!(apply_layout_action(&mut ws, ClientAction::ToggleSettings));
+        assert!(ws.settings_open);
+        assert!(apply_layout_action(&mut ws, ClientAction::ToggleSettings));
+        assert!(!ws.settings_open);
+        ws.set_files(vec!["src/lib.rs".into()]);
+        assert!(ws.select_file("src/lib.rs"));
+        assert!(apply_layout_action(
+            &mut ws,
+            ClientAction::InsertFileMention
+        ));
+        assert!(ws.draft.contains("`@src/lib.rs`"));
+        assert!(!apply_layout_action(&mut ws, ClientAction::CreateWorktree));
     }
 
     #[test]

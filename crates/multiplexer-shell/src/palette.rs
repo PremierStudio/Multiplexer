@@ -192,6 +192,42 @@ pub fn default_items() -> Vec<PaletteItem> {
             hint: "",
             action: ClientAction::CopyLastMessage,
         },
+        PaletteItem {
+            id: "files-tab",
+            label: "Files",
+            hint: "g f",
+            action: ClientAction::SelectTab(InspectorTab::Files),
+        },
+        PaletteItem {
+            id: "activity-tab",
+            label: "Activity",
+            hint: "g a",
+            action: ClientAction::SelectTab(InspectorTab::Activity),
+        },
+        PaletteItem {
+            id: "agents-tab",
+            label: "Agents",
+            hint: "g e",
+            action: ClientAction::SelectTab(InspectorTab::Agents),
+        },
+        PaletteItem {
+            id: "settings",
+            label: "Settings",
+            hint: "F2",
+            action: ClientAction::ToggleSettings,
+        },
+        PaletteItem {
+            id: "create-worktree",
+            label: "Create worktree",
+            hint: "",
+            action: ClientAction::CreateWorktree,
+        },
+        PaletteItem {
+            id: "mention-file",
+            label: "Mention selected file",
+            hint: "",
+            action: ClientAction::InsertFileMention,
+        },
     ]
 }
 
@@ -212,6 +248,24 @@ pub fn filter_items(query: &str) -> Vec<PaletteItem> {
                 || item.hint.to_lowercase().contains(&needle)
         })
         .collect()
+}
+
+/// Palette rows as search hits. Empty query is the command catalog; a
+/// nonempty query searches threads, files, and commands together.
+pub fn palette_hits(ws: &crate::Workspace, query: &str) -> Vec<crate::SearchHit> {
+    if query.is_empty() {
+        default_items()
+            .into_iter()
+            .map(|item| crate::SearchHit {
+                kind: crate::SearchKind::Command,
+                id: item.id.to_owned(),
+                title: item.label.to_owned(),
+                hint: item.hint.to_owned(),
+            })
+            .collect()
+    } else {
+        crate::search_workspace(ws, query)
+    }
 }
 
 /// Open/query/selection state for the palette overlay.
@@ -470,5 +524,25 @@ mod tests {
         assert!(!state.open);
         assert!(state.query.is_empty());
         assert_eq!(state.selected, 0);
+    }
+
+    #[test]
+    fn palette_filter_includes_files_and_threads() {
+        let mut ws = crate::Workspace::new("p", "m");
+        ws.threads[0].title = "Fix search".into();
+        ws.set_files(vec!["src/main.rs".into()]);
+
+        let search_hits = palette_hits(&ws, "search");
+        assert!(search_hits
+            .iter()
+            .any(|h| { h.kind == crate::SearchKind::Thread && h.title == "Fix search" }));
+
+        let file_hits = palette_hits(&ws, "main.rs");
+        assert!(file_hits
+            .iter()
+            .any(|h| h.kind == crate::SearchKind::File && h.title.contains("main.rs")));
+
+        let empty = palette_hits(&ws, "");
+        assert!(empty.iter().any(|h| h.kind == crate::SearchKind::Command));
     }
 }

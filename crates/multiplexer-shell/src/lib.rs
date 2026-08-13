@@ -13,27 +13,30 @@ mod inspector_model;
 mod integrations;
 mod notices;
 mod palette;
+mod remote;
 mod search;
 mod settings;
 mod slash;
 mod status;
 mod terminal_ui;
+mod usage;
 mod widgets;
 mod workspace;
 
 pub use actions::{apply_layout_action, ClientAction};
 pub use approval_ui::PendingApproval;
 pub use bars::usage_bar;
-pub use bindings::{host_call, ActionContext, HostCall};
+pub use bindings::{host_call, worktree_create_call, ActionContext, HostCall};
 pub use composer::{
     clamp_cursor, delete_back, delete_forward, insert_at, move_end, move_home, move_left,
     move_right, move_word_left, move_word_right,
 };
 pub use icons::{BrandIcon, ChromeGlyph};
-pub use inspector_model::inspector_rows;
+pub use inspector_model::{inspector_rows, row_detail};
 pub use integrations::{filter_tiles, integration_tiles, TileSpec};
 pub use notices::{dismiss_notice, push_notice, Notice, NoticeKind};
-pub use palette::{default_items, filter_items, PaletteItem, PaletteState};
+pub use palette::{default_items, filter_items, palette_hits, PaletteItem, PaletteState};
+pub use remote::{detect_remotes, RemoteRow};
 pub use search::{search_workspace, SearchHit, SearchKind};
 pub use settings::UiSettings;
 pub use slash::{parse_slash, slash_hint, SlashCommand};
@@ -42,6 +45,7 @@ pub use terminal_ui::{
     format_line, help_text, parse_builtin, push_capped, visible_tail, BuiltinCmd, TermLineKind,
     TERM_HISTORY_MAX, TERM_PROMPT,
 };
+pub use usage::UsageSnapshot;
 pub use widgets::{
     empty_state_tiles, BadgeSpec, ButtonKind, ButtonSpec, EmptyStateSpec, ListRowSpec, TabSpec,
     Tone,

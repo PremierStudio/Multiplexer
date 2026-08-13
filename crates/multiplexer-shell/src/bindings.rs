@@ -13,6 +13,9 @@ pub struct ActionContext {
     pub checkpoint_id: Option<String>,
     pub approval_request_id: Option<String>,
     pub model: String,
+    pub wt_path: String,
+    pub wt_branch: String,
+    pub wt_create_branch: bool,
 }
 
 /// Where a [`ClientAction`] should be executed.
@@ -45,7 +48,9 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         | ClientAction::SelectLeftSection(_)
         | ClientAction::ToggleBottom
         | ClientAction::InsertFileMention
-        | ClientAction::ToggleSettings => HostCall::Local,
+        | ClientAction::ToggleSettings
+        | ClientAction::SelectModel => HostCall::Local,
+        ClientAction::CreateWorktree => worktree_create_call(ctx),
         ClientAction::Send
         | ClientAction::RefreshCores
         | ClientAction::RunTerminal
@@ -84,6 +89,20 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
     }
 }
 
+/// Draft path/branch to `git.worktree.create`. Empty path or branch is NeedsHost.
+pub fn worktree_create_call(ctx: &ActionContext) -> HostCall {
+    if ctx.wt_path.trim().is_empty() || ctx.wt_branch.trim().is_empty() {
+        return HostCall::NeedsHost;
+    }
+    HostCall::Rpc {
+        method: "git.worktree.create",
+        params_json: format!(
+            r#"{{"cwd":"{}","path":"{}","branch":"{}","create_branch":{}}}"#,
+            ctx.project, ctx.wt_path, ctx.wt_branch, ctx.wt_create_branch
+        ),
+    }
+}
+
 fn approval_call(ctx: &ActionContext, decision: &'static str) -> HostCall {
     match (
         ctx.session_id.as_deref(),
@@ -111,6 +130,9 @@ mod tests {
             checkpoint_id: None,
             approval_request_id: None,
             model: "grok".to_owned(),
+            wt_path: String::new(),
+            wt_branch: String::new(),
+            wt_create_branch: false,
         }
     }
 
@@ -244,6 +266,62 @@ mod tests {
     }
 
     #[test]
+    fn worktree_create_draft_dispatches_rpc() {
+        let mut ctx = bare();
+        ctx.wt_path = "../mux-feat".to_owned();
+        ctx.wt_branch = "feat".to_owned();
+        ctx.wt_create_branch = true;
+        assert_rpc(
+            worktree_create_call(&ctx),
+            "git.worktree.create",
+            r#"{"cwd":"C:/repo","path":"../mux-feat","branch":"feat","create_branch":true}"#,
+        );
+        ctx.wt_create_branch = false;
+        assert_rpc(
+            worktree_create_call(&ctx),
+            "git.worktree.create",
+            r#"{"cwd":"C:/repo","path":"../mux-feat","branch":"feat","create_branch":false}"#,
+        );
+        assert_ne!(worktree_create_call(&ctx), HostCall::Local);
+        assert_ne!(
+            worktree_create_call(&ctx),
+            host_call(ClientAction::RefreshGit, &ctx)
+        );
+
+        ctx.wt_path.clear();
+        ctx.wt_create_branch = true;
+        assert_eq!(worktree_create_call(&ctx), HostCall::NeedsHost);
+        ctx.wt_path = "   ".to_owned();
+        assert_eq!(worktree_create_call(&ctx), HostCall::NeedsHost);
+        ctx.wt_path = "../mux-feat".to_owned();
+        ctx.wt_branch.clear();
+        assert_eq!(worktree_create_call(&ctx), HostCall::NeedsHost);
+        ctx.wt_branch = "   ".to_owned();
+        assert_eq!(worktree_create_call(&ctx), HostCall::NeedsHost);
+        assert_ne!(
+            worktree_create_call(&ctx),
+            HostCall::Rpc {
+                method: "git.worktree.create",
+                params_json: r#"{"cwd":"C:/repo"}"#.to_owned(),
+            }
+        );
+
+        ctx.wt_path = "../mux-feat".to_owned();
+        ctx.wt_branch = "feat".to_owned();
+        ctx.wt_create_branch = true;
+        assert_eq!(
+            host_call(ClientAction::CreateWorktree, &ctx),
+            worktree_create_call(&ctx)
+        );
+        ctx.wt_path.clear();
+        assert_eq!(
+            host_call(ClientAction::CreateWorktree, &ctx),
+            HostCall::NeedsHost
+        );
+        assert_eq!(host_call(ClientAction::SelectModel, &ctx), HostCall::Local);
+    }
+
+    #[test]
     fn layout_is_local() {
         let ctx = with_session("sess-1");
         for action in [
@@ -258,6 +336,11 @@ mod tests {
             ClientAction::ToggleHelp,
             ClientAction::DeleteThread,
             ClientAction::CycleModel,
+            ClientAction::SelectLeftSection(crate::workspace::LeftSection::Files),
+            ClientAction::ToggleBottom,
+            ClientAction::InsertFileMention,
+            ClientAction::ToggleSettings,
+            ClientAction::SelectModel,
         ] {
             assert_eq!(host_call(action, &ctx), HostCall::Local, "{action:?}");
             assert_ne!(host_call(action, &ctx), HostCall::NeedsHost, "{action:?}");
