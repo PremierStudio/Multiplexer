@@ -84,6 +84,15 @@ pub fn pty_paste_bytes(text: &str) -> Vec<u8> {
     out
 }
 
+/// One composer line into a live grok: paste bytes plus Enter (`\r`).
+pub fn pty_submit_line(text: &str) -> Vec<u8> {
+    let mut out = pty_paste_bytes(text);
+    if !out.ends_with(b"\r") {
+        out.push(b'\r');
+    }
+    out
+}
+
 /// Convert a host pane size in pixels to PTY cols/rows.
 /// Zero, NaN, or non-positive cell size falls back to 8x16 and clamps to 1..=i16::MAX.
 pub fn pty_grid_from_px(width_px: f32, height_px: f32, cell_w: f32, cell_h: f32) -> (u16, u16) {
@@ -174,6 +183,10 @@ mod tests {
         assert_eq!(pty_paste_bytes("plain"), b"plain");
         assert_ne!(pty_paste_bytes("a\nb"), b"a\nb");
         assert_ne!(pty_paste_bytes("a\r\nb"), b"a\r\nb");
+        assert_eq!(pty_submit_line("hi"), b"hi\r");
+        assert_eq!(pty_submit_line("a\nb"), b"a\rb\r");
+        assert_ne!(pty_submit_line("hi"), b"hi");
+        assert_ne!(pty_submit_line("hi"), b"hi\n");
     }
 
     #[test]

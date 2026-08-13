@@ -57,6 +57,13 @@ impl PtyFrame {
         (self.col as u16, self.row as u16)
     }
 
+    /// Cursor clamped onto the grid for painting a caret cell.
+    pub fn caret(&self) -> (u16, u16) {
+        let col = self.col.min(self.cols.saturating_sub(1));
+        let row = self.row.min(self.rows.saturating_sub(1));
+        (col as u16, row as u16)
+    }
+
     pub fn has_pending(&self) -> bool {
         !self.pending.is_empty()
     }
@@ -147,7 +154,26 @@ impl PtyFrame {
         }
         lines.join("\n")
     }
+}
 
+/// Split `line` at `col` so a host can invert the caret cell.
+pub fn caret_split(line: &str, col: usize) -> (String, char, String) {
+    let mut cells: Vec<char> = line.chars().collect();
+    if cells.is_empty() {
+        cells.push(' ');
+    }
+    let idx = col.min(cells.len());
+    if idx == cells.len() {
+        cells.push(' ');
+    }
+    let idx = idx.min(cells.len() - 1);
+    let before: String = cells[..idx].iter().collect();
+    let ch = cells[idx];
+    let after: String = cells[idx + 1..].iter().collect();
+    (before, ch, after)
+}
+
+impl PtyFrame {
     fn apply_esc(&mut self, seq: &str) {
         debug_assert!(seq.starts_with('\u{1b}'));
         if seq.len() == 1 {
@@ -545,6 +571,28 @@ mod tests {
         assert_ne!(PtyFrame::new(0, 0).size(), (0, 0));
         assert_eq!(PtyFrame::new(0, 0).size(), (1, 1));
         assert_ne!(PtyFrame::new(2, 3).size(), (3, 2));
+    }
+
+    #[test]
+    fn caret_clamps_onto_the_grid() {
+        let mut f = frame(4, 2);
+        assert_eq!(f.caret(), (0, 0));
+        f.feed("hi");
+        assert_eq!(f.caret(), (2, 0));
+        assert_eq!(f.cursor(), (2, 0));
+        f.feed("xy");
+        assert_eq!(f.cursor(), (4, 0));
+        assert_eq!(f.caret(), (3, 0));
+        assert_ne!(f.caret(), f.cursor());
+        let (before, ch, after) = caret_split("ab  ", 2);
+        assert_eq!(before, "ab");
+        assert_eq!(ch, ' ');
+        assert_eq!(after, " ");
+        let empty = caret_split("", 0);
+        assert_eq!(empty.1, ' ');
+        assert_ne!(caret_split("abc", 0).1, 'b');
+        assert_eq!(caret_split("abc", 0).1, 'a');
+        assert_eq!(caret_split("abc", 9).0, "abc");
     }
 
     #[test]

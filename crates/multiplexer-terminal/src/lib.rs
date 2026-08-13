@@ -16,10 +16,12 @@ mod spec;
 
 pub use capture::ProcessCapture;
 pub use error::TerminalError;
-pub use frame::{render_pty_chunk, PtyFrame, ONESHOT_COLS, ONESHOT_ROWS};
+pub use frame::{caret_split, render_pty_chunk, PtyFrame, ONESHOT_COLS, ONESHOT_ROWS};
 pub use hub::{TerminalHub, TerminalSnapshot, TerminalWatch};
 pub use id::TerminalId;
-pub use keys::{pty_grid_from_px, pty_input, pty_key_bytes, pty_paste_bytes, validate_pty_size};
+pub use keys::{
+    pty_grid_from_px, pty_input, pty_key_bytes, pty_paste_bytes, pty_submit_line, validate_pty_size,
+};
 pub use session::{ConptySession, EmbeddedSession};
 pub use spec::TerminalSpec;
 

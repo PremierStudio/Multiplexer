@@ -60,7 +60,9 @@ pub use diff_view::{
     changes_headline, hunks_for_path, mark_last_turn, parse_porcelain, parse_unified_diff,
     sort_diffs, status_mark, DiffHunk, DiffRow, DiffSort, HunkLine, HunkLineKind,
 };
-pub use embed::{embed_from_selection, embed_grok, embed_surface, EmbedTarget};
+pub use embed::{
+    embed_from_selection, embed_grok, embed_surface, live_pty_takes_gui_send, EmbedTarget,
+};
 pub use fuzzy::{fuzzy_best, fuzzy_score};
 pub use icons::{lucide_for_gpui, BrandIcon, ChromeGlyph};
 pub use inspector_model::{inspector_rows, row_detail};

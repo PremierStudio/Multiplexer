@@ -48,6 +48,11 @@ pub fn embed_surface(label: &str) -> String {
     format!("in-app {label}")
 }
 
+/// GUI Send types into the live grok PTY instead of starting `grok -p`.
+pub fn live_pty_takes_gui_send(tui_alive: bool) -> bool {
+    tui_alive
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +105,15 @@ mod tests {
         assert_eq!(embed_grok("   ").args.last().map(String::as_str), Some("."));
         assert_eq!(embed_grok("").args[2], "--cwd");
         assert_ne!(embed_grok("C:/work/app").args.len(), 0);
+    }
+
+    #[test]
+    fn gui_send_uses_live_pty_only_when_alive() {
+        assert!(live_pty_takes_gui_send(true));
+        assert!(!live_pty_takes_gui_send(false));
+        assert_ne!(
+            live_pty_takes_gui_send(true),
+            live_pty_takes_gui_send(false)
+        );
     }
 }

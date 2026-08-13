@@ -40,23 +40,23 @@ use multiplexer_shell::{
     default_terminal_candidates, delete_forward, detect_browsers, detect_remotes, detect_terminals,
     embed_grok, embed_surface, first_run_completed, first_run_keychain_notice, format_line,
     git_commit_line, git_preview_line, help_text, hit_action, hunks_for_path, insert_at,
-    inspector_rows, is_tui_hatch, join_project_path, journal_from_workspace, leaf_name, menu_for,
-    menu_for_thread, merge_cores, merge_mcp, merge_models, move_end, move_home, move_left,
-    move_right, move_word_left, move_word_right, open_external_program, palette_hits,
-    parse_builtin, parse_deep_link, parse_model_keys, parse_slash, parse_unified_diff, plan_send,
-    preferred_terminal, pty_takes_keys, read_crash_journal, read_layout, read_settings,
-    remotes_pill_label, remotes_serve_note, row_detail, search_workspace, slash_arg, status_from,
-    status_line, status_mark, thread_leaf_title, title_overflow, tui_host_px, visible_notices,
-    visible_tail, working_copy, write_crash_journal, write_first_run_done, write_layout,
-    write_settings, BindingTable, BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph,
-    ClientAction, CoreRow, FocusRegion, HunkLineKind, InspectorTab, LeftSection, McpRow, MenuKind,
-    NoticeKind, PaletteState, RemoteRow, Role, SearchKind, SendPlan, SettingsSection, SkillItem,
-    SlashCommand, TermLineKind, TuiLife, Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS,
-    TERM_PROMPT,
+    inspector_rows, is_tui_hatch, join_project_path, journal_from_workspace, leaf_name,
+    live_pty_takes_gui_send, menu_for, menu_for_thread, merge_cores, merge_mcp, merge_models,
+    move_end, move_home, move_left, move_right, move_word_left, move_word_right,
+    open_external_program, palette_hits, parse_builtin, parse_deep_link, parse_model_keys,
+    parse_slash, parse_unified_diff, plan_send, preferred_terminal, pty_takes_keys,
+    read_crash_journal, read_layout, read_settings, remotes_pill_label, remotes_serve_note,
+    row_detail, search_workspace, slash_arg, status_from, status_line, status_mark,
+    thread_leaf_title, title_overflow, tui_host_px, visible_notices, visible_tail, working_copy,
+    write_crash_journal, write_first_run_done, write_layout, write_settings, BindingTable,
+    BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow, FocusRegion,
+    HunkLineKind, InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind, PaletteState, RemoteRow,
+    Role, SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand, TermLineKind, TuiLife,
+    Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
 };
 use multiplexer_terminal::{
-    pty_grid_from_px, pty_input, pty_paste_bytes, EmbeddedSession, ProcessCapture, PtyFrame,
-    TerminalSpec,
+    caret_split, pty_grid_from_px, pty_input, pty_paste_bytes, pty_submit_line, EmbeddedSession,
+    ProcessCapture, PtyFrame, TerminalSpec,
 };
 use multiplexer_wire::codec::{decode_frame, encode_frame};
 use multiplexer_wire::jsonrpc::{Id, Message, Request};
@@ -1444,7 +1444,12 @@ impl ShellView {
     }
 
     fn send(&mut self, cx: &mut Context<Self>) {
-        let busy = self.pending_turn.is_some() || self.workspace.busy;
+        let pty_live = self
+            .selected_thread_id()
+            .and_then(|id| self.embedded.get_mut(&id).map(|s| s.is_alive()))
+            .unwrap_or(false);
+        let busy = (self.pending_turn.is_some() || self.workspace.busy)
+            && !live_pty_takes_gui_send(pty_live);
         match plan_send(&self.workspace.draft, busy) {
             SendPlan::IgnoreEmpty => {
                 self.workspace.push_notice(NoticeKind::Warn, "draft empty");
@@ -1472,6 +1477,17 @@ impl ShellView {
             return;
         };
         self.persist_crash();
+        if live_pty_takes_gui_send(pty_live) {
+            if let Some(session) = self.selected_session() {
+                let _ = session.write(&pty_submit_line(&text));
+            }
+            self.workspace.busy = false;
+            if let Some(t) = self.workspace.selected_thread_mut() {
+                t.status = "tui".into();
+            }
+            self.term_meta("sent to this chat's live grok");
+            return;
+        }
         let _ = self.ensure_session();
         let cwd = PathBuf::from(&self.workspace.project);
         let rx = spawn_grok_turn(TurnRequest {
@@ -3275,6 +3291,22 @@ impl ShellView {
             .overflow_hidden()
             .bg(Theme::ink())
             .child(self.chat_header(cx))
+            .child(if !tui
+                && thread
+                    .as_ref()
+                    .is_some_and(|t| t.tui.life == TuiLife::Running)
+            {
+                div()
+                    .id("tui-sync-note")
+                    .px_6()
+                    .py_1()
+                    .text_size(Theme::text_caption())
+                    .text_color(Theme::muted())
+                    .child("Same grok as TUI. Send goes to that session. Flip TUI for the live pager.")
+                    .into_any()
+            } else {
+                div().id("no-tui-sync-note").into_any()
+            })
             .child(if tui {
                 self.grok_tui_host(cx)
             } else {
@@ -3624,11 +3656,6 @@ impl ShellView {
     }
 
     fn grok_tui_host(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let scrollback = self
-            .workspace
-            .selected_thread()
-            .map(|t| t.tui.scrollback.clone())
-            .unwrap_or_default();
         let failed = self
             .workspace
             .selected_thread()
@@ -3638,22 +3665,19 @@ impl ShellView {
             .selected_thread()
             .map(|t| t.tui.note.clone())
             .unwrap_or_default();
-        let lines: Vec<String> = if failed {
-            vec![note]
-        } else if scrollback.is_empty() {
-            vec!["starting grok…".to_owned()]
+        let frame_id = self.selected_thread_id();
+        let (lines, caret): (Vec<String>, Option<(u16, u16)>) = if failed {
+            (vec![note], None)
+        } else if let Some(frame) = frame_id.and_then(|id| self.frames.get(&id)) {
+            if frame.has_ink() {
+                (frame.lines(), Some(frame.caret()))
+            } else {
+                (vec!["starting grok…".to_owned()], Some((0, 0)))
+            }
         } else {
-            scrollback
-                .lines()
-                .map(|line| {
-                    if line.is_empty() {
-                        " ".to_owned()
-                    } else {
-                        line.to_owned()
-                    }
-                })
-                .collect()
+            (vec!["starting grok…".to_owned()], Some((0, 0)))
         };
+        let tui_font = self.tui_font.clone();
         div()
             .id("grok-tui-host")
             .flex_1()
@@ -3676,14 +3700,40 @@ impl ShellView {
                             cx.notify();
                         }),
                     )
-                    .font(font(self.tui_font.clone()))
+                    .font(font(tui_font))
                     .text_size(px(13.0))
                     .text_color(Theme::text())
-                    .children(
-                        lines
-                            .into_iter()
-                            .map(|line| div().whitespace_nowrap().h(px(18.0)).child(line)),
-                    ),
+                    .children(lines.into_iter().enumerate().map(|(row, line)| {
+                        let show_caret = caret.is_some_and(|(_, r)| r as usize == row);
+                        if let Some((col, _)) = caret.filter(|_| show_caret) {
+                            let (before, ch, after) = caret_split(&line, col as usize);
+                            let mark = if ch == ' ' {
+                                "▌".to_owned()
+                            } else {
+                                ch.to_string()
+                            };
+                            div()
+                                .flex()
+                                .flex_row()
+                                .h(px(18.0))
+                                .child(div().whitespace_nowrap().child(before))
+                                .child(
+                                    div()
+                                        .whitespace_nowrap()
+                                        .bg(Theme::text())
+                                        .text_color(Theme::ink())
+                                        .child(mark),
+                                )
+                                .child(div().whitespace_nowrap().child(after))
+                        } else {
+                            let shown = if line.is_empty() {
+                                " ".to_owned()
+                            } else {
+                                line
+                            };
+                            div().whitespace_nowrap().h(px(18.0)).child(shown)
+                        }
+                    })),
             )
             .into_any()
     }
