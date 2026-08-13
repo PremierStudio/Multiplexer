@@ -28,6 +28,8 @@ pub enum ClientAction {
     RefreshGit,
     CycleFile,
     CopyLastMessage,
+    SelectLeftSection(crate::workspace::LeftSection),
+    ToggleBottom,
 }
 
 /// Apply a workspace-only layout action.
@@ -54,13 +56,19 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
             ws.chrome.toggle_right();
             true
         }
-        ClientAction::SelectTab(tab) => {
-            if ws.inspector == tab {
-                false
-            } else {
-                ws.inspector = tab;
+        ClientAction::SelectTab(tab) => ws.select_inspector(tab),
+        ClientAction::SelectLeftSection(section) => {
+            let changed = ws.select_left_section(section);
+            if !ws.chrome.left_open {
+                ws.chrome.left_open = true;
                 true
+            } else {
+                changed
             }
+        }
+        ClientAction::ToggleBottom => {
+            ws.toggle_bottom();
+            true
         }
         ClientAction::DismissReminder => {
             if ws.reminder.is_none() {

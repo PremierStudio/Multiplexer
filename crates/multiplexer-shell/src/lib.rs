@@ -8,10 +8,14 @@ mod approval_ui;
 mod bars;
 mod bindings;
 mod composer;
+mod icons;
+mod inspector_model;
+mod integrations;
 mod palette;
 mod slash;
 mod status;
 mod terminal_ui;
+mod widgets;
 mod workspace;
 
 pub use actions::{apply_layout_action, ClientAction};
@@ -22,6 +26,9 @@ pub use composer::{
     clamp_cursor, delete_back, delete_forward, insert_at, move_end, move_home, move_left,
     move_right, move_word_left, move_word_right,
 };
+pub use icons::{BrandIcon, ChromeGlyph};
+pub use inspector_model::inspector_rows;
+pub use integrations::{filter_tiles, integration_tiles, TileSpec};
 pub use palette::{default_items, filter_items, PaletteItem, PaletteState};
 pub use slash::{parse_slash, slash_hint, SlashCommand};
 pub use status::{status_from, status_line, ClientStatus};
@@ -29,9 +36,14 @@ pub use terminal_ui::{
     format_line, help_text, parse_builtin, push_capped, visible_tail, BuiltinCmd, TermLineKind,
     TERM_HISTORY_MAX, TERM_PROMPT,
 };
+pub use widgets::{
+    empty_state_tiles, BadgeSpec, ButtonKind, ButtonSpec, EmptyStateSpec, ListRowSpec, TabSpec,
+    Tone,
+};
 pub use workspace::{
-    ChatMessage, CheckpointRow, ChromeLayout, CoreRow, InspectorTab, McpRow, Role, Thread,
-    Workspace, LEFT_WIDTH_MAX, LEFT_WIDTH_MIN, RAIL_COLLAPSED, RIGHT_WIDTH_MAX, RIGHT_WIDTH_MIN,
+    ChatMessage, CheckpointRow, ChromeLayout, CoreRow, InspectorTab, LeftSection, McpRow, Role,
+    Thread, Workspace, BOTTOM_HEIGHT_COLLAPSED, BOTTOM_HEIGHT_EXPANDED, LEFT_WIDTH_MAX,
+    LEFT_WIDTH_MIN, RAIL_COLLAPSED, RIGHT_WIDTH_MAX, RIGHT_WIDTH_MIN,
 };
 
 use multiplexer_layout::{LayoutForest, LayoutNode, PaneId};

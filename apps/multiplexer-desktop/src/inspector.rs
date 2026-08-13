@@ -75,10 +75,13 @@ pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
             ),
         ],
         InspectorTab::Terminal | InspectorTab::Skills => Vec::new(),
+        InspectorTab::Files => Vec::new(),
+        InspectorTab::Activity => Vec::new(),
     }
 }
 
-/// Copy for the active inspector tab so the GPUI rail can stay a thin caller.
+/// Copy for the active inspector tab. Tests and expanded-row fallbacks use this.
+#[allow(dead_code)]
 pub fn inspector_body(ws: &Workspace, session_id: Option<&str>) -> String {
     match ws.inspector {
         InspectorTab::Session => ws.session_detail(session_id),
@@ -88,6 +91,8 @@ pub fn inspector_body(ws: &Workspace, session_id: Option<&str>) -> String {
         InspectorTab::Git => ws.git_detail(),
         InspectorTab::Terminal => ws.terminal_detail(),
         InspectorTab::Skills => ws.skills_detail(),
+        InspectorTab::Files => ws.files_detail(),
+        InspectorTab::Activity => ws.activity_detail(),
     }
 }
 
@@ -152,5 +157,9 @@ mod tests {
 
         ws.inspector = InspectorTab::Skills;
         assert_eq!(inspector_body(&ws, None), ws.skills_detail());
+        ws.inspector = InspectorTab::Files;
+        assert_eq!(inspector_body(&ws, None), ws.files_detail());
+        ws.inspector = InspectorTab::Activity;
+        assert_eq!(inspector_body(&ws, None), ws.activity_detail());
     }
 }

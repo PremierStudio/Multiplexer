@@ -8,6 +8,7 @@ members = [
     "crates/multiplexer-checkpoint",
     "crates/multiplexer-mcp",
     "crates/multiplexer-layout",
+    "crates/multiplexer-theme",
     "crates/multiplexer-shell",
     "crates/multiplexer-terminal",
     "crates/multiplexer-auth",

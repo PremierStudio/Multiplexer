@@ -41,7 +41,9 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         | ClientAction::ClosePalette
         | ClientAction::ToggleHelp
         | ClientAction::DeleteThread
-        | ClientAction::CycleModel => HostCall::Local,
+        | ClientAction::CycleModel
+        | ClientAction::SelectLeftSection(_)
+        | ClientAction::ToggleBottom => HostCall::Local,
         ClientAction::Send
         | ClientAction::RefreshCores
         | ClientAction::RunTerminal

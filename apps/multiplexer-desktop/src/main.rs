@@ -13,7 +13,7 @@ use gpui::{
     KeyDownEvent, MouseButton, MouseMoveEvent, SharedString, TitlebarOptions, Window,
     WindowBackgroundAppearance, WindowBounds, WindowOptions,
 };
-use inspector::{inspector_body, tab_buttons, InspectorAction};
+use inspector::{tab_buttons, InspectorAction};
 use multiplexer_checkpoint::CheckpointStore;
 use multiplexer_client::{
     list_project_tree, spawn_command, spawn_grok_turn, windows_cmd, CommandResult, ListOptions,
@@ -26,10 +26,11 @@ use multiplexer_mcp::{
 use multiplexer_resman::sample_cores;
 use multiplexer_server::Server;
 use multiplexer_shell::{
-    apply_layout_action, delete_forward, format_line, help_text, insert_at, move_end, move_home,
-    move_left, move_right, move_word_left, move_word_right, parse_builtin, parse_slash,
-    status_from, status_line, visible_tail, BuiltinCmd, CheckpointRow, ClientAction, CoreRow,
-    InspectorTab, McpRow, PaletteState, Role, SlashCommand, TermLineKind, Workspace, TERM_PROMPT,
+    apply_layout_action, delete_forward, format_line, help_text, insert_at, inspector_rows,
+    move_end, move_home, move_left, move_right, move_word_left, move_word_right, parse_builtin,
+    parse_slash, status_from, status_line, visible_tail, BuiltinCmd, CheckpointRow, ChromeGlyph,
+    ClientAction, CoreRow, InspectorTab, LeftSection, ListRowSpec, McpRow, PaletteState, Role,
+    SlashCommand, TermLineKind, Workspace, TERM_PROMPT,
 };
 use multiplexer_wire::codec::{decode_frame, encode_frame};
 use multiplexer_wire::jsonrpc::{Id, Message, Request};
@@ -692,6 +693,10 @@ impl ShellView {
             cx.notify();
             return;
         }
+        if key == "`" && mods.control {
+            self.dispatch(ClientAction::ToggleBottom, cx);
+            return;
+        }
         if key == "v" && mods.control {
             if let Some(item) = cx.read_from_clipboard() {
                 if let Some(text) = item.text() {
@@ -898,45 +903,83 @@ impl ShellView {
         let left_on = self.workspace.chrome.left_open;
         let right_on = self.workspace.chrome.right_open;
         glass_bar()
-            .h(px(48.0))
-            .px_4()
+            .h(px(44.0))
+            .px_3()
             .rounded_none()
             .border_b_1()
-            .child(ghost_btn(
-                "Chats",
-                if left_on { "Hide" } else { "Show" },
+            .child(icon_btn(
+                ChromeGlyph::Layout.mark(),
+                if left_on { "Hide chats" } else { "Show chats" },
                 cx,
                 |this, cx| this.dispatch(ClientAction::ToggleLeft, cx),
             ))
+            .child(pill(
+                short_path(&self.workspace.project),
+                ChromeGlyph::Folder.mark(),
+            ))
+            .child(pill(
+                self.workspace
+                    .reminder
+                    .as_ref()
+                    .map(|(b, _)| b.as_str())
+                    .unwrap_or("main"),
+                ChromeGlyph::Git.mark(),
+            ))
             .child(
                 div()
-                    .flex_1()
-                    .px_3()
-                    .text_color(Theme::muted())
-                    .child(format!(
-                        "{}   ·   {}   ·   {}",
-                        short_path(&self.workspace.project),
-                        self.workspace.model,
-                        self.workspace.connection.status_label()
+                    .id("model-pill")
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.dispatch(ClientAction::CycleModel, cx);
+                        }),
+                    )
+                    .child(pill(
+                        self.workspace.model.clone(),
+                        ChromeGlyph::Sparkle.mark(),
                     )),
             )
-            .child(ghost_btn("Palette", "Ctrl+K", cx, |this, cx| {
-                this.dispatch(ClientAction::TogglePalette, cx);
-            }))
-            .child(ghost_btn("Help", "F1", cx, |this, cx| {
+            .child(div().flex_1())
+            .child(if self.workspace.busy {
+                div().child(icon_btn(
+                    ChromeGlyph::Stop.mark(),
+                    "Stop",
+                    cx,
+                    |this, cx| {
+                        this.interrupt();
+                        cx.notify();
+                    },
+                ))
+            } else {
+                div().child(icon_btn(
+                    ChromeGlyph::Play.mark(),
+                    "Idle",
+                    cx,
+                    |this, cx| {
+                        this.term_meta("start a turn from the composer");
+                        cx.notify();
+                    },
+                ))
+            })
+            .child(icon_btn(
+                ChromeGlyph::Palette.mark(),
+                "Palette",
+                cx,
+                |this, cx| {
+                    this.dispatch(ClientAction::TogglePalette, cx);
+                },
+            ))
+            .child(icon_btn("?", "Help", cx, |this, cx| {
                 this.dispatch(ClientAction::ToggleHelp, cx);
             }))
-            .child(if self.workspace.busy {
-                div().child(ghost_btn("Stop", "Ctrl+.", cx, |this, cx| {
-                    this.interrupt();
-                    cx.notify();
-                }))
-            } else {
-                div()
-            })
-            .child(ghost_btn(
-                "Inspector",
-                if right_on { "Hide" } else { "Show" },
+            .child(icon_btn(
+                ChromeGlyph::Settings.mark(),
+                if right_on {
+                    "Hide inspector"
+                } else {
+                    "Show inspector"
+                },
                 cx,
                 |this, cx| this.dispatch(ClientAction::ToggleRight, cx),
             ))
@@ -945,90 +988,234 @@ impl ShellView {
     fn left_rail(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let open = self.workspace.chrome.left_open;
         let w = self.workspace.chrome.occupied_left();
+        let section = self.workspace.left_section;
         let selected = self.workspace.selected;
         let threads = self.workspace.threads.clone();
-        let rail = glass_pane().w(px(w)).h_full().flex().flex_col();
-        if !open {
-            return rail.child(collapsed_strip("Chats", cx, |this, cx| {
-                this.dispatch(ClientAction::ToggleLeft, cx);
+        let files = self.workspace.files.clone();
+        let activity = self.workspace.terminal_log.clone();
+        let sessions = match &self.workspace.connection {
+            multiplexer_shell::ConnectionState::Connected { session_ids } => session_ids.clone(),
+            _ => Vec::new(),
+        };
+        let icons = div()
+            .w(px(44.0))
+            .h_full()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .py_2()
+            .children(LeftSection::all().into_iter().map(|s| {
+                let on = section == s;
+                div()
+                    .id(SharedString::from(s.rail_label()))
+                    .h(px(36.0))
+                    .mx_1()
+                    .rounded_lg()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .bg(if on {
+                        Theme::selection()
+                    } else {
+                        hsla(0.0, 0.0, 1.0, 0.0)
+                    })
+                    .text_color(if on { Theme::accent() } else { Theme::muted() })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            this.dispatch(ClientAction::SelectLeftSection(s), cx);
+                        }),
+                    )
+                    .child(s.glyph())
             }));
+        let rail = glass_pane().w(px(w)).h_full().flex();
+        if !open {
+            return rail.child(icons);
         }
-        rail.child(
+        let list = div().flex_1().flex().flex_col().min_w_0().child(
             div()
                 .px_3()
                 .py_2()
                 .flex()
                 .justify_between()
                 .items_center()
-                .child(div().text_color(Theme::muted()).child("CHATS"))
                 .child(
+                    div()
+                        .text_color(Theme::faint())
+                        .child(section.label().to_ascii_uppercase()),
+                )
+                .child(if section == LeftSection::Threads {
                     div()
                         .flex()
                         .gap_1()
-                        .child(ghost_btn("New", "+", cx, |this, cx| {
+                        .child(icon_btn(ChromeGlyph::Plus.mark(), "New", cx, |this, cx| {
                             this.dispatch(ClientAction::NewThread, cx);
                         }))
-                        .child(ghost_btn("Del", "⌫", cx, |this, cx| {
+                        .child(icon_btn("⌫", "Delete", cx, |this, cx| {
                             this.dispatch(ClientAction::DeleteThread, cx);
-                        })),
-                ),
-        )
-        .children(threads.into_iter().enumerate().map(|(i, t)| {
-            let on = i == selected;
-            div()
-                .id(SharedString::from(format!("thr-{i}")))
-                .mx_2()
-                .mb_1()
-                .px_3()
-                .py_2()
-                .rounded_xl()
-                .bg(if on {
-                    hsla(0.58, 0.35, 0.22, 0.45)
+                        }))
                 } else {
-                    hsla(0.0, 0.0, 1.0, 0.03)
-                })
-                .border_1()
-                .border_color(if on {
-                    Theme::hairline_bright()
-                } else {
-                    hsla(0.0, 0.0, 1.0, 0.04)
-                })
-                .cursor_pointer()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, _, cx| {
-                        this.dispatch(ClientAction::SelectThread(i), cx);
+                    div()
+                }),
+        );
+        let list = match section {
+            LeftSection::Threads => list.children(threads.into_iter().enumerate().map(|(i, t)| {
+                list_row(
+                    format!("thr-{i}"),
+                    ChromeGlyph::Chat.mark(),
+                    t.title.clone(),
+                    Workspace::thread_preview(&t),
+                    format!("{} · {}", t.status, t.id),
+                    i == selected,
+                    false,
+                    cx,
+                    move |this, cx| this.dispatch(ClientAction::SelectThread(i), cx),
+                )
+            })),
+            LeftSection::Agents => list.children(if sessions.is_empty() {
+                vec![list_row(
+                    "agent-none",
+                    ChromeGlyph::Agent.mark(),
+                    "No live session",
+                    "Send a turn to start",
+                    "",
+                    false,
+                    false,
+                    cx,
+                    |this, cx| {
+                        this.term_meta("start a session from the composer");
+                        cx.notify();
+                    },
+                )]
+            } else {
+                sessions
+                    .into_iter()
+                    .map(|id| {
+                        let shown = id.clone();
+                        list_row(
+                            format!("agent-{id}"),
+                            ChromeGlyph::Agent.mark(),
+                            shown,
+                            "connected",
+                            "",
+                            true,
+                            self.workspace.busy,
+                            cx,
+                            |this, cx| {
+                                this.term_meta("session selected");
+                                cx.notify();
+                            },
+                        )
+                    })
+                    .collect()
+            }),
+            LeftSection::Files => list.children(if files.is_empty() {
+                vec![list_row(
+                    "file-none",
+                    ChromeGlyph::Folder.mark(),
+                    "No files listed",
+                    "Reload from the Files tab",
+                    "",
+                    false,
+                    false,
+                    cx,
+                    |this, cx| {
+                        this.workspace.inspector = InspectorTab::Files;
+                        cx.notify();
+                    },
+                )]
+            } else {
+                files
+                    .into_iter()
+                    .map(|p| {
+                        let title = p.clone();
+                        list_row(
+                            format!("file-{p}"),
+                            ChromeGlyph::Folder.mark(),
+                            title,
+                            "",
+                            "",
+                            false,
+                            false,
+                            cx,
+                            move |this, cx| {
+                                this.term_meta(&format!("file {p}"));
+                                cx.notify();
+                            },
+                        )
+                    })
+                    .collect()
+            }),
+            LeftSection::Activity => list.children(
+                activity
+                    .into_iter()
+                    .rev()
+                    .take(20)
+                    .enumerate()
+                    .map(|(i, line)| {
+                        list_row(
+                            format!("act-{i}"),
+                            ChromeGlyph::Activity.mark(),
+                            line,
+                            "",
+                            "",
+                            false,
+                            false,
+                            cx,
+                            |this, cx| {
+                                this.focus = Focus::Terminal;
+                                cx.notify();
+                            },
+                        )
                     }),
-                )
-                .child(div().child(t.title.clone()))
-                .child(
-                    div()
-                        .text_color(Theme::muted())
-                        .child(Workspace::thread_preview(&t)),
-                )
-                .child(
-                    div()
-                        .text_color(Theme::muted())
-                        .child(format!("{} · {}", t.status, t.id)),
-                )
-        }))
+            ),
+        };
+        rail.child(icons).child(list)
     }
 
     fn right_rail(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let open = self.workspace.chrome.right_open;
         let w = self.workspace.chrome.occupied_right();
         let tab = self.workspace.inspector;
-        let session = self
-            .session_id
-            .clone()
-            .unwrap_or_else(|| "(none yet)".into());
-        let body = inspector_body(&self.workspace, Some(session.as_str()));
         let buttons = tab_buttons(tab);
+        let rows = inspector_rows(&self.workspace);
         let rail = glass_pane().w(px(w)).h_full().flex().flex_col();
         if !open {
-            return rail.child(collapsed_strip("Info", cx, |this, cx| {
-                this.dispatch(ClientAction::ToggleRight, cx);
-            }));
+            return rail.child(
+                div()
+                    .w(px(44.0))
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .py_2()
+                    .children(InspectorTab::all().into_iter().map(|t| {
+                        let on = tab == t;
+                        div()
+                            .id(SharedString::from(format!("rtab-{}", t.label())))
+                            .h(px(32.0))
+                            .mx_1()
+                            .rounded_lg()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .bg(if on {
+                                Theme::selection()
+                            } else {
+                                hsla(0., 0., 1., 0.)
+                            })
+                            .text_color(if on { Theme::accent() } else { Theme::muted() })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.dispatch(ClientAction::SelectTab(t), cx);
+                                }),
+                            )
+                            .child(t.glyph())
+                    })),
+            );
         }
         rail.child(div().flex().px_2().pt_2().gap_1().flex_wrap().children(
             InspectorTab::all().into_iter().map(|t| {
@@ -1040,7 +1227,7 @@ impl ShellView {
                     .rounded_lg()
                     .cursor_pointer()
                     .bg(if on {
-                        hsla(0.58, 0.40, 0.28, 0.50)
+                        Theme::selection()
                     } else {
                         hsla(0.0, 0.0, 1.0, 0.03)
                     })
@@ -1050,7 +1237,7 @@ impl ShellView {
                             this.dispatch(ClientAction::SelectTab(t), cx);
                         }),
                     )
-                    .child(t.label())
+                    .child(format!("{} {}", t.glyph(), t.label()))
             }),
         ))
         .child(
@@ -1066,7 +1253,14 @@ impl ShellView {
                     })
                 })),
         )
-        .child(div().p_3().flex_1().text_color(Theme::muted()).child(body))
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .py_1()
+                .children(rows.into_iter().map(|row| inspector_row_el(row, cx))),
+        )
     }
 
     fn center(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1160,8 +1354,9 @@ impl ShellView {
                                 this.run_shell("git status");
                                 cx.notify();
                             }))
-                            .child(chip("dir", cx, |this, cx| {
-                                this.run_shell("dir /b");
+                            .child(chip("List project files", cx, |this, cx| {
+                                this.workspace.inspector = InspectorTab::Files;
+                                this.workspace.left_section = LeftSection::Files;
                                 cx.notify();
                             }))
                             .child(chip("Copy last", cx, |this, cx| {
@@ -1180,7 +1375,7 @@ impl ShellView {
                                     .px_3()
                                     .py_2()
                                     .rounded_xl()
-                                    .bg(hsla(0.0, 0.0, 1.0, 0.06))
+                                    .bg(Theme::surface())
                                     .border_1()
                                     .border_color(if self.focus == Focus::Composer {
                                         Theme::accent()
@@ -1283,7 +1478,7 @@ impl ShellView {
             format!("{TERM_PROMPT} {}", self.workspace.term_draft)
         };
         glass_bar()
-            .h(px(108.0))
+            .h(px(self.workspace.occupied_bottom()))
             .px_3()
             .rounded_none()
             .border_t_1()
@@ -1508,33 +1703,26 @@ fn glass_bar() -> gpui::Div {
         .border_color(Theme::hairline())
 }
 
-fn collapsed_strip(
-    label: &'static str,
-    cx: &mut Context<ShellView>,
-    on_click: impl Fn(&mut ShellView, &mut Context<ShellView>) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(SharedString::from(label))
-        .flex_1()
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _, _, cx| on_click(this, cx)),
-        )
-        .child(div().text_color(Theme::muted()).child(label))
-}
-
 fn empty_center() -> gpui::Div {
     div()
         .flex_1()
         .flex()
+        .flex_col()
         .items_center()
         .justify_center()
+        .gap_3()
         .text_color(Theme::muted())
-        .child("Start a chat, open the palette (Ctrl+K), or run a command in the terminal strip.")
+        .child(
+            div()
+                .text_color(Theme::accent())
+                .child(ChromeGlyph::Sparkle.mark()),
+        )
+        .child(div().child("A control surface for your agents"))
+        .child(
+            div()
+                .text_color(Theme::faint())
+                .child("Ctrl+K palette   F1 help   Ctrl+` terminal"),
+        )
 }
 
 fn chip(
@@ -1556,6 +1744,181 @@ fn chip(
             cx.listener(move |this, _, _, cx| on_click(this, cx)),
         )
         .child(label)
+}
+
+fn icon_btn(
+    mark: &'static str,
+    hint: &'static str,
+    cx: &mut Context<ShellView>,
+    on_click: impl Fn(&mut ShellView, &mut Context<ShellView>) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(SharedString::from(format!("icon-{hint}")))
+        .w(px(32.0))
+        .h(px(32.0))
+        .rounded_lg()
+        .flex()
+        .items_center()
+        .justify_center()
+        .border_1()
+        .border_color(Theme::hairline())
+        .bg(Theme::glass_ultra())
+        .text_color(Theme::text())
+        .cursor_pointer()
+        .hover(|s| s.bg(Theme::selection()))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| on_click(this, cx)),
+        )
+        .child(mark)
+}
+
+fn pill(text: impl Into<String>, mark: &'static str) -> impl IntoElement {
+    div()
+        .h(px(28.0))
+        .px_2()
+        .rounded_lg()
+        .flex()
+        .items_center()
+        .gap_1()
+        .bg(Theme::glass_ultra())
+        .border_1()
+        .border_color(Theme::hairline())
+        .text_color(Theme::muted())
+        .child(mark)
+        .child(text.into())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn list_row(
+    id: impl Into<String>,
+    icon: &'static str,
+    title: impl Into<String>,
+    subtitle: impl Into<String>,
+    meta: impl Into<String>,
+    selected: bool,
+    busy: bool,
+    cx: &mut Context<ShellView>,
+    on_click: impl Fn(&mut ShellView, &mut Context<ShellView>) + 'static,
+) -> gpui::AnyElement {
+    let title = title.into();
+    let subtitle = subtitle.into();
+    let meta = meta.into();
+    let id = id.into();
+    div()
+        .id(SharedString::from(id))
+        .mx_2()
+        .mb_1()
+        .px_3()
+        .py_2()
+        .rounded_xl()
+        .bg(if selected {
+            Theme::selection()
+        } else {
+            Theme::glass_ultra()
+        })
+        .border_1()
+        .border_color(if selected {
+            Theme::hairline_bright()
+        } else {
+            Theme::hairline()
+        })
+        .cursor_pointer()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| on_click(this, cx)),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_2()
+                .items_center()
+                .child(div().text_color(Theme::accent()).child(icon))
+                .child(div().flex_1().child(title))
+                .child(
+                    div()
+                        .text_color(Theme::faint())
+                        .child(if busy { "…" } else { "" }),
+                ),
+        )
+        .child(if subtitle.is_empty() {
+            div()
+        } else {
+            div().text_color(Theme::muted()).child(subtitle)
+        })
+        .child(if meta.is_empty() {
+            div()
+        } else {
+            div().text_color(Theme::faint()).child(meta)
+        })
+        .into_any()
+}
+
+fn inspector_row_el(row: ListRowSpec, cx: &mut Context<ShellView>) -> impl IntoElement {
+    let id = row.id.clone();
+    let title = row.title.clone();
+    let subtitle = row.subtitle.clone();
+    let meta = row.meta.clone();
+    let icon = row.icon.clone();
+    let selected = row.selected || row.expanded;
+    let expanded = row.expanded;
+    let badge = row.badge.clone();
+    div()
+        .id(SharedString::from(id.clone()))
+        .mx_2()
+        .mb_1()
+        .px_3()
+        .py_2()
+        .rounded_xl()
+        .bg(if selected {
+            Theme::selection()
+        } else {
+            Theme::glass_ultra()
+        })
+        .border_1()
+        .border_color(Theme::hairline())
+        .cursor_pointer()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _, _, cx| {
+                this.workspace.toggle_right_row(id.clone());
+                cx.notify();
+            }),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_2()
+                .items_center()
+                .child(div().text_color(Theme::accent()).child(icon))
+                .child(div().flex_1().child(title))
+                .child(if let Some(b) = badge {
+                    let tone_bg = match b.tone {
+                        multiplexer_shell::Tone::Warn => Theme::warn(),
+                        multiplexer_shell::Tone::Danger => Theme::danger(),
+                        multiplexer_shell::Tone::Good => Theme::good(),
+                        _ => Theme::accent_muted(),
+                    };
+                    div()
+                        .px_1()
+                        .rounded_md()
+                        .bg(tone_bg)
+                        .text_color(Theme::text())
+                        .child(b.text)
+                } else {
+                    div()
+                }),
+        )
+        .child(if subtitle.is_empty() {
+            div()
+        } else {
+            div().text_color(Theme::muted()).child(subtitle)
+        })
+        .child(if expanded && !meta.is_empty() {
+            div().text_color(Theme::faint()).child(meta)
+        } else {
+            div()
+        })
 }
 
 fn ghost_btn(

@@ -1,0 +1,12 @@
+[package]
+name = "multiplexer-theme"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Headless theme tokens: glass, density, elevation. No GPUI types."
+
+[dependencies]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }

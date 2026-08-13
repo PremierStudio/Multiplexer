@@ -37,6 +37,8 @@ pub enum InspectorTab {
     Git,
     Terminal,
     Skills,
+    Files,
+    Activity,
 }
 
 impl InspectorTab {
@@ -49,10 +51,26 @@ impl InspectorTab {
             Self::Git => "Git",
             Self::Terminal => "Term",
             Self::Skills => "Skills",
+            Self::Files => "Files",
+            Self::Activity => "Activity",
         }
     }
 
-    pub fn all() -> [InspectorTab; 7] {
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Self::Session => "◎",
+            Self::Resources => "▣",
+            Self::Mcp => "⬡",
+            Self::Checkpoints => "⚑",
+            Self::Git => "⎇",
+            Self::Terminal => ">_",
+            Self::Skills => "✦",
+            Self::Files => "▤",
+            Self::Activity => "●",
+        }
+    }
+
+    pub fn all() -> [InspectorTab; 9] {
         [
             Self::Session,
             Self::Resources,
@@ -61,7 +79,51 @@ impl InspectorTab {
             Self::Git,
             Self::Terminal,
             Self::Skills,
+            Self::Files,
+            Self::Activity,
         ]
+    }
+}
+
+/// Left Outlook section. Icon-rail labels differ from enum names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeftSection {
+    Threads,
+    Agents,
+    Files,
+    Activity,
+}
+
+impl LeftSection {
+    pub fn all() -> [LeftSection; 4] {
+        [Self::Threads, Self::Agents, Self::Files, Self::Activity]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Threads => "Threads",
+            Self::Agents => "Agents",
+            Self::Files => "Files",
+            Self::Activity => "Activity",
+        }
+    }
+
+    pub fn rail_label(self) -> &'static str {
+        match self {
+            Self::Threads => "Chats",
+            Self::Agents => "Agents",
+            Self::Files => "Projects",
+            Self::Activity => "Activity",
+        }
+    }
+
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Self::Threads => "☰",
+            Self::Agents => "⚡",
+            Self::Files => "▤",
+            Self::Activity => "●",
+        }
     }
 }
 
@@ -93,7 +155,11 @@ pub const LEFT_WIDTH_MIN: f32 = 180.0;
 pub const LEFT_WIDTH_MAX: f32 = 420.0;
 pub const RIGHT_WIDTH_MIN: f32 = 220.0;
 pub const RIGHT_WIDTH_MAX: f32 = 480.0;
-pub const RAIL_COLLAPSED: f32 = 36.0;
+pub const RAIL_COLLAPSED: f32 = 44.0;
+pub const BOTTOM_HEIGHT_COLLAPSED: f32 = 120.0;
+pub const BOTTOM_HEIGHT_EXPANDED: f32 = 280.0;
+pub const BOTTOM_HEIGHT_MIN: f32 = 120.0;
+pub const BOTTOM_HEIGHT_MAX: f32 = 420.0;
 
 /// Show/hide and width of the left and right rails.
 #[derive(Debug, Clone, PartialEq)]
@@ -189,6 +255,10 @@ pub struct Workspace {
     pub help_open: bool,
     pub selected_checkpoint: Option<String>,
     pub selected_worktree: Option<usize>,
+    pub left_section: LeftSection,
+    pub right_expanded_id: Option<String>,
+    pub bottom_open: bool,
+    pub bottom_height: f32,
     next_id: u64,
 }
 
@@ -222,6 +292,10 @@ impl Workspace {
             help_open: false,
             selected_checkpoint: None,
             selected_worktree: None,
+            left_section: LeftSection::Threads,
+            right_expanded_id: None,
+            bottom_open: false,
+            bottom_height: BOTTOM_HEIGHT_COLLAPSED,
             next_id: 1,
         };
         ws.new_thread();
@@ -635,6 +709,73 @@ impl Workspace {
             self.skills.join("\n")
         }
     }
+
+    pub fn files_detail(&self) -> String {
+        if self.files.is_empty() {
+            "No project files listed.".to_owned()
+        } else {
+            self.files.join("\n")
+        }
+    }
+
+    pub fn activity_detail(&self) -> String {
+        if self.terminal_log.is_empty() {
+            "No activity yet.".to_owned()
+        } else {
+            self.terminal_log.join("\n")
+        }
+    }
+
+    pub fn select_left_section(&mut self, section: LeftSection) -> bool {
+        if self.left_section == section {
+            false
+        } else {
+            self.left_section = section;
+            true
+        }
+    }
+
+    pub fn toggle_bottom(&mut self) {
+        if self.bottom_open {
+            self.bottom_open = false;
+            self.bottom_height = BOTTOM_HEIGHT_COLLAPSED;
+        } else {
+            self.bottom_open = true;
+            self.bottom_height = BOTTOM_HEIGHT_EXPANDED;
+        }
+    }
+
+    pub fn set_bottom_height(&mut self, height: f32) {
+        self.bottom_height = height.clamp(BOTTOM_HEIGHT_MIN, BOTTOM_HEIGHT_MAX);
+        self.bottom_open = self.bottom_height > BOTTOM_HEIGHT_COLLAPSED + 0.5;
+    }
+
+    pub fn occupied_bottom(&self) -> f32 {
+        self.bottom_height
+    }
+
+    pub fn toggle_right_row(&mut self, id: impl Into<String>) {
+        let id = id.into();
+        if self.right_expanded_id.as_deref() == Some(id.as_str()) {
+            self.right_expanded_id = None;
+        } else {
+            self.right_expanded_id = Some(id);
+        }
+    }
+
+    pub fn collapse_right_row(&mut self) {
+        self.right_expanded_id = None;
+    }
+
+    pub fn select_inspector(&mut self, tab: InspectorTab) -> bool {
+        if self.inspector == tab {
+            false
+        } else {
+            self.inspector = tab;
+            self.right_expanded_id = None;
+            true
+        }
+    }
 }
 
 /// Tiny 8-tick bar. `usage` is a percent. NaN and non-finite values are empty.
@@ -769,7 +910,9 @@ mod tests {
         assert_eq!(InspectorTab::Git.label(), "Git");
         assert_eq!(InspectorTab::Terminal.label(), "Term");
         assert_eq!(InspectorTab::Skills.label(), "Skills");
-        assert_eq!(InspectorTab::all().len(), 7);
+        assert_eq!(InspectorTab::Files.label(), "Files");
+        assert_eq!(InspectorTab::Activity.label(), "Activity");
+        assert_eq!(InspectorTab::all().len(), 9);
         let mut ws = Workspace::new("p", "m");
         ws.connect(vec!["sess-1".into()]);
         assert!(ws.connection.is_connected());
@@ -851,9 +994,9 @@ mod tests {
     }
 
     #[test]
-    fn inspector_all_is_seven_tabs() {
+    fn inspector_all_is_nine_tabs() {
         let all = InspectorTab::all();
-        assert_eq!(all.len(), 7);
+        assert_eq!(all.len(), 9);
         assert_eq!(
             all,
             [
@@ -864,12 +1007,57 @@ mod tests {
                 InspectorTab::Git,
                 InspectorTab::Terminal,
                 InspectorTab::Skills,
+                InspectorTab::Files,
+                InspectorTab::Activity,
             ]
         );
         assert_eq!(
             all.map(InspectorTab::label),
-            ["Session", "Cores", "MCP", "Points", "Git", "Term", "Skills"]
+            ["Session", "Cores", "MCP", "Points", "Git", "Term", "Skills", "Files", "Activity"]
         );
+    }
+
+    #[test]
+    fn left_section_and_bottom_drawer() {
+        let mut ws = Workspace::new("p", "m");
+        assert_eq!(ws.left_section, LeftSection::Threads);
+        assert!(!ws.bottom_open);
+        assert_eq!(ws.occupied_bottom(), BOTTOM_HEIGHT_COLLAPSED);
+        assert!(!ws.select_left_section(LeftSection::Threads));
+        assert!(ws.select_left_section(LeftSection::Files));
+        assert_eq!(ws.left_section, LeftSection::Files);
+        ws.toggle_bottom();
+        assert!(ws.bottom_open);
+        assert_eq!(ws.bottom_height, BOTTOM_HEIGHT_EXPANDED);
+        ws.toggle_bottom();
+        assert!(!ws.bottom_open);
+        assert_eq!(ws.bottom_height, BOTTOM_HEIGHT_COLLAPSED);
+        ws.set_bottom_height(200.0);
+        assert!(ws.bottom_open);
+        assert_eq!(ws.bottom_height, 200.0);
+        ws.set_bottom_height(10.0);
+        assert_eq!(ws.bottom_height, BOTTOM_HEIGHT_MIN);
+        assert!(!ws.bottom_open);
+    }
+
+    #[test]
+    fn right_row_accordion_and_tab_clears() {
+        let mut ws = Workspace::new("p", "m");
+        ws.toggle_right_row("core:0");
+        assert_eq!(ws.right_expanded_id.as_deref(), Some("core:0"));
+        ws.toggle_right_row("core:1");
+        assert_eq!(ws.right_expanded_id.as_deref(), Some("core:1"));
+        ws.toggle_right_row("core:1");
+        assert!(ws.right_expanded_id.is_none());
+        ws.toggle_right_row("mcp:linear");
+        assert!(ws.select_inspector(InspectorTab::Mcp));
+        assert!(ws.right_expanded_id.is_none());
+        assert!(!ws.select_inspector(InspectorTab::Mcp));
+        ws.collapse_right_row();
+        assert!(ws.right_expanded_id.is_none());
+        assert_eq!(LeftSection::all().len(), 4);
+        assert_eq!(LeftSection::Threads.rail_label(), "Chats");
+        assert_eq!(LeftSection::Files.rail_label(), "Projects");
     }
 
     #[test]
