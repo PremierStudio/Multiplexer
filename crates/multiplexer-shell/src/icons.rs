@@ -123,6 +123,7 @@ impl ChromeGlyph {
 /// usvg leaves unpainted. Force a real stroke so the tint can show.
 pub fn lucide_for_gpui(svg: &str) -> String {
     svg.replace("currentColor", "#000000")
+        .replace("currentcolor", "#000000")
 }
 
 /// Vendored dashboard-icons filename (png, dark-UI / -light variant).
@@ -243,6 +244,9 @@ mod tests {
         assert!(painted.contains("#000000"));
         assert!(!painted.contains("currentColor"));
         assert_ne!(painted, "stroke=\"currentColor\" fill=\"none\"");
+        let lower = lucide_for_gpui("stroke=\"currentcolor\"");
+        assert_eq!(lower, "stroke=\"#000000\"");
+        assert!(!lower.contains("currentcolor"));
     }
 
     #[test]

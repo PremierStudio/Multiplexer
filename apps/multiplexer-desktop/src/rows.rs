@@ -60,7 +60,7 @@ pub fn list_row(
                 .child(
                     div()
                         .text_color(Theme::muted())
-                        .child(chrome_icon(icon, 15.0)),
+                        .child(chrome_icon(icon, 15.0).text_color(Theme::muted())),
                 )
                 .child(
                     div()

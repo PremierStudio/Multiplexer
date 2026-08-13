@@ -22,23 +22,30 @@ pub fn embed_from_selection(term: Option<&SystemTerminal>, cwd: &str) -> EmbedTa
                 t.label.clone()
             },
         },
-        _ => embed_grok(cwd),
+        _ => embed_grok(cwd, ""),
     }
 }
 
 /// Interactive Grok for a chat. `--trust` skips the folder gate;
-/// `--always-approve` skips tool prompts; no `-p` so the pager stays up.
-pub fn embed_grok(cwd: impl AsRef<str>) -> EmbedTarget {
+/// `--always-approve` skips tool prompts; `--session-id` ties Chat to
+/// `chat_history.jsonl`. No `-p` so the pager stays up.
+pub fn embed_grok(cwd: impl AsRef<str>, session_id: impl AsRef<str>) -> EmbedTarget {
     let cwd = cwd.as_ref().trim();
     let cwd = if cwd.is_empty() { "." } else { cwd };
+    let mut args = vec![
+        "--always-approve".into(),
+        "--trust".into(),
+        "--cwd".into(),
+        cwd.to_owned(),
+    ];
+    let sid = session_id.as_ref().trim();
+    if !sid.is_empty() {
+        args.push("--session-id".into());
+        args.push(sid.to_owned());
+    }
     EmbedTarget {
         program: "grok".into(),
-        args: vec![
-            "--always-approve".into(),
-            "--trust".into(),
-            "--cwd".into(),
-            cwd.to_owned(),
-        ],
+        args,
         label: "Grok".into(),
     }
 }
@@ -78,7 +85,10 @@ mod tests {
 
     #[test]
     fn empty_or_missing_falls_back_to_grok() {
-        assert_eq!(embed_from_selection(None, "C:/repo"), embed_grok("C:/repo"));
+        assert_eq!(
+            embed_from_selection(None, "C:/repo"),
+            embed_grok("C:/repo", "")
+        );
         let blank = term("x", "X", "   ");
         assert_eq!(
             embed_from_selection(Some(&blank), "C:/repo").program,
@@ -86,25 +96,35 @@ mod tests {
         );
         let no_label = term("zsh", "  ", "/bin/zsh");
         assert_eq!(embed_from_selection(Some(&no_label), ".").label, "zsh");
-        assert_eq!(embed_grok("C:/repo").program, "grok");
-        assert_eq!(embed_grok("C:/repo").label, "Grok");
-        assert_ne!(embed_grok("C:/repo").label, "grok");
+        assert_eq!(embed_grok("C:/repo", "").program, "grok");
+        assert_eq!(embed_grok("C:/repo", "").label, "Grok");
+        assert_ne!(embed_grok("C:/repo", "").label, "grok");
         assert_eq!(embed_surface("Grok"), "in-app Grok");
         assert_ne!(embed_surface("Grok"), "Grok");
     }
 
     #[test]
     fn grok_skips_folder_gate_and_tool_prompts() {
-        let got = embed_grok("C:/work/app");
+        let got = embed_grok("C:/work/app", "");
         assert_eq!(
             got.args,
             vec!["--always-approve", "--trust", "--cwd", "C:/work/app"]
         );
         assert!(!got.args.iter().any(|a| a == "-p"));
-        assert_ne!(got.args, embed_grok("D:/other").args);
-        assert_eq!(embed_grok("   ").args.last().map(String::as_str), Some("."));
-        assert_eq!(embed_grok("").args[2], "--cwd");
-        assert_ne!(embed_grok("C:/work/app").args.len(), 0);
+        assert_ne!(got.args, embed_grok("D:/other", "").args);
+        assert_eq!(
+            embed_grok("   ", "").args.last().map(String::as_str),
+            Some(".")
+        );
+        assert_eq!(embed_grok("", "").args[2], "--cwd");
+        assert_ne!(embed_grok("C:/work/app", "").args.len(), 0);
+        let sid = embed_grok("C:/work/app", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+        assert!(sid.args.iter().any(|a| a == "--session-id"));
+        assert!(sid
+            .args
+            .iter()
+            .any(|a| a == "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"));
+        assert_ne!(sid.args, got.args);
     }
 
     #[test]

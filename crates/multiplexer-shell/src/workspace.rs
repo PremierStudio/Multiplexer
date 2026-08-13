@@ -32,12 +32,17 @@ pub struct Thread {
     /// GUI chat log vs this thread's own Grok TUI.
     pub center_mode: crate::center::CenterMode,
     pub tui: crate::center::GrokTuiHost,
+    /// Grok `--session-id` so Chat can read `chat_history.jsonl`.
+    pub grok_session: String,
 }
 
 impl Thread {
     pub fn new(id: impl Into<String>, model: impl Into<String>, cwd: impl Into<String>) -> Self {
+        let id = id.into();
+        let cwd = cwd.into();
+        let grok_session = crate::grok_history::grok_session_uuid(&cwd, &id);
         Self {
-            id: id.into(),
+            id,
             title: "New chat".to_owned(),
             messages: Vec::new(),
             status: "idle".to_owned(),
@@ -47,6 +52,7 @@ impl Thread {
             archived: false,
             center_mode: crate::center::CenterMode::Gui,
             tui: crate::center::GrokTuiHost::idle(cwd),
+            grok_session,
         }
     }
 }
@@ -775,6 +781,40 @@ impl Workspace {
         self.busy = true;
         self.usage_turns = self.usage_turns.saturating_add(1);
         Some(text)
+    }
+
+    /// User line typed in the hosted grok TUI. Skips a duplicate of the last user bubble.
+    pub fn push_user_from_tui(&mut self, text: &str) -> bool {
+        let text = text.trim();
+        if text.is_empty() {
+            return false;
+        }
+        let Some(thread) = self.selected_thread_mut() else {
+            return false;
+        };
+        if thread
+            .messages
+            .last()
+            .is_some_and(|m| m.role == Role::User && m.text == text)
+        {
+            return false;
+        }
+        if thread.title == "New chat" {
+            thread.title = text.chars().take(40).collect();
+        }
+        thread.messages.push(ChatMessage {
+            role: Role::User,
+            text: text.to_owned(),
+        });
+        thread.status = "tui".to_owned();
+        true
+    }
+
+    pub fn apply_session_history(&mut self, incoming: &[crate::grok_history::HistoryLine]) -> bool {
+        let Some(thread) = self.selected_thread_mut() else {
+            return false;
+        };
+        crate::grok_history::apply_grok_history(&mut thread.messages, incoming)
     }
 
     pub fn push_assistant(&mut self, text: impl Into<String>) {
@@ -1721,6 +1761,7 @@ impl Workspace {
                 archived: t.archived,
                 center_mode: crate::center::CenterMode::Gui,
                 tui: crate::center::GrokTuiHost::idle(self.project.clone()),
+                grok_session: crate::grok_history::grok_session_uuid(&self.project, &t.id),
             })
             .collect();
         self.selected = 0;
@@ -1962,6 +2003,39 @@ mod tests {
         assert!(!ws.help_open);
         assert!(ws.selected_checkpoint.is_none());
         assert!(ws.selected_worktree.is_none());
+        assert!(!ws.threads[0].grok_session.is_empty());
+        assert_eq!(
+            ws.threads[0]
+                .grok_session
+                .chars()
+                .filter(|c| *c == '-')
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn tui_user_line_lands_in_gui_and_dedups() {
+        let mut ws = Workspace::new("p", "m");
+        assert!(ws.push_user_from_tui("  ask grok  "));
+        assert_eq!(ws.threads[0].messages.len(), 1);
+        assert_eq!(ws.threads[0].messages[0].role, Role::User);
+        assert_eq!(ws.threads[0].messages[0].text, "ask grok");
+        assert_eq!(ws.threads[0].title, "ask grok");
+        assert!(!ws.push_user_from_tui("ask grok"));
+        assert_eq!(ws.threads[0].messages.len(), 1);
+        assert!(!ws.push_user_from_tui("   "));
+        assert!(ws.push_user_from_tui("second"));
+        assert_eq!(ws.threads[0].messages.len(), 2);
+        let hist = crate::parse_chat_history(
+            r#"{"type":"user","content":"ask grok"}
+{"type":"assistant","content":"done"}"#,
+        );
+        assert!(ws.apply_session_history(&hist));
+        assert_eq!(ws.threads[0].messages.len(), 2);
+        assert_eq!(ws.threads[0].messages[1].role, Role::Assistant);
+        assert_eq!(ws.threads[0].messages[1].text, "done");
+        assert!(!ws.apply_session_history(&hist));
     }
 
     #[test]

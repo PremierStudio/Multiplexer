@@ -36,23 +36,24 @@ use multiplexer_server::Server;
 use multiplexer_shell::{
     about_info, activity_items, apply_deep_link, apply_layout_action, auto_dismisses,
     bottom_height_from_mouse, cap_text, changes_headline, default_browser_candidates,
-    default_crash_path, default_first_run_path, default_layout_path, default_settings_path,
-    default_terminal_candidates, delete_forward, detect_browsers, detect_remotes, detect_terminals,
-    embed_grok, embed_surface, first_run_completed, first_run_keychain_notice, format_line,
-    git_commit_line, git_preview_line, help_text, hit_action, hunks_for_path, insert_at,
-    inspector_rows, is_tui_hatch, join_project_path, journal_from_workspace, leaf_name,
-    live_pty_takes_gui_send, menu_for, menu_for_thread, merge_cores, merge_mcp, merge_models,
-    move_end, move_home, move_left, move_right, move_word_left, move_word_right,
-    open_external_program, palette_hits, parse_builtin, parse_deep_link, parse_model_keys,
-    parse_slash, parse_unified_diff, plan_send, preferred_terminal, pty_takes_keys,
-    read_crash_journal, read_layout, read_settings, remotes_pill_label, remotes_serve_note,
-    row_detail, search_workspace, slash_arg, status_from, status_line, status_mark,
-    thread_leaf_title, title_overflow, tui_host_px, visible_notices, visible_tail, working_copy,
-    write_crash_journal, write_first_run_done, write_layout, write_settings, BindingTable,
-    BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow, FocusRegion,
-    HunkLineKind, InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind, PaletteState, RemoteRow,
-    Role, SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand, TermLineKind, TuiLife,
-    Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
+    default_crash_path, default_first_run_path, default_grok_home, default_layout_path,
+    default_settings_path, default_terminal_candidates, delete_forward, detect_browsers,
+    detect_remotes, detect_terminals, embed_grok, embed_surface, find_history_file,
+    first_run_completed, first_run_keychain_notice, format_line, git_commit_line, git_preview_line,
+    grok_history_path, help_text, hit_action, hunks_for_path, insert_at, inspector_rows,
+    is_tui_hatch, join_project_path, journal_from_workspace, leaf_name, live_pty_takes_gui_send,
+    menu_for, menu_for_thread, merge_cores, merge_mcp, merge_models, move_end, move_home,
+    move_left, move_right, move_word_left, move_word_right, open_external_program, palette_hits,
+    parse_builtin, parse_chat_history, parse_deep_link, parse_model_keys, parse_slash,
+    parse_unified_diff, plan_send, preferred_terminal, pty_takes_keys, read_crash_journal,
+    read_layout, read_settings, remotes_pill_label, remotes_serve_note, row_detail,
+    search_workspace, slash_arg, status_from, status_line, status_mark, thread_leaf_title,
+    title_overflow, tui_host_px, visible_notices, visible_tail, working_copy, write_crash_journal,
+    write_first_run_done, write_layout, write_settings, BindingTable, BuiltinCmd, CenterMode,
+    CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow, FocusRegion, HunkLineKind,
+    InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind, PaletteState, RemoteRow, Role,
+    SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand, TermLineKind, TuiInputBuf,
+    TuiLife, Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
 };
 use multiplexer_terminal::{
     caret_split, pty_grid_from_px, pty_input, pty_paste_bytes, pty_submit_line, EmbeddedSession,
@@ -115,6 +116,7 @@ pub(crate) struct ShellView {
     capture: Option<ProcessCapture>,
     embedded: HashMap<String, EmbeddedSession>,
     frames: HashMap<String, PtyFrame>,
+    tui_lines: HashMap<String, TuiInputBuf>,
     tui_font: SharedString,
     focus_handle: FocusHandle,
     pending_diff: Option<(String, Receiver<CommandResult>)>,
@@ -217,6 +219,7 @@ impl ShellView {
             capture: None,
             embedded: HashMap::new(),
             frames: HashMap::new(),
+            tui_lines: HashMap::new(),
             tui_font: tui_family(),
             focus_handle,
             pending_diff: None,
@@ -387,6 +390,45 @@ impl ShellView {
         self.embedded.get_mut(&id)
     }
 
+    fn pull_grok_history(&mut self) {
+        let Some(thread) = self.workspace.selected_thread() else {
+            return;
+        };
+        let sid = thread.grok_session.clone();
+        if sid.is_empty() {
+            return;
+        }
+        let home = default_grok_home();
+        let project = self.workspace.project.clone();
+        let direct = grok_history_path(&home, &project, &sid);
+        let path = if direct.is_file() {
+            direct
+        } else {
+            match find_history_file(&home, &sid) {
+                Some(p) => p,
+                None => return,
+            }
+        };
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let incoming = parse_chat_history(&raw);
+        let _ = self.workspace.apply_session_history(&incoming);
+    }
+
+    fn write_pty(&mut self, bytes: &[u8]) {
+        if let Some(session) = self.selected_session() {
+            let _ = session.write(bytes);
+        }
+        let Some(id) = self.selected_thread_id() else {
+            return;
+        };
+        let finished = self.tui_lines.entry(id).or_default().feed(bytes);
+        for line in finished {
+            let _ = self.workspace.push_user_from_tui(&line);
+        }
+    }
+
     fn launch_grok_tui(&mut self) {
         let _ = self.workspace.set_center_mode(CenterMode::GrokTui);
         self.ensure_thread_grok();
@@ -418,8 +460,14 @@ impl ShellView {
                 let _ = dead.kill();
             }
             self.frames.remove(&id);
+            self.tui_lines.remove(&id);
         }
-        let target = embed_grok(&self.workspace.project);
+        let sid = self
+            .workspace
+            .selected_thread()
+            .map(|t| t.grok_session.clone())
+            .unwrap_or_default();
+        let target = embed_grok(&self.workspace.project, &sid);
         let args: Vec<&str> = target.args.iter().map(String::as_str).collect();
         self.start_embedded_for(&id, &target.program, &args, &target.label, flip_center);
     }
@@ -498,6 +546,7 @@ impl ShellView {
                 let _ = session.kill();
             }
             self.frames.remove(&id);
+            self.tui_lines.remove(&id);
         }
         if let Some(mut child) = self.grok_tui.take() {
             let _ = child.kill();
@@ -705,6 +754,7 @@ impl ShellView {
                     let _ = session.kill();
                 }
                 self.frames.remove(&id);
+                self.tui_lines.remove(&id);
             }
         }
         match multiplexer_shell::host_call(action, &self.action_ctx()) {
@@ -1478,9 +1528,7 @@ impl ShellView {
         };
         self.persist_crash();
         if live_pty_takes_gui_send(pty_live) {
-            if let Some(session) = self.selected_session() {
-                let _ = session.write(&pty_submit_line(&text));
-            }
+            self.write_pty(&pty_submit_line(&text));
             self.workspace.busy = false;
             if let Some(t) = self.workspace.selected_thread_mut() {
                 t.status = "tui".into();
@@ -1753,6 +1801,7 @@ impl ShellView {
             }
         }
         self.sync_embedded_size();
+        self.pull_grok_history();
         if let Some((path, rx)) = self.pending_diff.take() {
             match rx.try_recv() {
                 Ok(out) => {
@@ -2032,11 +2081,9 @@ impl ShellView {
         }
 
         if self.tui_keys_live() {
-            if let Some(session) = self.selected_session() {
-                let ch = event.keystroke.key_char.as_deref();
-                if let Some(bytes) = pty_input(key, ch, mods.control) {
-                    let _ = session.write(&bytes);
-                }
+            let ch = event.keystroke.key_char.as_deref();
+            if let Some(bytes) = pty_input(key, ch, mods.control) {
+                self.write_pty(&bytes);
             }
             cx.notify();
             return;
@@ -2216,9 +2263,7 @@ impl ShellView {
             return;
         }
         if self.tui_keys_live() || self.focus == Focus::Tui {
-            if let Some(session) = self.selected_session() {
-                let _ = session.write(&pty_paste_bytes(text));
-            }
+            self.write_pty(&pty_paste_bytes(text));
             return;
         }
         if self.focus == Focus::Commit {

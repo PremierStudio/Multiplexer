@@ -16,6 +16,7 @@ mod composer;
 mod diff_view;
 mod embed;
 mod fuzzy;
+mod grok_history;
 mod icons;
 mod inspector_model;
 mod integrations;
@@ -32,6 +33,7 @@ mod settings;
 mod slash;
 mod status;
 mod terminal_ui;
+mod tui_input;
 mod usage;
 mod widgets;
 mod workbench;
@@ -64,6 +66,10 @@ pub use embed::{
     embed_from_selection, embed_grok, embed_surface, live_pty_takes_gui_send, EmbedTarget,
 };
 pub use fuzzy::{fuzzy_best, fuzzy_score};
+pub use grok_history::{
+    apply_grok_history, default_grok_home, encode_session_cwd, find_history_file,
+    grok_history_path, grok_session_uuid, parse_chat_history, HistoryLine,
+};
 pub use icons::{lucide_for_gpui, BrandIcon, ChromeGlyph};
 pub use inspector_model::{inspector_rows, row_detail};
 pub use integrations::{filter_tiles, integration_tiles, TileSpec};
@@ -103,6 +109,7 @@ pub use terminal_ui::{
     format_line, help_text, parse_builtin, push_capped, visible_tail, BuiltinCmd, TermLineKind,
     TERM_HISTORY_MAX, TERM_PROMPT,
 };
+pub use tui_input::TuiInputBuf;
 pub use usage::UsageSnapshot;
 pub use widgets::{
     empty_state_tiles, BadgeSpec, ButtonKind, ButtonSpec, EmptyStateSpec, ListRowSpec, TabSpec,

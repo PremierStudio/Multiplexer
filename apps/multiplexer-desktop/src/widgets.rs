@@ -6,12 +6,13 @@ use crate::theme::Theme;
 use crate::ShellView;
 use multiplexer_shell::{ChromeGlyph, EmptyStateSpec};
 
-pub fn chrome_icon(glyph: ChromeGlyph, size: f32) -> gpui::AnyElement {
+/// GPUI skips `paint_svg` unless this element has `style.text.color`.
+pub fn chrome_icon(glyph: ChromeGlyph, size: f32) -> gpui::Svg {
     svg()
         .path(glyph.icon_file())
         .size(px(size))
         .flex_shrink_0()
-        .into_any()
+        .text_color(Theme::text())
 }
 
 pub fn path_icon(path: &str, size: f32) -> gpui::AnyElement {
@@ -20,6 +21,7 @@ pub fn path_icon(path: &str, size: f32) -> gpui::AnyElement {
             .path(SharedString::from(path.to_owned()))
             .size(px(size))
             .flex_shrink_0()
+            .text_color(Theme::text())
             .into_any()
     } else {
         div().text_size(px(size)).child(path.to_owned()).into_any()
@@ -171,7 +173,7 @@ pub fn icon_btn(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| on_click(this, cx)),
         )
-        .child(chrome_icon(glyph, 18.0))
+        .child(chrome_icon(glyph, 18.0).text_color(Theme::muted()))
         .into_any()
 }
 
@@ -203,7 +205,7 @@ pub fn rail_icon(
             MouseButton::Left,
             cx.listener(move |this, _, _, cx| on_click(this, cx)),
         )
-        .child(chrome_icon(glyph, 18.0))
+        .child(chrome_icon(glyph, 18.0).text_color(if on { Theme::text() } else { Theme::muted() }))
         .into_any()
 }
 
