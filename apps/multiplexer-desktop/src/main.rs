@@ -1691,7 +1691,15 @@ impl ShellView {
                                     || l.starts_with("R "))
                         })
                     {
+                        let prev = self.workspace.selected_diff.clone();
                         self.workspace.apply_porcelain(&body);
+                        if let Some(path) = self.workspace.ensure_diff_selection() {
+                            if prev.as_deref() != Some(path.as_str())
+                                || self.workspace.diff_text.is_empty()
+                            {
+                                self.load_diff_preview(&path);
+                            }
+                        }
                         if self.pending_turn_diffs {
                             let paths: Vec<String> = self
                                 .workspace

@@ -1699,6 +1699,23 @@ impl Workspace {
         let mut rows = crate::diff_view::parse_porcelain(text);
         crate::diff_view::mark_last_turn(&mut rows, &self.last_turn_paths);
         self.diff_rows = crate::diff_view::sort_diffs(rows, self.diff_sort);
+        let _ = self.ensure_diff_selection();
+    }
+
+    /// Keep the current selection if it still exists, else pick the first row.
+    pub fn ensure_diff_selection(&mut self) -> Option<String> {
+        if self.diff_rows.is_empty() {
+            self.selected_diff = None;
+            return None;
+        }
+        if let Some(sel) = self.selected_diff.as_deref() {
+            if self.diff_rows.iter().any(|r| r.path == sel) {
+                return Some(sel.to_owned());
+            }
+        }
+        let first = self.visible_diffs().into_iter().next()?.path;
+        self.selected_diff = Some(first.clone());
+        Some(first)
     }
 
     pub fn remember_turn_paths(&mut self, paths: Vec<String>) {
@@ -2563,11 +2580,19 @@ mod tests {
         assert!(git.contains("dirty"));
         assert!(git.contains("Create"));
         ws.apply_porcelain(" M a.rs\n");
-        assert!(ws.select_diff("a.rs"));
         assert_eq!(ws.selected_diff.as_deref(), Some("a.rs"));
+        assert!(ws.select_diff("a.rs"));
         assert!(!ws.select_diff("missing.rs"));
-        ws.diff_text = "diff --git a/a.rs".into();
+        ws.apply_porcelain(" M zebra.rs\n M alpha.rs\n");
+        assert_eq!(ws.selected_diff.as_deref(), Some("alpha.rs"));
+        assert!(ws.select_diff("zebra.rs"));
+        ws.apply_porcelain(" M zebra.rs\n");
+        assert_eq!(ws.selected_diff.as_deref(), Some("zebra.rs"));
+        ws.diff_text = "diff --git a/zebra.rs".into();
         assert!(ws.diff_detail().contains("Preview"));
+        ws.apply_porcelain("");
+        assert!(ws.selected_diff.is_none());
+        assert!(ws.ensure_diff_selection().is_none());
         assert!(ws.resource_detail().contains("No contained processes"));
         ws.mcp.push(crate::workspace::McpRow {
             name: "x".into(),
