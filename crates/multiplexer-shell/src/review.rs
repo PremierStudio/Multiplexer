@@ -101,7 +101,27 @@ pub fn cap_text(text: &str, max: usize) -> String {
 
 /// Unstaged first. Caller may run cached next.
 pub fn git_diff_line(path: &str) -> String {
-    format!("git diff -- {path}")
+    git_preview_line(path, "")
+}
+
+/// Staged+unstaged vs HEAD. Untracked uses `--no-index` against NUL.
+pub fn git_preview_line(path: &str, porcelain_status: &str) -> String {
+    if porcelain_status.contains('?') {
+        format!("git diff --no-index -- NUL {path}")
+    } else {
+        format!("git diff HEAD -- {path}")
+    }
+}
+
+/// Commit the selected path, or the whole tree if none.
+pub fn git_commit_line(path: Option<&str>, message: &str) -> String {
+    let escaped = message.replace('"', "'");
+    match path {
+        Some(p) if !p.trim().is_empty() => {
+            format!("git add -- \"{p}\" && git commit -m \"{escaped}\"")
+        }
+        _ => format!("git add -A && git commit -m \"{escaped}\""),
+    }
 }
 
 #[cfg(test)]
@@ -203,7 +223,19 @@ mod tests {
         assert_ne!(clipped, "ééé");
         assert!(cap_text("", 10).is_empty());
         assert!(cap_text("abc", 0).is_empty());
-        assert_eq!(git_diff_line("src/a.rs"), "git diff -- src/a.rs");
+        assert_eq!(git_diff_line("src/a.rs"), "git diff HEAD -- src/a.rs");
+        assert_eq!(
+            git_preview_line("new.rs", "??"),
+            "git diff --no-index -- NUL new.rs"
+        );
+        assert_eq!(
+            git_commit_line(Some("a.rs"), r#"say "hi""#),
+            r#"git add -- "a.rs" && git commit -m "say 'hi'""#
+        );
+        assert_eq!(
+            git_commit_line(None, "all"),
+            r#"git add -A && git commit -m "all""#
+        );
         assert_ne!(git_diff_line("a"), git_diff_line("b"));
         assert_eq!(DIFF_TEXT_CAP, 64 * 1024);
     }

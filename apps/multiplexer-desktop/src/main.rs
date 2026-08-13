@@ -37,19 +37,19 @@ use multiplexer_shell::{
     default_crash_path, default_first_run_path, default_layout_path, default_settings_path,
     default_terminal_candidates, delete_forward, detect_browsers, detect_remotes, detect_terminals,
     embed_grok, embed_surface, first_run_completed, first_run_keychain_notice, format_line,
-    git_diff_line, help_text, hit_action, hunks_for_path, insert_at, inspector_rows, is_tui_hatch,
-    join_project_path, journal_from_workspace, leaf_name, menu_for, menu_for_thread, merge_cores,
-    merge_mcp, merge_models, move_end, move_home, move_left, move_right, move_word_left,
-    move_word_right, open_external_program, palette_hits, parse_builtin, parse_deep_link,
-    parse_model_keys, parse_slash, parse_unified_diff, plan_send, preferred_terminal,
-    read_crash_journal, read_layout, read_settings, remotes_pill_label, remotes_serve_note,
-    row_detail, search_workspace, slash_arg, status_from, status_line, status_mark,
-    thread_leaf_title, title_overflow, tui_host_px, visible_notices, visible_tail, working_copy,
-    write_crash_journal, write_first_run_done, write_layout, write_settings, BindingTable,
-    BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow, FocusRegion,
-    HunkLineKind, InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind, PaletteState, RemoteRow,
-    Role, SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand, TermLineKind, TuiLife,
-    Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
+    git_commit_line, git_preview_line, help_text, hit_action, hunks_for_path, insert_at,
+    inspector_rows, is_tui_hatch, join_project_path, journal_from_workspace, leaf_name, menu_for,
+    menu_for_thread, merge_cores, merge_mcp, merge_models, move_end, move_home, move_left,
+    move_right, move_word_left, move_word_right, open_external_program, palette_hits,
+    parse_builtin, parse_deep_link, parse_model_keys, parse_slash, parse_unified_diff, plan_send,
+    preferred_terminal, read_crash_journal, read_layout, read_settings, remotes_pill_label,
+    remotes_serve_note, row_detail, search_workspace, slash_arg, status_from, status_line,
+    status_mark, thread_leaf_title, title_overflow, tui_host_px, visible_notices, visible_tail,
+    working_copy, write_crash_journal, write_first_run_done, write_layout, write_settings,
+    BindingTable, BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow,
+    FocusRegion, HunkLineKind, InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind,
+    PaletteState, RemoteRow, Role, SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand,
+    TermLineKind, TuiLife, Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
 };
 use multiplexer_terminal::{
     pty_grid_from_px, pty_input, pty_paste_bytes, visible_pty_text, EmbeddedSession,
@@ -553,7 +553,14 @@ impl ShellView {
     }
 
     fn load_diff_preview(&mut self, path: &str) {
-        let line = git_diff_line(path);
+        let status = self
+            .workspace
+            .diff_rows
+            .iter()
+            .find(|r| r.path == path)
+            .map(|r| r.status.as_str())
+            .unwrap_or("");
+        let line = git_preview_line(path, status);
         let rx = spawn_command(windows_cmd(&line, PathBuf::from(&self.workspace.project)));
         self.pending_diff = Some((path.to_owned(), rx));
         self.workspace.diff_text = format!("loading {path}…");
@@ -735,6 +742,10 @@ impl ShellView {
                     }
                     ClientAction::SelectTab(InspectorTab::Checkpoints) => {
                         self.refresh_checkpoints();
+                        self.persist_layout();
+                    }
+                    ClientAction::SelectTab(_) => {
+                        self.persist_layout();
                     }
                     ClientAction::PopOutInspector
                     | ClientAction::DockInspector
@@ -978,14 +989,7 @@ impl ShellView {
     }
 
     fn selected_or_expanded_file(&self) -> Option<String> {
-        if let Some(p) = self.workspace.selected_file.clone() {
-            return Some(p);
-        }
-        self.workspace
-            .right_expanded_id
-            .as_deref()
-            .and_then(|id| id.strip_prefix("file:"))
-            .map(str::to_owned)
+        self.workspace.selected_path_for_open()
     }
 
     fn reveal_file(&mut self, cx: &mut Context<Self>) {
@@ -1195,6 +1199,14 @@ impl ShellView {
     }
 
     fn kill_capture(&mut self) {
+        if self.pending_cmd.take().is_some() {
+            self.workspace.busy = false;
+            self.term_meta("background shell dropped");
+        }
+        if self.pending_diff.take().is_some() {
+            self.workspace.diff_text.clear();
+            self.term_meta("diff load dropped");
+        }
         if let Some(mut cap) = self.capture.take() {
             let _ = cap.kill();
             self.workspace
@@ -1610,8 +1622,8 @@ impl ShellView {
                 .push_notice(NoticeKind::Warn, "Type a commit message first.");
             return;
         }
-        let escaped = msg.replace('"', "'");
-        self.run_shell(&format!("git add -A && git commit -m \"{escaped}\""));
+        let path = self.workspace.selected_path_for_open();
+        self.run_shell(&git_commit_line(path.as_deref(), &msg));
         self.workspace.commit_draft.clear();
         self.reload_diffs();
     }

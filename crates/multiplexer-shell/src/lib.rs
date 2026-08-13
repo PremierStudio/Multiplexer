@@ -87,8 +87,8 @@ pub use persist::{
 };
 pub use remote::{detect_remotes, RemoteRow};
 pub use review::{
-    cap_text, context_strip, git_ahead_behind, git_diff_line, git_dirty, git_header,
-    handshake_state, merge_cores, working_copy, DIFF_TEXT_CAP,
+    cap_text, context_strip, git_ahead_behind, git_commit_line, git_diff_line, git_dirty,
+    git_header, git_preview_line, handshake_state, merge_cores, working_copy, DIFF_TEXT_CAP,
 };
 pub use search::{search_workspace, SearchHit, SearchKind};
 pub use settings::{

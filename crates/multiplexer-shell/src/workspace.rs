@@ -1428,6 +1428,25 @@ impl Workspace {
         self.connection = crate::review::handshake_state(hello_ok, ping_ok);
     }
 
+    /// Path to open or mention: selected file, selected diff, or expanded row.
+    pub fn selected_path_for_open(&self) -> Option<String> {
+        if let Some(p) = self.selected_file.as_ref() {
+            if !p.is_empty() {
+                return Some(p.clone());
+            }
+        }
+        if let Some(p) = self.selected_diff.as_ref() {
+            if !p.is_empty() {
+                return Some(p.clone());
+            }
+        }
+        match self.right_expanded_id.as_deref() {
+            Some(id) if id.starts_with("file:") => id.strip_prefix("file:").map(str::to_owned),
+            Some(id) if id.starts_with("diff:") => id.strip_prefix("diff:").map(str::to_owned),
+            _ => None,
+        }
+    }
+
     pub fn select_diff(&mut self, path: impl Into<String>) -> bool {
         let path = path.into();
         if self.diff_rows.iter().any(|r| r.path == path) {
@@ -2693,6 +2712,11 @@ mod tests {
         assert!(git.contains("Create"));
         ws.apply_porcelain(" M a.rs\n");
         assert_eq!(ws.selected_diff.as_deref(), Some("a.rs"));
+        assert_eq!(ws.selected_path_for_open().as_deref(), Some("a.rs"));
+        ws.right_expanded_id = Some("diff:a.rs".into());
+        ws.selected_file = None;
+        ws.selected_diff = None;
+        assert_eq!(ws.selected_path_for_open().as_deref(), Some("a.rs"));
         assert!(ws.select_diff("a.rs"));
         assert!(!ws.select_diff("missing.rs"));
         ws.apply_porcelain(" M zebra.rs\n M alpha.rs\n");
