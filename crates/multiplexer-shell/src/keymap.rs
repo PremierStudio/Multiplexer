@@ -181,6 +181,12 @@ const DEFAULT_BINDINGS: &[(&str, ClientAction)] = &[
     ),
     ("escape", ClientAction::CloseOverlay),
     ("enter", ClientAction::Send),
+    ("ctrl-shift-d", ClientAction::PopOutInspector),
+    ("ctrl-shift-e", ClientAction::DockInspector),
+    ("ctrl-w", ClientAction::ClosePopOut),
+    ("ctrl-tab", ClientAction::NextRegion),
+    ("ctrl-alt-up", ClientAction::NudgeBottomUp),
+    ("ctrl-alt-down", ClientAction::NudgeBottomDown),
 ];
 
 /// Stable catalog / settings id for a bindable action.
@@ -226,6 +232,19 @@ pub fn action_id(action: ClientAction) -> Option<&'static str> {
         ClientAction::DismissToast => "toast_dismiss",
         ClientAction::CopySession => "copy_session",
         ClientAction::RunGitStatus => "run_git_status",
+        ClientAction::PopOutInspector => "popout_inspector",
+        ClientAction::DockInspector => "dock_inspector",
+        ClientAction::ClosePopOut => "close_popout",
+        ClientAction::NextRegion => "next_region",
+        ClientAction::NudgeBottomUp => "nudge_bottom_up",
+        ClientAction::NudgeBottomDown => "nudge_bottom_down",
+        ClientAction::ApproveOnce => "allow_once",
+        ClientAction::Later => "later",
+        ClientAction::PinThread => "pin_thread",
+        ClientAction::MarkUnread => "mark_unread",
+        ClientAction::ArchiveThread => "archive_thread",
+        ClientAction::CopyThreadId => "copy_thread_id",
+        ClientAction::OpenAbout => "settings_about",
         _ => return None,
     })
 }
@@ -271,6 +290,19 @@ pub fn action_from_id(id: &str) -> Option<ClientAction> {
         "toast_dismiss" => ClientAction::DismissToast,
         "copy_session" => ClientAction::CopySession,
         "run_git_status" => ClientAction::RunGitStatus,
+        "popout_inspector" => ClientAction::PopOutInspector,
+        "dock_inspector" => ClientAction::DockInspector,
+        "close_popout" => ClientAction::ClosePopOut,
+        "next_region" => ClientAction::NextRegion,
+        "nudge_bottom_up" => ClientAction::NudgeBottomUp,
+        "nudge_bottom_down" => ClientAction::NudgeBottomDown,
+        "allow_once" => ClientAction::ApproveOnce,
+        "later" => ClientAction::Later,
+        "pin_thread" => ClientAction::PinThread,
+        "mark_unread" => ClientAction::MarkUnread,
+        "archive_thread" => ClientAction::ArchiveThread,
+        "copy_thread_id" => ClientAction::CopyThreadId,
+        "settings_about" => ClientAction::OpenAbout,
         _ => return None,
     })
 }
@@ -291,6 +323,9 @@ pub fn is_tui_hatch(action: ClientAction) -> bool {
             | ClientAction::CloseOverlay
             | ClientAction::FocusLayout
             | ClientAction::ToggleHelp
+            | ClientAction::PopOutInspector
+            | ClientAction::DockInspector
+            | ClientAction::ClosePopOut
     )
 }
 
@@ -348,6 +383,24 @@ mod tests {
             Some(ClientAction::SelectLeftSection(LeftSection::Activity))
         );
         assert_eq!(t.lookup_spec("escape"), Some(ClientAction::CloseOverlay));
+        assert_eq!(
+            t.lookup_spec("ctrl-shift-d"),
+            Some(ClientAction::PopOutInspector)
+        );
+        assert_eq!(
+            t.lookup_spec("ctrl-shift-e"),
+            Some(ClientAction::DockInspector)
+        );
+        assert_eq!(t.lookup_spec("ctrl-w"), Some(ClientAction::ClosePopOut));
+        assert_eq!(t.lookup_spec("ctrl-tab"), Some(ClientAction::NextRegion));
+        assert_eq!(
+            t.lookup_spec("ctrl-alt-up"),
+            Some(ClientAction::NudgeBottomUp)
+        );
+        assert_eq!(
+            t.lookup_spec("ctrl-alt-down"),
+            Some(ClientAction::NudgeBottomDown)
+        );
         assert_eq!(
             t.lookup_spec("ctrl-shift-l"),
             Some(ClientAction::ResetOutlook)

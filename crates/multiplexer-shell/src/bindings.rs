@@ -69,7 +69,17 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         | ClientAction::ResetOutlook
         | ClientAction::DismissToast
         | ClientAction::ToggleSkill
-        | ClientAction::MentionMcp => HostCall::Local,
+        | ClientAction::MentionMcp
+        | ClientAction::PopOutInspector
+        | ClientAction::DockInspector
+        | ClientAction::ClosePopOut
+        | ClientAction::NextRegion
+        | ClientAction::NudgeBottomUp
+        | ClientAction::NudgeBottomDown
+        | ClientAction::PinThread
+        | ClientAction::MarkUnread
+        | ClientAction::ArchiveThread
+        | ClientAction::OpenAbout => HostCall::Local,
         ClientAction::CreateWorktree => worktree_create_call(ctx),
         ClientAction::Send
         | ClientAction::RefreshCores
@@ -93,7 +103,8 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         | ClientAction::KillTerm
         | ClientAction::RefreshSkills
         | ClientAction::DetectBrowsers
-        | ClientAction::CreateSkill => HostCall::NeedsHost,
+        | ClientAction::CreateSkill
+        | ClientAction::CopyThreadId => HostCall::NeedsHost,
         ClientAction::Interrupt => match ctx.session_id.as_deref() {
             Some(session_id) => HostCall::Rpc {
                 method: "session.interrupt",
@@ -121,6 +132,8 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         },
         ClientAction::Approve => approval_call(ctx, "allow"),
         ClientAction::Deny => approval_call(ctx, "deny"),
+        ClientAction::ApproveOnce => approval_call(ctx, "once"),
+        ClientAction::Later => approval_call(ctx, "later"),
     }
 }
 

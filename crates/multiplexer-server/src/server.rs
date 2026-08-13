@@ -150,6 +150,10 @@ impl<B: SessionBackend> Server<B> {
             methods::TELEMETRY_USAGE => crate::stubs::telemetry_usage(req),
             methods::REMOTE_LIST => crate::stubs::remote_list(req),
             methods::FS_LIST => crate::stubs::fs_list(req),
+            methods::ORCHESTRATION_LIST => {
+                let n = self.lock().list().len();
+                crate::stubs::orchestration_list(req, n)
+            }
             _ => vec![error_frame(
                 req.id,
                 RpcError::new(

@@ -26,6 +26,9 @@ pub struct Thread {
     pub messages: Vec<ChatMessage>,
     pub status: String,
     pub model: String,
+    pub pinned: bool,
+    pub unread: bool,
+    pub archived: bool,
 }
 
 /// One skill inventory row. Enable is a local flag, not loaded into grok.
@@ -206,7 +209,8 @@ pub const LEFT_WIDTH_MIN: f32 = 180.0;
 pub const LEFT_WIDTH_MAX: f32 = 420.0;
 pub const RIGHT_WIDTH_MIN: f32 = 220.0;
 pub const RIGHT_WIDTH_MAX: f32 = 480.0;
-pub const RAIL_COLLAPSED: f32 = 44.0;
+pub const RAIL_COLLAPSED: f32 = 48.0;
+pub const TITLE_HEIGHT: f32 = 48.0;
 pub const BOTTOM_HEIGHT_COLLAPSED: f32 = 36.0;
 pub const BOTTOM_HEIGHT_EXPANDED: f32 = 240.0;
 pub const BOTTOM_HEIGHT_OPEN_MIN: f32 = 80.0;
@@ -401,9 +405,43 @@ pub struct Workspace {
     pub last_error: String,
     pub ram_bytes: u64,
     pub browser_url: String,
+    pub forest: multiplexer_layout::LayoutForest,
+    pub inspector_popped: bool,
+    pub focus_region: FocusRegion,
+    pub context_menu: Option<crate::menus::OpenMenu>,
+    pub first_run_open: bool,
     next_id: u64,
     next_notice: u64,
     focus_snapshot: Option<ChromeSnapshot>,
+}
+
+/// Ctrl+Tab walk: left list, center host, inspector, terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusRegion {
+    Left,
+    Center,
+    Right,
+    Bottom,
+}
+
+impl FocusRegion {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Left => Self::Center,
+            Self::Center => Self::Right,
+            Self::Right => Self::Bottom,
+            Self::Bottom => Self::Left,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Center => "center",
+            Self::Right => "inspector",
+            Self::Bottom => "terminal",
+        }
+    }
 }
 
 impl Workspace {
@@ -477,6 +515,11 @@ impl Workspace {
             last_error: String::new(),
             ram_bytes: 0,
             browser_url: String::new(),
+            forest: multiplexer_layout::LayoutForest::default_outlook(),
+            inspector_popped: false,
+            focus_region: FocusRegion::Center,
+            context_menu: None,
+            first_run_open: false,
             next_id: 1,
             next_notice: 1,
             focus_snapshot: None,
@@ -512,6 +555,9 @@ impl Workspace {
             messages: Vec::new(),
             status: "idle".to_owned(),
             model: self.model.clone(),
+            pinned: false,
+            unread: false,
+            archived: false,
         });
         self.selected = self.threads.len() - 1;
         self.draft.clear();
@@ -1353,18 +1399,160 @@ impl Workspace {
         crate::notices::push_notice(&mut self.notices, &mut self.next_notice, kind, text);
     }
 
-    pub fn agent_rows(&self) -> Vec<(String, String, String, usize)> {
+    pub fn agent_rows(&self) -> Vec<crate::agents::AgentRow> {
         self.threads
             .iter()
-            .map(|t| {
-                (
-                    t.id.clone(),
-                    t.title.clone(),
-                    t.status.clone(),
-                    t.messages.len(),
-                )
-            })
+            .enumerate()
+            .filter(|(_, t)| !t.archived)
+            .map(|(i, t)| crate::agents::AgentRow::from_thread(i, t, i == self.selected))
             .collect()
+    }
+
+    pub fn pop_out_inspector(&mut self) -> bool {
+        if self.inspector_popped {
+            return false;
+        }
+        match self.forest.detach(multiplexer_layout::PaneId(3)) {
+            Ok(_) => {
+                self.inspector_popped = true;
+                self.chrome.hide_right();
+                self.push_notice(
+                    crate::notices::NoticeKind::Info,
+                    "Inspector detached. Same HWND this wave. Dock with Ctrl+Shift+E.",
+                );
+                true
+            }
+            Err(_) => {
+                self.push_notice(
+                    crate::notices::NoticeKind::Warn,
+                    "Cannot detach inspector (last primary pane).",
+                );
+                false
+            }
+        }
+    }
+
+    pub fn dock_inspector(&mut self) -> bool {
+        if !self.inspector_popped {
+            return false;
+        }
+        match self.forest.redock(multiplexer_layout::PaneId(3)) {
+            Ok(_) => {
+                self.inspector_popped = false;
+                self.chrome.open_right();
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub fn close_pop_out(&mut self) -> bool {
+        self.dock_inspector()
+    }
+
+    pub fn next_region(&mut self) -> FocusRegion {
+        self.focus_region = self.focus_region.next();
+        self.focus_region
+    }
+
+    pub fn nudge_bottom(&mut self, delta: f32) -> bool {
+        if self.bottom_hidden {
+            return false;
+        }
+        let before = (self.bottom_height, self.bottom_open);
+        let next = if self.bottom_open {
+            self.bottom_height + delta
+        } else {
+            BOTTOM_HEIGHT_COLLAPSED + delta
+        };
+        self.set_bottom_height(next);
+        (self.bottom_height, self.bottom_open) != before
+    }
+
+    pub fn pin_selected(&mut self) -> bool {
+        match self.selected_thread_mut() {
+            Some(t) => {
+                t.pinned = !t.pinned;
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn mark_selected_unread(&mut self) -> bool {
+        match self.selected_thread_mut() {
+            Some(t) => {
+                t.unread = true;
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn archive_selected(&mut self) -> bool {
+        match self.selected_thread_mut() {
+            Some(t) => {
+                if t.archived {
+                    false
+                } else {
+                    t.archived = true;
+                    true
+                }
+            }
+            None => false,
+        }
+    }
+
+    pub fn apply_layout_persist(&mut self, snap: &crate::persist::LayoutPersist) {
+        self.chrome.left = crate::persist::parse_rail(&snap.left);
+        self.chrome.right = crate::persist::parse_rail(&snap.right);
+        self.chrome.left_width = snap.left_width.clamp(LEFT_WIDTH_MIN, LEFT_WIDTH_MAX);
+        self.chrome.right_width = snap.right_width.clamp(RIGHT_WIDTH_MIN, RIGHT_WIDTH_MAX);
+        self.bottom_open = snap.bottom_open;
+        self.bottom_hidden = snap.bottom_hidden;
+        self.bottom_height = snap.bottom_height;
+        if snap.inspector_popped && !self.inspector_popped {
+            let _ = self.pop_out_inspector();
+        }
+    }
+
+    pub fn restore_crash(&mut self, journal: &crate::persist::CrashJournal) -> bool {
+        if !journal.marker || journal.threads.is_empty() {
+            return false;
+        }
+        self.threads = journal
+            .threads
+            .iter()
+            .map(|t| Thread {
+                id: t.id.clone(),
+                title: t.title.clone(),
+                messages: t
+                    .messages
+                    .iter()
+                    .map(|(role, text)| ChatMessage {
+                        role: if role == "user" {
+                            Role::User
+                        } else {
+                            Role::Assistant
+                        },
+                        text: text.clone(),
+                    })
+                    .collect(),
+                status: t.status.clone(),
+                model: t.model.clone(),
+                pinned: false,
+                unread: false,
+                archived: false,
+            })
+            .collect();
+        self.selected = 0;
+        self.thread_drafts = journal.drafts.clone();
+        self.restore_selected_draft();
+        self.push_notice(
+            crate::notices::NoticeKind::Info,
+            crate::persist::crash_restore_notice(),
+        );
+        true
     }
 
     /// Branch for the title pill. Reminder label is not a branch name.
@@ -1393,6 +1581,13 @@ impl Workspace {
         self.left_section = LeftSection::Threads;
         self.right_expanded_id = None;
         self.focus_snapshot = None;
+        if self.inspector_popped {
+            let _ = self.dock_inspector();
+        }
+        self.forest = multiplexer_layout::LayoutForest::default_outlook();
+        self.inspector_popped = false;
+        self.focus_region = FocusRegion::Center;
+        self.context_menu = None;
     }
 
     pub fn toggle_center_mode(&mut self) {
@@ -1465,14 +1660,13 @@ impl Workspace {
 
     pub fn agents_detail(&self) -> String {
         let mut out = String::from("Local threads only. Subagent spawn is not wired.\n\n");
-        for t in &self.threads {
+        for row in self.agent_rows() {
             out.push_str(&format!(
-                "{}  [{}]  {}  {}  {} msgs\n",
-                t.title,
-                t.status,
-                t.model,
-                t.id,
-                t.messages.len()
+                "{}  [{}]  {}  {} msgs\n",
+                row.title,
+                row.status.as_str(),
+                row.model,
+                row.messages
             ));
         }
         out
@@ -2222,7 +2416,7 @@ mod tests {
         let before = ws.agent_rows().len();
         ws.connect(vec!["sess-1".into()]);
         assert_eq!(ws.agent_rows().len(), before);
-        assert_eq!(ws.agent_rows()[0].0, ws.threads[0].id);
+        assert_eq!(ws.agent_rows()[0].id, ws.threads[0].id);
         assert!(ws.select_thread_id(&ws.threads[0].id.clone()));
     }
 
@@ -2342,5 +2536,66 @@ mod tests {
         ws.push_notice(crate::notices::NoticeKind::Info, "hi");
         assert!(ws.dismiss_newest_notice());
         assert!(ws.notices.is_empty());
+    }
+
+    #[test]
+    fn pop_out_inspector_detaches_pane_three_and_hides_right() {
+        let mut ws = Workspace::new("p", "m");
+        assert!(!ws.inspector_popped);
+        assert!(ws.pop_out_inspector());
+        assert!(ws.inspector_popped);
+        assert_eq!(ws.chrome.occupied_right(), 0.0);
+        assert_eq!(ws.forest.window_count(), 2);
+        assert!(!ws.pop_out_inspector());
+        assert!(ws.dock_inspector());
+        assert!(!ws.inspector_popped);
+        assert!(ws.chrome.right_open());
+        assert_eq!(ws.forest.window_count(), 1);
+        assert!(!ws.close_pop_out());
+    }
+
+    #[test]
+    fn next_region_and_nudge_bottom() {
+        let mut ws = Workspace::new("p", "m");
+        assert_eq!(ws.focus_region, FocusRegion::Center);
+        assert_eq!(ws.next_region(), FocusRegion::Right);
+        assert_eq!(ws.next_region(), FocusRegion::Bottom);
+        assert_eq!(ws.next_region(), FocusRegion::Left);
+        assert_eq!(ws.next_region(), FocusRegion::Center);
+        assert_eq!(FocusRegion::Left.label(), "left");
+        assert!(!ws.nudge_bottom(16.0));
+        ws.toggle_bottom();
+        assert!(ws.nudge_bottom(16.0));
+        assert_eq!(ws.bottom_height, BOTTOM_HEIGHT_EXPANDED + 16.0);
+        ws.hide_bottom();
+        assert!(!ws.nudge_bottom(16.0));
+    }
+
+    #[test]
+    fn pin_unread_archive_and_crash_restore() {
+        let mut ws = Workspace::new("p", "m");
+        assert!(ws.pin_selected());
+        assert!(ws.threads[0].pinned);
+        assert!(ws.mark_selected_unread());
+        assert!(ws.threads[0].unread);
+        assert!(ws.archive_selected());
+        assert!(ws.threads[0].archived);
+        assert!(ws.agent_rows().is_empty());
+        assert!(!ws.archive_selected());
+        ws.threads.clear();
+        assert!(!ws.pin_selected());
+        assert!(!ws.mark_selected_unread());
+        assert!(!ws.archive_selected());
+
+        let mut src = Workspace::new("p", "m");
+        src.set_draft("restored");
+        src.send_draft();
+        let j = crate::persist::journal_from_workspace(&src);
+        let mut dest = Workspace::new("p", "m");
+        assert!(dest.restore_crash(&j));
+        assert!(dest.threads.iter().any(|t| t.title == "restored"));
+        assert!(dest.notices.iter().any(|n| n.text.contains("not replayed")));
+        let empty = crate::persist::CrashJournal::default();
+        assert!(!dest.restore_crash(&empty));
     }
 }

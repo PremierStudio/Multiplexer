@@ -15,10 +15,11 @@ pub enum SettingsSection {
     Inspector,
     Session,
     Remotes,
+    About,
 }
 
 impl SettingsSection {
-    pub fn all() -> [Self; 6] {
+    pub fn all() -> [Self; 7] {
         [
             Self::Appearance,
             Self::Models,
@@ -26,6 +27,7 @@ impl SettingsSection {
             Self::Inspector,
             Self::Session,
             Self::Remotes,
+            Self::About,
         ]
     }
 
@@ -37,6 +39,7 @@ impl SettingsSection {
             Self::Inspector => "Inspector",
             Self::Session => "Session",
             Self::Remotes => "Remotes",
+            Self::About => "About",
         }
     }
 }
@@ -48,6 +51,9 @@ pub struct UiSettings {
     pub density: Density,
     pub default_model: String,
     pub bindings: Vec<(String, String)>,
+    pub reduce_motion: bool,
+    pub ui_scale: u16,
+    pub high_contrast: bool,
 }
 
 impl Default for UiSettings {
@@ -57,6 +63,9 @@ impl Default for UiSettings {
             density: Density::Comfortable,
             default_model: "grok".into(),
             bindings: BindingTable::defaults().pairs(),
+            reduce_motion: false,
+            ui_scale: 100,
+            high_contrast: false,
         }
     }
 }
@@ -90,6 +99,31 @@ impl UiSettings {
             BindingTable::from_pairs(&self.bindings)
         }
     }
+
+    pub fn clamp_ui_scale(scale: u16) -> u16 {
+        scale.clamp(100, 200)
+    }
+
+    pub fn set_ui_scale(&mut self, scale: u16) {
+        self.ui_scale = Self::clamp_ui_scale(scale);
+    }
+
+    pub fn bump_ui_scale(&mut self) {
+        let next = if self.ui_scale >= 200 {
+            100
+        } else {
+            self.ui_scale.saturating_add(25)
+        };
+        self.set_ui_scale(next);
+    }
+
+    pub fn toggle_reduce_motion(&mut self) {
+        self.reduce_motion = !self.reduce_motion;
+    }
+
+    pub fn toggle_high_contrast(&mut self) {
+        self.high_contrast = !self.high_contrast;
+    }
 }
 
 /// `%APPDATA%\Multiplexer\settings.json` (HOME fallback).
@@ -120,6 +154,9 @@ pub fn settings_to_json(s: &UiSettings) -> String {
         "density": density,
         "default_model": s.default_model,
         "bindings": bindings,
+        "reduce_motion": s.reduce_motion,
+        "ui_scale": s.ui_scale,
+        "high_contrast": s.high_contrast,
     })
     .to_string()
 }
@@ -162,6 +199,15 @@ pub fn settings_from_json(raw: &str) -> UiSettings {
         if !pairs.is_empty() {
             out.bindings = BindingTable::from_pairs(&pairs).pairs();
         }
+    }
+    if let Some(flag) = v.get("reduce_motion").and_then(|x| x.as_bool()) {
+        out.reduce_motion = flag;
+    }
+    if let Some(scale) = v.get("ui_scale").and_then(|x| x.as_u64()) {
+        out.set_ui_scale(scale as u16);
+    }
+    if let Some(flag) = v.get("high_contrast").and_then(|x| x.as_bool()) {
+        out.high_contrast = flag;
     }
     out
 }
@@ -286,14 +332,45 @@ mod tests {
 
     #[test]
     fn settings_section_labels() {
-        assert_eq!(SettingsSection::all().len(), 6);
+        assert_eq!(SettingsSection::all().len(), 7);
         assert_eq!(SettingsSection::Appearance.label(), "Appearance");
         assert_eq!(SettingsSection::Remotes.label(), "Remotes");
+        assert_eq!(SettingsSection::About.label(), "About");
         assert_ne!(
             SettingsSection::Models.label(),
             SettingsSection::Bindings.label()
         );
         assert_ne!(SettingsSection::Inspector.label(), "");
+    }
+
+    #[test]
+    fn a11y_fields_clamp_and_toggle() {
+        let mut s = UiSettings::default();
+        assert!(!s.reduce_motion);
+        assert!(!s.high_contrast);
+        assert_eq!(s.ui_scale, 100);
+        s.toggle_reduce_motion();
+        s.toggle_high_contrast();
+        s.set_ui_scale(50);
+        assert_eq!(s.ui_scale, 100);
+        s.set_ui_scale(250);
+        assert_eq!(s.ui_scale, 200);
+        s.set_ui_scale(125);
+        assert_eq!(s.ui_scale, 125);
+        s.ui_scale = 200;
+        s.bump_ui_scale();
+        assert_eq!(s.ui_scale, 100);
+        s.bump_ui_scale();
+        assert_eq!(s.ui_scale, 125);
+        let raw = settings_to_json(&s);
+        assert!(raw.contains("reduce_motion"));
+        assert!(raw.contains("ui_scale"));
+        let back = settings_from_json(&raw);
+        assert!(back.reduce_motion);
+        assert!(back.high_contrast);
+        let scaled = settings_from_json(r#"{"ui_scale":180,"reduce_motion":true}"#);
+        assert_eq!(scaled.ui_scale, 180);
+        assert!(scaled.reduce_motion);
     }
 
     #[test]

@@ -270,6 +270,24 @@ pub fn default_items() -> Vec<PaletteItem> {
             hint: "",
             action: ClientAction::SelectTab(InspectorTab::Browser),
         },
+        PaletteItem {
+            id: "popout-inspector",
+            label: "Pop out inspector",
+            hint: "Ctrl+Shift+D",
+            action: ClientAction::PopOutInspector,
+        },
+        PaletteItem {
+            id: "dock-inspector",
+            label: "Dock inspector",
+            hint: "Ctrl+Shift+E",
+            action: ClientAction::DockInspector,
+        },
+        PaletteItem {
+            id: "about",
+            label: "About Multiplexer",
+            hint: "",
+            action: ClientAction::OpenAbout,
+        },
     ]
 }
 

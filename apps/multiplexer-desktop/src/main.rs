@@ -2,14 +2,16 @@
 
 mod controls;
 mod inspector;
+mod rows;
 mod theme;
+mod widgets;
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    div, hsla, prelude::*, px, size, App, Application, Bounds, ClipboardItem, Context, CursorStyle,
+    div, prelude::*, px, size, App, Application, Bounds, ClipboardItem, Context, CursorStyle,
     KeyDownEvent, MouseButton, MouseMoveEvent, SharedString, Window,
 };
 use inspector::tab_buttons;
@@ -25,19 +27,22 @@ use multiplexer_mcp::{
 use multiplexer_resman::sample_cores;
 use multiplexer_server::Server;
 use multiplexer_shell::{
-    activity_items, apply_layout_action, auto_dismisses, bottom_height_from_mouse, cap_text,
-    context_strip, default_browser_candidates, default_settings_path, delete_forward,
-    detect_browsers, detect_remotes, empty_state_tiles, format_line, git_diff_line,
-    help_text, hit_action, insert_at, inspector_rows, is_tui_hatch, join_project_path, merge_cores,
-    merge_mcp, merge_models, move_end, move_home, move_left, move_right, move_word_left,
-    move_word_right, open_external_program, palette_hits, parse_builtin, parse_model_keys,
-    parse_slash, plan_send, read_settings, remotes_pill_label,
-    remotes_serve_note, row_detail, search_workspace, slash_arg, status_from, status_line,
-    title_overflow, visible_notices, visible_tail, working_copy, write_settings, BindingTable,
-    BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow,
-    EmptyStateSpec, InspectorTab, LeftSection, ListRowSpec, McpRow, NoticeKind, PaletteState,
-    RemoteRow, Role, SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand, TermLineKind,
-    TuiLife, Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
+    about_info, activity_items, apply_deep_link, apply_layout_action, auto_dismisses,
+    bottom_height_from_mouse, cap_text, context_strip, default_browser_candidates,
+    default_crash_path, default_first_run_path, default_layout_path, default_settings_path,
+    delete_forward, detect_browsers, detect_remotes, first_run_completed,
+    first_run_keychain_notice, format_line, git_diff_line, help_text, hit_action, insert_at,
+    inspector_rows, is_tui_hatch, join_project_path, journal_from_workspace, leaf_name, menu_for,
+    merge_cores, merge_mcp, merge_models, move_end, move_home, move_left, move_right,
+    move_word_left, move_word_right, open_external_program, palette_hits, parse_builtin,
+    parse_deep_link, parse_model_keys, parse_slash, plan_send, read_crash_journal, read_layout,
+    read_settings, remotes_pill_label, remotes_serve_note, row_detail, search_workspace, slash_arg,
+    status_from, status_line, thread_leaf_title, title_overflow, visible_notices, visible_tail,
+    working_copy, write_crash_journal, write_first_run_done, write_layout, write_settings,
+    BindingTable, BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow,
+    FocusRegion, InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind, PaletteState, RemoteRow,
+    Role, SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand, TermLineKind, TuiLife,
+    Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
 };
 use multiplexer_terminal::ProcessCapture;
 use multiplexer_wire::codec::{decode_frame, encode_frame};
@@ -45,8 +50,10 @@ use multiplexer_wire::jsonrpc::{Id, Message, Request};
 use multiplexer_wire::methods;
 use multiplexer_wire::protocol::PROTOCOL_VERSION;
 use multiplexer_worktree::{reminder_from_list, Worktree};
+use rows::{inspector_row_el, list_row};
 use serde_json::{json, Value};
 use theme::Theme;
+use widgets::{chip, click_pill, empty_center, ghost_btn, glass_bar, glass_pane, icon_btn};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DragRail {
@@ -64,7 +71,7 @@ enum Focus {
     FileFilter,
 }
 
-struct ShellView {
+pub(crate) struct ShellView {
     workspace: Workspace,
     server: Server<
         multiplexer_server::ProviderBridge<
@@ -179,6 +186,7 @@ impl ShellView {
             turn_started: None,
         };
         view.apply_theme();
+        view.restore_persist();
         view.handshake();
         view.bootstrap_catalogs();
         view.refresh_skills();
@@ -216,6 +224,74 @@ impl ShellView {
     fn apply_theme(&self) {
         Theme::set_mode(self.workspace.settings.mode);
         Theme::set_density(self.workspace.settings.density);
+        Theme::set_high_contrast(self.workspace.settings.high_contrast);
+        Theme::set_ui_scale(self.workspace.settings.ui_scale);
+    }
+
+    fn restore_persist(&mut self) {
+        let first = default_first_run_path();
+        if !first_run_completed(&first) {
+            self.workspace.first_run_open = true;
+            self.workspace
+                .push_notice(NoticeKind::Info, first_run_keychain_notice());
+        }
+        let crash = read_crash_journal(&default_crash_path());
+        if crash.marker {
+            let _ = self.workspace.restore_crash(&crash);
+            let mut cleared = crash;
+            cleared.marker = false;
+            let _ = write_crash_journal(&default_crash_path(), &cleared);
+        }
+        if let Some(layout) = read_layout(&default_layout_path(&self.workspace.project)) {
+            self.workspace.apply_layout_persist(&layout);
+        }
+        if let Some(raw) = std::env::args().nth(1) {
+            if let Some(link) = parse_deep_link(&raw) {
+                let note = apply_deep_link(&mut self.workspace, &link);
+                self.term_meta(&note);
+            }
+        }
+    }
+
+    fn persist_layout(&self) {
+        let snap = multiplexer_shell::LayoutPersist::from_workspace(&self.workspace);
+        let _ = write_layout(&default_layout_path(&self.workspace.project), &snap);
+    }
+
+    fn persist_crash(&self) {
+        let j = journal_from_workspace(&self.workspace);
+        let _ = write_crash_journal(&default_crash_path(), &j);
+    }
+
+    pub(crate) fn open_row_menu(&mut self, id: &str) {
+        let mut menu = if id.starts_with("thr-") || id.starts_with("agent-") {
+            Some(menu_for(MenuKind::Thread, id))
+        } else if id.starts_with("file:") || id.starts_with("file-") {
+            Some(menu_for(MenuKind::File, id))
+        } else if id.starts_with("mcp:") {
+            Some(menu_for(MenuKind::Mcp, id))
+        } else if id.starts_with("diff:") {
+            Some(menu_for(MenuKind::Diff, id))
+        } else {
+            None
+        };
+        if let Some(menu) = menu.as_mut() {
+            if menu.kind == MenuKind::Thread {
+                let idx = id
+                    .strip_prefix("thr-")
+                    .and_then(|s| s.parse().ok())
+                    .or_else(|| {
+                        id.strip_prefix("agent-")
+                            .and_then(|tid| self.workspace.threads.iter().position(|t| t.id == tid))
+                    })
+                    .unwrap_or(self.workspace.selected);
+                if let Some(item) = menu.items.first_mut() {
+                    item.action = ClientAction::SelectThread(idx);
+                }
+                let _ = self.workspace.select(idx);
+            }
+        }
+        self.workspace.context_menu = menu;
     }
 
     fn bootstrap_catalogs(&mut self) {
@@ -372,7 +448,7 @@ impl ShellView {
         }
     }
 
-    fn activate_inspector_row(&mut self, id: &str) {
+    pub(crate) fn activate_inspector_row(&mut self, id: &str) {
         self.workspace.toggle_right_row(id.to_owned());
         if let Some(path) = id.strip_prefix("file:") {
             if path.ends_with('/') {
@@ -555,6 +631,24 @@ impl ShellView {
                     ClientAction::SelectTab(InspectorTab::Checkpoints) => {
                         self.refresh_checkpoints();
                     }
+                    ClientAction::PopOutInspector
+                    | ClientAction::DockInspector
+                    | ClientAction::ClosePopOut
+                    | ClientAction::ResetOutlook
+                    | ClientAction::HideRight
+                    | ClientAction::ToggleRight => {
+                        self.persist_layout();
+                    }
+                    ClientAction::NextRegion => {
+                        self.focus = match self.workspace.focus_region {
+                            FocusRegion::Left | FocusRegion::Center => Focus::Composer,
+                            FocusRegion::Right => Focus::FileFilter,
+                            FocusRegion::Bottom => Focus::Terminal,
+                        };
+                    }
+                    ClientAction::OpenAbout => {
+                        self.sync_overlays();
+                    }
                     _ => {}
                 }
             }
@@ -595,6 +689,9 @@ impl ShellView {
             ClientAction::RefreshSkills => self.refresh_skills(),
             ClientAction::DetectBrowsers => self.detect_browser_notice(),
             ClientAction::CreateSkill => self.create_skill(),
+            ClientAction::ApproveOnce => self.respond_approval("once"),
+            ClientAction::Later => self.respond_approval("later"),
+            ClientAction::CopyThreadId => self.copy_thread_id(cx),
             ClientAction::StartMcp | ClientAction::StopMcp => {
                 if !apply_layout_action(&mut self.workspace, action) {
                     self.workspace
@@ -1073,6 +1170,17 @@ impl ShellView {
         self.term_meta("copied last message");
     }
 
+    fn copy_thread_id(&mut self, cx: &mut Context<Self>) {
+        let id = self
+            .workspace
+            .selected_thread()
+            .map(|t| t.id.clone())
+            .unwrap_or_else(|| "no thread".into());
+        cx.write_to_clipboard(ClipboardItem::new_string(id.clone()));
+        self.workspace
+            .push_notice(NoticeKind::Info, format!("copied {id}"));
+    }
+
     fn copy_session(&mut self, cx: &mut Context<Self>) {
         let text = self
             .session_id
@@ -1144,6 +1252,7 @@ impl ShellView {
         let Some(text) = self.workspace.send_draft() else {
             return;
         };
+        self.persist_crash();
         if !self.ensure_session() {
             return;
         }
@@ -1217,6 +1326,9 @@ impl ShellView {
             }
             SlashCommand::Tui => {
                 self.dispatch(ClientAction::SetCenterTui, cx);
+            }
+            SlashCommand::About => {
+                self.dispatch(ClientAction::OpenAbout, cx);
             }
             SlashCommand::Unknown(name) => {
                 self.workspace
@@ -1593,6 +1705,14 @@ impl ShellView {
                 self.dispatch(ClientAction::Deny, cx);
                 return;
             }
+            if key == "o" {
+                self.dispatch(ClientAction::ApproveOnce, cx);
+                return;
+            }
+            if key == "l" {
+                self.dispatch(ClientAction::Later, cx);
+                return;
+            }
         }
 
         if self.workspace.help_open || self.workspace.settings_open {
@@ -1683,6 +1803,16 @@ impl ShellView {
 
     fn dispatch_bound(&mut self, action: ClientAction, cx: &mut Context<Self>) {
         if matches!(action, ClientAction::CloseOverlay) && !self.workspace.overlay_flags().any() {
+            if self.workspace.context_menu.take().is_some() {
+                cx.notify();
+                return;
+            }
+            if self.workspace.first_run_open {
+                self.workspace.first_run_open = false;
+                let _ = write_first_run_done(&default_first_run_path());
+                cx.notify();
+                return;
+            }
             if self.workspace.dismiss_newest_notice() {
                 cx.notify();
                 return;
@@ -1860,6 +1990,15 @@ impl Render for ShellView {
         if self.workspace.settings_open {
             root = root.child(self.settings_overlay(cx));
         }
+        if self.workspace.inspector_popped {
+            root = root.child(self.popout_inspector(cx));
+        }
+        if self.workspace.context_menu.is_some() {
+            root = root.child(self.context_menu_overlay(cx));
+        }
+        if self.workspace.first_run_open {
+            root = root.child(self.first_run_overlay(cx));
+        }
         root = root.child(self.notice_bar(cx));
         root
     }
@@ -1872,7 +2011,7 @@ impl ShellView {
         let hide_pills = title_overflow(self.win_w);
         let hide = |id: &str| hide_pills.contains(&id);
         glass_bar()
-            .h(px(44.0))
+            .h(Theme::title_height())
             .px_3()
             .rounded_none()
             .border_b_1()
@@ -1974,8 +2113,18 @@ impl ShellView {
                 cx,
                 |this, cx| this.dispatch(ClientAction::ToggleSettings, cx),
             ))
+            .child(if self.workspace.inspector_popped {
+                icon_btn("⧈", "Dock inspector", cx, |this, cx| {
+                    this.dispatch(ClientAction::DockInspector, cx);
+                })
+            } else {
+                icon_btn("⧉", "Pop out inspector", cx, |this, cx| {
+                    this.dispatch(ClientAction::PopOutInspector, cx);
+                })
+            })
             .child(icon_btn("↺", "Reset layout", cx, |this, cx| {
                 this.workspace.reset_outlook_chrome();
+                this.persist_layout();
                 cx.notify();
             }))
             .child(icon_btn(
@@ -2006,7 +2155,7 @@ impl ShellView {
         let files = self.workspace.files_visible();
         let activity = activity_items(&self.workspace);
         let icons = div()
-            .w(px(44.0))
+            .w(Theme::rail_width())
             .h_full()
             .flex()
             .flex_col()
@@ -2026,7 +2175,7 @@ impl ShellView {
                     .bg(if on {
                         Theme::selection()
                     } else {
-                        hsla(0.0, 0.0, 1.0, 0.0)
+                        Theme::transparent()
                     })
                     .text_color(if on { Theme::accent() } else { Theme::muted() })
                     .on_mouse_down(
@@ -2100,9 +2249,9 @@ impl ShellView {
                     list_row(
                         format!("thr-{i}"),
                         ChromeGlyph::Chat.mark(),
-                        t.title.clone(),
+                        thread_leaf_title(&t.title, &t.id),
                         Workspace::thread_preview(&t),
-                        format!("{} · {}", t.status, t.id),
+                        format!("{} · {}", t.status, t.model),
                         i == selected,
                         false,
                         cx,
@@ -2126,17 +2275,17 @@ impl ShellView {
                     )]
                 } else {
                     rows.into_iter()
-                        .enumerate()
-                        .map(|(i, (id, title, status, n))| {
-                            let tid = id.clone();
+                        .map(|row| {
+                            let tid = row.id.clone();
+                            let idx = row.index;
                             list_row(
-                                format!("agent-{id}"),
+                                format!("agent-{}", row.id),
                                 ChromeGlyph::Agent.mark(),
-                                title,
-                                format!("{status} · {n} msgs"),
-                                "local threads only",
-                                i == selected,
-                                status == "running",
+                                row.title,
+                                format!("{} · {} msgs", row.status.as_str(), row.messages),
+                                row.model,
+                                row.selected,
+                                row.status == multiplexer_shell::ThreadStatus::Running,
                                 cx,
                                 move |this, cx| {
                                     this.dispatch(
@@ -2145,7 +2294,7 @@ impl ShellView {
                                                 .threads
                                                 .iter()
                                                 .position(|t| t.id == tid)
-                                                .unwrap_or(i),
+                                                .unwrap_or(idx),
                                         ),
                                         cx,
                                     );
@@ -2175,12 +2324,12 @@ impl ShellView {
                     files
                         .into_iter()
                         .map(|p| {
-                            let title = p.clone();
+                            let title = leaf_name(&p);
                             list_row(
                                 format!("file-{p}"),
                                 ChromeGlyph::Folder.mark(),
                                 title,
-                                "",
+                                p.clone(),
                                 "",
                                 false,
                                 false,
@@ -2248,7 +2397,7 @@ impl ShellView {
         let rows = inspector_rows(&self.workspace);
         let icons = div()
             .id("right-icons")
-            .w(px(44.0))
+            .w(Theme::rail_width())
             .h_full()
             .flex()
             .flex_col()
@@ -2269,7 +2418,7 @@ impl ShellView {
                     .bg(if on {
                         Theme::selection()
                     } else {
-                        hsla(0., 0., 1., 0.)
+                        Theme::transparent()
                     })
                     .text_color(if on { Theme::accent() } else { Theme::muted() })
                     .on_mouse_down(
@@ -2327,7 +2476,7 @@ impl ShellView {
                     .px_2()
                     .py_1()
                     .rounded_lg()
-                    .bg(hsla(0.0, 0.0, 1.0, 0.06))
+                    .bg(Theme::wash())
                     .border_1()
                     .border_color(if self.focus == Focus::FileFilter {
                         Theme::accent()
@@ -2454,9 +2603,9 @@ impl ShellView {
                                         .py_2()
                                         .rounded_xl()
                                         .bg(if user {
-                                            hsla(0.58, 0.45, 0.28, 0.55)
+                                            Theme::bubble_user()
                                         } else {
-                                            hsla(0.0, 0.0, 1.0, 0.06)
+                                            Theme::bubble_assistant()
                                         })
                                         .border_1()
                                         .border_color(Theme::hairline())
@@ -2731,7 +2880,7 @@ impl ShellView {
             .id("worktree-reminder")
             .px_3()
             .py_1()
-            .bg(hsla(0.12, 0.45, 0.22, 0.55))
+            .bg(Theme::reminder_fill())
             .border_b_1()
             .border_color(Theme::hairline())
             .flex()
@@ -2756,7 +2905,7 @@ impl ShellView {
             .id("approval-card")
             .px_3()
             .py_2()
-            .bg(hsla(0.08, 0.55, 0.22, 0.70))
+            .bg(Theme::approval_fill())
             .border_b_1()
             .border_color(Theme::hairline())
             .flex()
@@ -2772,6 +2921,12 @@ impl ShellView {
             }))
             .child(ghost_btn(pending.deny_label(), "D", cx, |this, cx| {
                 this.dispatch(ClientAction::Deny, cx);
+            }))
+            .child(ghost_btn("Once", "O", cx, |this, cx| {
+                this.dispatch(ClientAction::ApproveOnce, cx);
+            }))
+            .child(ghost_btn("Later", "L", cx, |this, cx| {
+                this.dispatch(ClientAction::Later, cx);
             }))
             .into_any()
     }
@@ -2798,9 +2953,9 @@ impl ShellView {
                     .py_2()
                     .rounded_lg()
                     .bg(match n.kind {
-                        NoticeKind::Good => hsla(0.38, 0.45, 0.22, 0.55),
-                        NoticeKind::Warn => hsla(0.12, 0.55, 0.24, 0.55),
-                        NoticeKind::Danger => hsla(0.02, 0.60, 0.24, 0.55),
+                        NoticeKind::Good => Theme::toast_fill(NoticeKind::Good),
+                        NoticeKind::Warn => Theme::toast_fill(NoticeKind::Warn),
+                        NoticeKind::Danger => Theme::toast_fill(NoticeKind::Danger),
                         NoticeKind::Info => Theme::accent_muted(),
                     })
                     .border_1()
@@ -2833,12 +2988,18 @@ impl ShellView {
         let pairs = self.bindings.pairs();
         let project = self.workspace.project.clone();
         let body = match section {
-            SettingsSection::Appearance => format!("Theme {mode}   Density {density}\nSaved to %APPDATA%\\Multiplexer\\settings.json. No secrets."),
+            SettingsSection::Appearance => format!(
+                "Theme {mode}   Density {density}\nMotion {}   Scale {}%   Contrast {}\nSaved to %APPDATA%\\Multiplexer\\settings.json. No secrets.",
+                if self.workspace.settings.reduce_motion { "reduced" } else { "full" },
+                self.workspace.settings.ui_scale,
+                if self.workspace.settings.high_contrast { "high" } else { "standard" },
+            ),
             SettingsSection::Models => format!("Default {model}. Click a row to apply."),
             SettingsSection::Bindings => "Chord table. Ctrl+P is search. Ctrl+Shift+P is palette.".into(),
             SettingsSection::Inspector => "Inspector customize later. Not shipped.".into(),
             SettingsSection::Session => format!("{turns} turns  {tokens} tok (local snapshot only)\nProject {project}"),
             SettingsSection::Remotes => remotes_serve_note().into(),
+            SettingsSection::About => about_info(which_grok().as_deref()).lines(),
         };
         div()
             .id("settings")
@@ -2849,7 +3010,7 @@ impl ShellView {
             .flex()
             .justify_center()
             .pt(px(48.0))
-            .bg(hsla(0.64, 0.20, 0.04, 0.45))
+            .bg(Theme::overlay_scrim())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
@@ -2919,6 +3080,23 @@ impl ShellView {
                             .child(ghost_btn("Use model", "apply", cx, |this, cx| {
                                 this.dispatch(ClientAction::SelectModel, cx);
                                 this.persist_settings();
+                            }))
+                            .child(ghost_btn("Motion", "a11y", cx, |this, cx| {
+                                this.workspace.settings.toggle_reduce_motion();
+                                this.persist_settings();
+                                cx.notify();
+                            }))
+                            .child(ghost_btn("Scale", "100-200", cx, |this, cx| {
+                                this.workspace.settings.bump_ui_scale();
+                                this.apply_theme();
+                                this.persist_settings();
+                                cx.notify();
+                            }))
+                            .child(ghost_btn("Contrast", "a11y", cx, |this, cx| {
+                                this.workspace.settings.toggle_high_contrast();
+                                this.apply_theme();
+                                this.persist_settings();
+                                cx.notify();
                             })),
                     )
                     .children(if section == SettingsSection::Models {
@@ -3085,7 +3263,7 @@ impl ShellView {
                         .px_2()
                         .py_1()
                         .rounded_lg()
-                        .bg(hsla(0.0, 0.0, 1.0, 0.05))
+                        .bg(Theme::wash_soft())
                         .border_1()
                         .border_color(if self.focus == Focus::Terminal {
                             Theme::accent()
@@ -3150,7 +3328,7 @@ impl ShellView {
             .flex()
             .justify_center()
             .pt(px(80.0))
-            .bg(hsla(0.64, 0.20, 0.04, 0.45))
+            .bg(Theme::overlay_scrim())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
@@ -3173,7 +3351,7 @@ impl ShellView {
                             .py_2()
                             .mb_2()
                             .rounded_lg()
-                            .bg(hsla(0.0, 0.0, 1.0, 0.06))
+                            .bg(Theme::wash())
                             .child(if q.is_empty() {
                                 SharedString::from("Type a file, thread, or command name")
                             } else {
@@ -3205,9 +3383,9 @@ impl ShellView {
                                     .py_2()
                                     .rounded_lg()
                                     .bg(if i == selected {
-                                        hsla(0.58, 0.40, 0.28, 0.50)
+                                        Theme::selection()
                                     } else {
-                                        hsla(0.0, 0.0, 0.0, 0.0)
+                                        Theme::transparent()
                                     })
                                     .cursor_pointer()
                                     .on_mouse_down(
@@ -3237,7 +3415,7 @@ impl ShellView {
             .flex()
             .justify_center()
             .pt(px(80.0))
-            .bg(hsla(0.64, 0.20, 0.04, 0.45))
+            .bg(Theme::overlay_scrim())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
@@ -3260,7 +3438,7 @@ impl ShellView {
                             .py_2()
                             .mb_2()
                             .rounded_lg()
-                            .bg(hsla(0.0, 0.0, 1.0, 0.06))
+                            .bg(Theme::wash())
                             .child(if self.palette.query.is_empty() {
                                 SharedString::from("Search threads, files, commands…")
                             } else {
@@ -3281,9 +3459,9 @@ impl ShellView {
                             .py_2()
                             .rounded_lg()
                             .bg(if i == selected {
-                                hsla(0.58, 0.40, 0.28, 0.50)
+                                Theme::selection()
                             } else {
-                                hsla(0.0, 0.0, 0.0, 0.0)
+                                Theme::transparent()
                             })
                             .cursor_pointer()
                             .on_mouse_down(
@@ -3308,7 +3486,7 @@ impl ShellView {
             .flex()
             .justify_center()
             .pt(px(72.0))
-            .bg(hsla(0.64, 0.20, 0.04, 0.45))
+            .bg(Theme::overlay_scrim())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
@@ -3336,8 +3514,140 @@ impl ShellView {
                             })),
                     )
                     .child(div().text_color(Theme::muted()).mt_2().child(
-                        "Enter send   Shift+Enter newline   Ctrl+K / Ctrl+Shift+P palette\nCtrl+P / Ctrl+Shift+F name search   F1 help   Ctrl+, / F2 settings\nCtrl+Shift+G Grok TUI / chat log   Ctrl+N new chat   Ctrl+[ / ] rails   Ctrl+` terminal\nCtrl+. stop   Ctrl+S checkpoint pointer   Ctrl+Shift+L reset   Ctrl+Shift+H focus\nCtrl+1..4 left sections   Esc pops overlay then toast\nSlash: /new /stop /help /search /settings /files /agents /diff /browser /tui\nGrok TUI is the real pager in a console. Chat log is grok -p only.",
+                        "Enter send   Shift+Enter newline   Ctrl+K / Ctrl+Shift+P palette\nCtrl+P / Ctrl+Shift+F name search   F1 help   Ctrl+, / F2 settings\nCtrl+Shift+G Grok TUI / chat log   Ctrl+N new chat   Ctrl+[ / ] rails   Ctrl+` terminal\nCtrl+. stop   Ctrl+S checkpoint pointer   Ctrl+Shift+L reset   Ctrl+Shift+H focus\nCtrl+Shift+D pop-out inspector   Ctrl+Shift+E dock   Ctrl+W close pop-out   Ctrl+Tab region\nCtrl+Alt+Up/Down bottom   A/D/O/L approval when pending   Ctrl+1..4 left sections\nEsc pops overlay then toast\nSlash: /new /stop /help /search /settings /files /agents /diff /browser /tui /about\nGrok TUI is the real pager in a console. Chat log is grok -p only.",
                     )),
+            )
+    }
+
+    fn popout_inspector(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let tab = self.workspace.inspector;
+        let rows = inspector_rows(&self.workspace);
+        div()
+            .id("popout-inspector")
+            .absolute()
+            .top(px(64.0))
+            .right(px(16.0))
+            .w(px(360.0))
+            .max_h(px(640.0))
+            .rounded_xl()
+            .bg(Theme::glass_strong())
+            .border_1()
+            .border_color(Theme::hairline_bright())
+            .shadow(Theme::shadow())
+            .p_2()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_color(Theme::accent())
+                            .child(format!("Inspector · {} · same HWND", tab.label())),
+                    )
+                    .child(ghost_btn("Dock", "Ctrl+Shift+E", cx, |this, cx| {
+                        this.dispatch(ClientAction::DockInspector, cx);
+                    })),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_hidden()
+                    .children(rows.into_iter().map(|row| {
+                        let detail = row_detail(&self.workspace, &row.id);
+                        inspector_row_el(row, detail, cx)
+                    })),
+            )
+    }
+
+    fn context_menu_overlay(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(menu) = self.workspace.context_menu.clone() else {
+            return div().id("no-menu").into_any();
+        };
+        div()
+            .id("context-menu")
+            .absolute()
+            .top(px(80.0))
+            .left(px(80.0))
+            .w(px(220.0))
+            .rounded_xl()
+            .bg(Theme::glass_strong())
+            .border_1()
+            .border_color(Theme::hairline_bright())
+            .shadow(Theme::shadow())
+            .p_2()
+            .on_mouse_down(MouseButton::Left, |_, _, _| {})
+            .child(
+                div()
+                    .text_color(Theme::faint())
+                    .child(format!("{:?}  {}", menu.kind, menu.target)),
+            )
+            .children(menu.items.into_iter().map(|item| {
+                let action = item.action;
+                ghost_btn(item.label, item.id, cx, move |this, cx| {
+                    this.workspace.context_menu = None;
+                    this.dispatch(action, cx);
+                })
+            }))
+            .child(ghost_btn("Close", "Esc", cx, |this, cx| {
+                this.workspace.context_menu = None;
+                cx.notify();
+            }))
+            .into_any()
+    }
+
+    fn first_run_overlay(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("first-run")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .justify_center()
+            .pt(px(80.0))
+            .bg(Theme::overlay_scrim())
+            .child(
+                div()
+                    .w(px(480.0))
+                    .rounded_xl()
+                    .bg(Theme::glass_strong())
+                    .border_1()
+                    .border_color(Theme::hairline_bright())
+                    .shadow(Theme::shadow())
+                    .p_4()
+                    .child(
+                        div()
+                            .text_color(Theme::accent())
+                            .child("Welcome to Multiplexer"),
+                    )
+                    .child(div().mt_2().text_color(Theme::muted()).child(
+                        format!(
+                            "Project {}\nTheme {:?}\n{}\nGrok TUI hosts the real pager. Chat log is grok -p.",
+                            leaf_name(&self.workspace.project),
+                            self.workspace.settings.mode,
+                            first_run_keychain_notice()
+                        ),
+                    ))
+                    .child(
+                        div()
+                            .mt_3()
+                            .flex()
+                            .gap_2()
+                            .child(ghost_btn("Continue", "enter", cx, |this, cx| {
+                                this.workspace.first_run_open = false;
+                                let _ = write_first_run_done(&default_first_run_path());
+                                cx.notify();
+                            }))
+                            .child(ghost_btn("Skip", "esc", cx, |this, cx| {
+                                this.workspace.first_run_open = false;
+                                let _ = write_first_run_done(&default_first_run_path());
+                                cx.notify();
+                            })),
+                    ),
             )
     }
 
@@ -3359,7 +3669,7 @@ impl ShellView {
             .w(px(7.0))
             .h_full()
             .cursor(CursorStyle::ResizeLeftRight)
-            .hover(|s| s.bg(hsla(0.58, 0.50, 0.55, 0.28)))
+            .hover(|s| s.bg(Theme::hover_fill()))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| {
@@ -3379,7 +3689,7 @@ impl ShellView {
             .w_full()
             .h(px(8.0))
             .cursor(CursorStyle::ResizeUpDown)
-            .hover(|s| s.bg(hsla(0.58, 0.50, 0.55, 0.35)))
+            .hover(|s| s.bg(Theme::hover_strong()))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
@@ -3389,329 +3699,6 @@ impl ShellView {
             )
             .into_any()
     }
-}
-
-fn glass_pane() -> gpui::Div {
-    div()
-        .rounded(Theme::panel_radius())
-        .bg(Theme::glass())
-        .border_1()
-        .border_color(Theme::hairline())
-        .shadow(Theme::shadow())
-        .overflow_hidden()
-        .min_h_0()
-}
-
-fn glass_bar() -> gpui::Div {
-    div()
-        .flex()
-        .items_center()
-        .gap_3()
-        .bg(Theme::glass_strong())
-        .border_color(Theme::hairline())
-}
-
-fn empty_center() -> gpui::Div {
-    let spec = EmptyStateSpec::chat();
-    div()
-        .flex_1()
-        .flex()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .gap_3()
-        .text_color(Theme::muted())
-        .child(
-            div()
-                .text_size(Theme::text_body())
-                .text_color(Theme::accent())
-                .child(format!("{}  {}", ChromeGlyph::Sparkle.mark(), spec.title)),
-        )
-        .child(div().child(spec.body))
-        .child(
-            div()
-                .text_size(Theme::text_caption())
-                .text_color(Theme::faint())
-                .child(empty_state_tiles().join("   ·   ")),
-        )
-        .child(
-            div()
-                .text_color(Theme::faint())
-                .child("Ctrl+Shift+G Grok TUI   Ctrl+K palette   F2 settings"),
-        )
-}
-
-fn chip(
-    label: &'static str,
-    cx: &mut Context<ShellView>,
-    on_click: impl Fn(&mut ShellView, &mut Context<ShellView>) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(SharedString::from(label))
-        .px_2()
-        .py_1()
-        .rounded_lg()
-        .bg(hsla(0.0, 0.0, 1.0, 0.06))
-        .border_1()
-        .border_color(Theme::hairline())
-        .cursor_pointer()
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _, _, cx| on_click(this, cx)),
-        )
-        .child(label)
-}
-
-fn icon_btn(
-    mark: &'static str,
-    hint: &'static str,
-    cx: &mut Context<ShellView>,
-    on_click: impl Fn(&mut ShellView, &mut Context<ShellView>) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(SharedString::from(format!("icon-{hint}")))
-        .w(Theme::icon_size())
-        .h(Theme::icon_size())
-        .rounded_lg()
-        .flex()
-        .items_center()
-        .justify_center()
-        .border_1()
-        .border_color(Theme::hairline())
-        .bg(Theme::glass_ultra())
-        .text_color(Theme::text())
-        .cursor_pointer()
-        .hover(|s| s.bg(Theme::selection()))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _, _, cx| on_click(this, cx)),
-        )
-        .child(mark)
-}
-
-fn pill(text: impl Into<String>, mark: &'static str) -> impl IntoElement {
-    div()
-        .h(px(28.0))
-        .px_2()
-        .rounded_lg()
-        .flex()
-        .items_center()
-        .gap_1()
-        .bg(Theme::glass_ultra())
-        .border_1()
-        .border_color(Theme::hairline())
-        .text_color(Theme::muted())
-        .child(mark)
-        .child(text.into())
-}
-
-fn click_pill(
-    id: &'static str,
-    text: impl Into<String>,
-    mark: &'static str,
-    cx: &mut Context<ShellView>,
-    on_click: impl Fn(&mut ShellView, &mut Context<ShellView>) + 'static,
-) -> gpui::AnyElement {
-    div()
-        .id(id)
-        .cursor_pointer()
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _, _, cx| on_click(this, cx)),
-        )
-        .child(pill(text, mark))
-        .into_any()
-}
-
-#[allow(clippy::too_many_arguments)]
-fn list_row(
-    id: impl Into<String>,
-    icon: &'static str,
-    title: impl Into<String>,
-    subtitle: impl Into<String>,
-    meta: impl Into<String>,
-    selected: bool,
-    busy: bool,
-    cx: &mut Context<ShellView>,
-    on_click: impl Fn(&mut ShellView, &mut Context<ShellView>) + 'static,
-) -> gpui::AnyElement {
-    let title = title.into();
-    let _subtitle = subtitle.into();
-    let _meta = meta.into();
-    let id = id.into();
-    div()
-        .id(SharedString::from(id))
-        .mx_2()
-        .mb_1()
-        .h(px(36.0))
-        .px_2()
-        .overflow_hidden()
-        .rounded_lg()
-        .bg(if selected {
-            Theme::selection()
-        } else {
-            Theme::glass_ultra()
-        })
-        .border_1()
-        .border_color(if selected {
-            Theme::hairline_bright()
-        } else {
-            Theme::hairline()
-        })
-        .cursor_pointer()
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _, _, cx| on_click(this, cx)),
-        )
-        .child(
-            div()
-                .flex()
-                .gap_2()
-                .items_center()
-                .overflow_hidden()
-                .child(div().text_color(Theme::accent()).child(icon))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .text_color(Theme::faint())
-                        .child(if busy { "…" } else { "" }),
-                ),
-        )
-        .into_any()
-}
-
-fn inspector_row_el(
-    row: ListRowSpec,
-    detail: String,
-    cx: &mut Context<ShellView>,
-) -> impl IntoElement {
-    let id = row.id.clone();
-    let click_id = id.clone();
-    let title = row.title.clone();
-    let subtitle = row.subtitle.clone();
-    let meta = row.meta.clone();
-    let icon = row.icon.clone();
-    let selected = row.selected || row.expanded;
-    let expanded = row.expanded;
-    let badge = row.badge.clone();
-    let body = if !detail.is_empty() { detail } else { meta };
-    div()
-        .id(SharedString::from(id.clone()))
-        .mx_2()
-        .mb_1()
-        .min_h(Theme::row_height())
-        .px_2()
-        .py_1()
-        .overflow_hidden()
-        .rounded_lg()
-        .bg(if selected {
-            Theme::selection()
-        } else {
-            Theme::glass_ultra()
-        })
-        .border_1()
-        .border_color(if selected {
-            Theme::hairline_bright()
-        } else {
-            Theme::hairline()
-        })
-        .cursor_pointer()
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _, _, cx| {
-                this.activate_inspector_row(&click_id);
-                cx.notify();
-            }),
-        )
-        .child(
-            div()
-                .flex()
-                .gap_2()
-                .items_center()
-                .child(div().text_color(Theme::accent()).child(icon))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .child(title),
-                )
-                .child(if let Some(b) = badge {
-                    let tone_bg = match b.tone {
-                        multiplexer_shell::Tone::Warn => Theme::warn(),
-                        multiplexer_shell::Tone::Danger => Theme::danger(),
-                        multiplexer_shell::Tone::Good => Theme::good(),
-                        _ => Theme::accent_muted(),
-                    };
-                    div()
-                        .px_1()
-                        .rounded_md()
-                        .bg(tone_bg)
-                        .text_color(Theme::text())
-                        .child(b.text)
-                } else {
-                    div()
-                }),
-        )
-        .child(if subtitle.is_empty() {
-            div()
-        } else {
-            div().text_color(Theme::muted()).child(subtitle)
-        })
-        .child(if expanded && !body.is_empty() {
-            div()
-                .mt_1()
-                .px_2()
-                .py_1()
-                .rounded_lg()
-                .bg(hsla(0.0, 0.0, 1.0, 0.04))
-                .text_color(Theme::faint())
-                .child(body)
-        } else {
-            div()
-        })
-}
-
-fn ghost_btn(
-    label: &'static str,
-    hint: &'static str,
-    cx: &mut Context<ShellView>,
-    on_click: impl Fn(&mut ShellView, &mut Context<ShellView>) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(SharedString::from(format!("{label}-{hint}")))
-        .h(px(32.0))
-        .px_3()
-        .flex()
-        .items_center()
-        .gap_2()
-        .rounded_lg()
-        .border_1()
-        .border_color(Theme::hairline_bright())
-        .bg(if label == "Stop" {
-            Theme::danger()
-        } else if label == "Send" {
-            Theme::send_bg()
-        } else {
-            hsla(0.0, 0.0, 1.0, 0.07)
-        })
-        .text_color(Theme::text())
-        .cursor_pointer()
-        .hover(|s| s.bg(hsla(0.58, 0.35, 0.28, 0.40)))
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _, _, cx| on_click(this, cx)),
-        )
-        .overflow_hidden()
-        .child(label)
 }
 
 fn draft_display(draft: &str, cursor: usize, show_caret: bool) -> String {
@@ -3824,6 +3811,23 @@ fn session_id_from(frames: &[String]) -> Option<String> {
         }
     }
     None
+}
+
+fn which_grok() -> Option<String> {
+    let out = std::process::Command::new("where.exe")
+        .arg("grok")
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let first = text.lines().next()?.trim();
+    if first.is_empty() {
+        None
+    } else {
+        Some(first.to_owned())
+    }
 }
 
 fn tailscale_which() -> Option<String> {

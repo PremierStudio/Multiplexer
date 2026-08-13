@@ -4,6 +4,7 @@
 //! into a window. Tests and CI stay headless.
 
 mod actions;
+mod agents;
 mod approval_ui;
 mod bars;
 mod bindings;
@@ -17,9 +18,11 @@ mod icons;
 mod inspector_model;
 mod integrations;
 mod keymap;
+mod menus;
 mod notices;
 mod overlay;
 mod palette;
+mod persist;
 mod remote;
 mod review;
 mod search;
@@ -33,6 +36,10 @@ mod workbench;
 mod workspace;
 
 pub use actions::{apply_layout_action, ClientAction};
+pub use agents::{
+    orchestration_list, orchestration_list_json, orchestration_spawn_missing, AgentRow,
+    OrchestrationList, ThreadStatus,
+};
 pub use approval_ui::PendingApproval;
 pub use bars::usage_bar;
 pub use bindings::{host_call, worktree_create_call, ActionContext, HostCall};
@@ -52,6 +59,7 @@ pub use icons::{BrandIcon, ChromeGlyph};
 pub use inspector_model::{inspector_rows, row_detail};
 pub use integrations::{filter_tiles, integration_tiles, TileSpec};
 pub use keymap::{action_from_id, action_id, is_tui_hatch, BindingTable, Chord};
+pub use menus::{items as menu_items, menu_for, MenuItem, MenuKind, OpenMenu};
 pub use notices::{
     auto_dismisses, dismiss_newest, dismiss_notice, push_notice, visible_notices, Notice,
     NoticeKind, NOTICE_AUTO_MS, NOTICE_CAP, NOTICE_PAINT,
@@ -59,6 +67,14 @@ pub use notices::{
 pub use overlay::{OverlayFlags, OverlayKind};
 pub use palette::{
     default_items, filter_items, hit_action, palette_hits, pane_items, PaletteItem, PaletteState,
+};
+pub use persist::{
+    about_info, apply_deep_link, crash_journal_from_json, crash_journal_to_json,
+    crash_restore_notice, default_crash_path, default_first_run_path, default_layout_path,
+    first_run_completed, first_run_keychain_notice, journal_from_workspace, layout_from_json,
+    layout_to_json, leaf_name, parse_deep_link, read_crash_journal, read_layout, thread_leaf_title,
+    write_crash_journal, write_first_run_done, write_layout, AboutInfo, CrashJournal, DeepLink,
+    LayoutPersist,
 };
 pub use remote::{detect_remotes, RemoteRow};
 pub use review::{
@@ -79,17 +95,17 @@ pub use terminal_ui::{
 pub use usage::UsageSnapshot;
 pub use widgets::{
     empty_state_tiles, BadgeSpec, ButtonKind, ButtonSpec, EmptyStateSpec, ListRowSpec, TabSpec,
-    Tone,
+    Tone, HEIGHT_CARD, HEIGHT_RAIL, HEIGHT_TITLE,
 };
 pub use workbench::{
     activity_items, default_browser_candidates, detect_browsers, filter_files, join_project_path,
     merge_mcp, preferred_browser, ActivityItem,
 };
 pub use workspace::{
-    ChatMessage, CheckpointRow, ChromeLayout, CoreRow, InspectorTab, LeftSection, McpLife, McpRow,
-    RailVis, Role, SkillItem, Thread, Workspace, WorktreeCard, BOTTOM_HEIGHT_COLLAPSED,
-    BOTTOM_HEIGHT_EXPANDED, BOTTOM_HEIGHT_OPEN_MIN, LEFT_WIDTH_MAX, LEFT_WIDTH_MIN, RAIL_COLLAPSED,
-    RIGHT_WIDTH_MAX, RIGHT_WIDTH_MIN,
+    ChatMessage, CheckpointRow, ChromeLayout, CoreRow, FocusRegion, InspectorTab, LeftSection,
+    McpLife, McpRow, RailVis, Role, SkillItem, Thread, Workspace, WorktreeCard,
+    BOTTOM_HEIGHT_COLLAPSED, BOTTOM_HEIGHT_EXPANDED, BOTTOM_HEIGHT_OPEN_MIN, LEFT_WIDTH_MAX,
+    LEFT_WIDTH_MIN, RAIL_COLLAPSED, RIGHT_WIDTH_MAX, RIGHT_WIDTH_MIN, TITLE_HEIGHT,
 };
 
 use multiplexer_layout::{LayoutForest, LayoutNode, PaneId};

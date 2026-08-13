@@ -3,6 +3,8 @@
 pub const HEIGHT_COMPACT: u16 = 32;
 pub const HEIGHT_ROW: u16 = 36;
 pub const HEIGHT_COMFORT: u16 = 44;
+pub const HEIGHT_TITLE: u16 = 48;
+pub const HEIGHT_RAIL: u16 = 48;
 pub const HEIGHT_CARD: u16 = 56;
 
 /// Visual treatment of a button.
@@ -245,6 +247,8 @@ mod tests {
         assert_eq!(HEIGHT_COMPACT, 32);
         assert_eq!(HEIGHT_ROW, 36);
         assert_eq!(HEIGHT_COMFORT, 44);
+        assert_eq!(HEIGHT_TITLE, 48);
+        assert_eq!(HEIGHT_RAIL, 48);
         assert_eq!(HEIGHT_CARD, 56);
         assert_eq!(TabSpec::height(), HEIGHT_ROW);
         assert_eq!(ButtonSpec::icon("⌘", "palette").height(), HEIGHT_COMPACT);

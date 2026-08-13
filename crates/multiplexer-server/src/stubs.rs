@@ -47,6 +47,18 @@ pub(crate) fn remote_list(req: Request) -> Vec<String> {
     )]
 }
 
+/// Local threads only. Subagents stay empty. Spawn remains method-not-found.
+pub(crate) fn orchestration_list(req: Request, thread_count: usize) -> Vec<String> {
+    vec![ok_frame(
+        req.id,
+        json!({
+            "threads": thread_count,
+            "subagents": [],
+            "note": "Local threads only. Subagent spawn is not wired.",
+        }),
+    )]
+}
+
 /// Honest empty listing. The desktop walks the tree via `multiplexer-client`.
 pub(crate) fn fs_list(req: Request) -> Vec<String> {
     vec![ok_frame(

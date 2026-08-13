@@ -142,6 +142,21 @@ pub const REQUIRED_IDS: &[&str] = &[
     "files_filter",
     "toggle_skill",
     "create_skill",
+    "popout_inspector",
+    "dock_inspector",
+    "close_popout",
+    "next_region",
+    "nudge_bottom_up",
+    "nudge_bottom_down",
+    "allow_once",
+    "later",
+    "settings_about",
+    "settings_reduce_motion",
+    "settings_ui_scale",
+    "settings_high_contrast",
+    "pin_thread",
+    "mark_unread",
+    "archive_thread",
 ];
 
 const fn spec(
@@ -333,6 +348,61 @@ const CONTROLS: &[ControlSpec] = &[
     spec("files_filter", Surface::RightRail, "Filter files", None),
     spec("toggle_skill", Surface::RightRail, "Toggle skill", None),
     spec("create_skill", Surface::RightRail, "Create skill", None),
+    spec(
+        "popout_inspector",
+        Surface::TitleBar,
+        "Pop out inspector",
+        Some("ctrl-shift-d"),
+    ),
+    spec(
+        "dock_inspector",
+        Surface::TitleBar,
+        "Dock inspector",
+        Some("ctrl-shift-e"),
+    ),
+    spec(
+        "close_popout",
+        Surface::TitleBar,
+        "Close pop-out",
+        Some("ctrl-w"),
+    ),
+    spec(
+        "next_region",
+        Surface::TitleBar,
+        "Next region",
+        Some("ctrl-tab"),
+    ),
+    spec(
+        "nudge_bottom_up",
+        Surface::TermStrip,
+        "Taller terminal",
+        Some("ctrl-alt-up"),
+    ),
+    spec(
+        "nudge_bottom_down",
+        Surface::TermStrip,
+        "Shorter terminal",
+        Some("ctrl-alt-down"),
+    ),
+    spec("allow_once", Surface::ApprovalCard, "Allow once", Some("o")),
+    spec("later", Surface::ApprovalCard, "Later", Some("l")),
+    spec("settings_about", Surface::Settings, "About", None),
+    spec(
+        "settings_reduce_motion",
+        Surface::Settings,
+        "Reduce motion",
+        None,
+    ),
+    spec("settings_ui_scale", Surface::Settings, "UI scale", None),
+    spec(
+        "settings_high_contrast",
+        Surface::Settings,
+        "High contrast",
+        None,
+    ),
+    spec("pin_thread", Surface::LeftRail, "Pin thread", None),
+    spec("mark_unread", Surface::LeftRail, "Mark unread", None),
+    spec("archive_thread", Surface::LeftRail, "Archive thread", None),
 ];
 
 /// Global chords. Escape is `close_overlay` (palette, help, search, settings).
@@ -360,6 +430,12 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("ctrl-2", "left_section_agents"),
     ("ctrl-3", "left_section_files"),
     ("ctrl-4", "left_section_activity"),
+    ("ctrl-shift-d", "popout_inspector"),
+    ("ctrl-shift-e", "dock_inspector"),
+    ("ctrl-w", "close_popout"),
+    ("ctrl-tab", "next_region"),
+    ("ctrl-alt-up", "nudge_bottom_up"),
+    ("ctrl-alt-down", "nudge_bottom_down"),
 ];
 
 fn is_live_text(s: &str) -> bool {
@@ -424,9 +500,9 @@ mod tests {
             assert_eq!(spec.action, *required);
             assert!(spec.is_live(), "{required} is dead");
         }
-        assert_eq!(REQUIRED_IDS.len(), 83);
+        assert_eq!(REQUIRED_IDS.len(), 98);
         assert_eq!(have.len(), REQUIRED_IDS.len());
-        assert_eq!(all_controls().len(), 83);
+        assert_eq!(all_controls().len(), 98);
 
         let required_once = [
             "chats_toggle",
@@ -573,6 +649,21 @@ mod tests {
             ("files_filter", Surface::RightRail),
             ("toggle_skill", Surface::RightRail),
             ("create_skill", Surface::RightRail),
+            ("popout_inspector", Surface::TitleBar),
+            ("dock_inspector", Surface::TitleBar),
+            ("close_popout", Surface::TitleBar),
+            ("next_region", Surface::TitleBar),
+            ("nudge_bottom_up", Surface::TermStrip),
+            ("nudge_bottom_down", Surface::TermStrip),
+            ("allow_once", Surface::ApprovalCard),
+            ("later", Surface::ApprovalCard),
+            ("settings_about", Surface::Settings),
+            ("settings_reduce_motion", Surface::Settings),
+            ("settings_ui_scale", Surface::Settings),
+            ("settings_high_contrast", Surface::Settings),
+            ("pin_thread", Surface::LeftRail),
+            ("mark_unread", Surface::LeftRail),
+            ("archive_thread", Surface::LeftRail),
         ];
         for (id, surface) in pin {
             let spec = control_by_id(id).unwrap_or_else(|| panic!("missing {id}"));
@@ -671,18 +762,18 @@ mod tests {
             assert!(!on.is_empty(), "{surface:?} must have at least one control");
             assert!(on.iter().all(|c| c.surface == surface));
         }
-        assert_eq!(controls_on(Surface::TitleBar).len(), 14);
-        assert_eq!(controls_on(Surface::LeftRail).len(), 8);
+        assert_eq!(controls_on(Surface::TitleBar).len(), 18);
+        assert_eq!(controls_on(Surface::LeftRail).len(), 11);
         assert_eq!(controls_on(Surface::Center).len(), 9);
         assert_eq!(controls_on(Surface::Composer).len(), 3);
         assert_eq!(controls_on(Surface::RightRail).len(), 34);
-        assert_eq!(controls_on(Surface::TermStrip).len(), 5);
+        assert_eq!(controls_on(Surface::TermStrip).len(), 7);
         assert_eq!(controls_on(Surface::Palette).len(), 2);
         assert_eq!(controls_on(Surface::HelpOverlay).len(), 1);
-        assert_eq!(controls_on(Surface::ApprovalCard).len(), 2);
+        assert_eq!(controls_on(Surface::ApprovalCard).len(), 4);
         assert_eq!(controls_on(Surface::ReminderBar).len(), 1);
         assert_eq!(controls_on(Surface::Search).len(), 1);
-        assert_eq!(controls_on(Surface::Settings).len(), 3);
+        assert_eq!(controls_on(Surface::Settings).len(), 7);
     }
 
     #[test]
@@ -710,7 +801,7 @@ mod tests {
 
     #[test]
     fn shortcut_map_has_required_bindings() {
-        assert_eq!(shortcut_map().len(), 23);
+        assert_eq!(shortcut_map().len(), 29);
         assert_eq!(shortcut_action("ctrl-shift-g"), Some("center_tui"));
         assert_eq!(shortcut_action("enter"), Some("send"));
         assert_eq!(shortcut_action("escape"), Some("close_overlay"));
@@ -754,7 +845,7 @@ mod tests {
                 "{key} maps to {action}, which is not a control action"
             );
         }
-        assert_eq!(keys.len(), 23);
+        assert_eq!(keys.len(), 29);
     }
 
     #[test]
@@ -876,5 +967,17 @@ mod tests {
             );
             assert_eq!(c.action, c.id);
         }
+    }
+
+    #[test]
+    fn main_rs_has_no_raw_hsla() {
+        let src = include_str!("main.rs");
+        assert!(
+            !src.contains("hsla("),
+            "Wave 4 bans hsla( in main.rs; use Theme helpers"
+        );
+        assert!(control_by_id("popout_inspector").is_some());
+        assert!(control_by_id("settings_about").is_some());
+        assert_eq!(shortcut_action("ctrl-shift-d"), Some("popout_inspector"));
     }
 }

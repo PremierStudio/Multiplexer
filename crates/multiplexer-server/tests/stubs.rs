@@ -50,6 +50,7 @@ fn stub_methods_return_success_not_method_not_found() {
         (methods::TELEMETRY_USAGE, json!({})),
         (methods::REMOTE_LIST, json!({})),
         (methods::FS_LIST, json!({})),
+        (methods::ORCHESTRATION_LIST, json!({})),
     ];
     for (i, (method, params)) in cases.into_iter().enumerate() {
         let id = format!("s{i}");
@@ -140,4 +141,20 @@ fn fs_list_is_honest_empty() {
     assert_eq!(id, Id::String("f1".into()));
     assert_eq!(result["entries"], json!([]));
     assert_eq!(result["note"], "client lists via multiplexer-client");
+}
+
+#[test]
+fn orchestration_list_is_empty_subagents_and_spawn_is_missing() {
+    let server = Server::new();
+    let frames = server.handle_frame(&rpc("ol", methods::ORCHESTRATION_LIST, json!({})));
+    let (id, result) = first_response(&frames);
+    assert_eq!(id, Id::String("ol".into()));
+    assert_eq!(result["subagents"], json!([]));
+    assert_eq!(
+        result["note"],
+        "Local threads only. Subagent spawn is not wired."
+    );
+    let spawn = server.handle_frame(&rpc("os", methods::ORCHESTRATION_SPAWN, json!({})));
+    let (_, err) = first_error(&spawn);
+    assert_eq!(err.code, standard::METHOD_NOT_FOUND);
 }

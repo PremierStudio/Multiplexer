@@ -22,6 +22,7 @@ pub enum SlashCommand {
     Diff,
     Browser,
     Tui,
+    About,
     Unknown(String),
 }
 
@@ -53,6 +54,7 @@ pub fn parse_slash(draft: &str) -> Option<SlashCommand> {
         "diff" | "diffs" => SlashCommand::Diff,
         "browser" => SlashCommand::Browser,
         "tui" => SlashCommand::Tui,
+        "about" => SlashCommand::About,
         _ => SlashCommand::Unknown(token.to_string()),
     })
 }
@@ -103,6 +105,7 @@ pub fn slash_hint(cmd: &SlashCommand) -> &'static str {
         SlashCommand::Diff => "open diffs",
         SlashCommand::Browser => "open browser tab",
         SlashCommand::Tui => "host the Grok TUI",
+        SlashCommand::About => "open About",
         SlashCommand::Unknown(_) => "unknown command",
     }
 }
@@ -146,6 +149,7 @@ mod tests {
             ("/diffs", SlashCommand::Diff),
             ("/browser", SlashCommand::Browser),
             ("/tui", SlashCommand::Tui),
+            ("/about", SlashCommand::About),
             ("/NEW extra", SlashCommand::New),
         ];
         for (draft, expected) in cases {
@@ -203,6 +207,7 @@ mod tests {
             SlashCommand::Diff,
             SlashCommand::Browser,
             SlashCommand::Tui,
+            SlashCommand::About,
         ];
         for cmd in &cmds {
             let hint = slash_hint(cmd);

@@ -71,6 +71,19 @@ pub enum ClientAction {
     ToggleSkill,
     CreateSkill,
     MentionMcp,
+    PopOutInspector,
+    DockInspector,
+    ClosePopOut,
+    NextRegion,
+    NudgeBottomUp,
+    NudgeBottomDown,
+    ApproveOnce,
+    Later,
+    PinThread,
+    MarkUnread,
+    ArchiveThread,
+    CopyThreadId,
+    OpenAbout,
 }
 
 /// Apply a workspace-only layout action.
@@ -99,7 +112,9 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
         }
         ClientAction::SelectTab(tab) => {
             let changed = ws.select_inspector(tab);
-            if !ws.chrome.right_open() {
+            if ws.inspector_popped {
+                changed
+            } else if !ws.chrome.right_open() {
                 ws.chrome.open_right();
                 true
             } else {
@@ -230,6 +245,22 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
             ws.cursor = crate::composer::insert_at(&mut ws.draft, ws.cursor, &mention);
             true
         }
+        ClientAction::PopOutInspector => ws.pop_out_inspector(),
+        ClientAction::DockInspector | ClientAction::ClosePopOut => ws.dock_inspector(),
+        ClientAction::NextRegion => {
+            ws.next_region();
+            true
+        }
+        ClientAction::NudgeBottomUp => ws.nudge_bottom(16.0),
+        ClientAction::NudgeBottomDown => ws.nudge_bottom(-16.0),
+        ClientAction::PinThread => ws.pin_selected(),
+        ClientAction::MarkUnread => ws.mark_selected_unread(),
+        ClientAction::ArchiveThread => ws.archive_selected(),
+        ClientAction::OpenAbout => {
+            ws.settings_section = crate::settings::SettingsSection::About;
+            ws.open_overlay(crate::overlay::OverlayKind::Settings);
+            true
+        }
         ClientAction::DismissReminder => {
             if ws.reminder.is_none() {
                 false
@@ -286,7 +317,10 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
         | ClientAction::KillTerm
         | ClientAction::RefreshSkills
         | ClientAction::DetectBrowsers
-        | ClientAction::CreateSkill => false,
+        | ClientAction::CreateSkill
+        | ClientAction::ApproveOnce
+        | ClientAction::Later
+        | ClientAction::CopyThreadId => false,
     }
 }
 
@@ -308,7 +342,7 @@ mod tests {
         Workspace::new("p", "m")
     }
 
-    fn host_noops() -> [ClientAction; 27] {
+    fn host_noops() -> [ClientAction; 30] {
         [
             ClientAction::Send,
             ClientAction::Interrupt,
@@ -337,6 +371,9 @@ mod tests {
             ClientAction::RefreshSkills,
             ClientAction::DetectBrowsers,
             ClientAction::CreateSkill,
+            ClientAction::ApproveOnce,
+            ClientAction::Later,
+            ClientAction::CopyThreadId,
         ]
     }
 
@@ -377,6 +414,24 @@ mod tests {
         assert_eq!(ws.selected, 1);
         assert!(!apply_layout_action(&mut ws, ClientAction::SelectThread(4)));
         assert_eq!(ws.selected, 1);
+    }
+
+    #[test]
+    fn pop_out_and_dock_actions() {
+        let mut ws = fresh();
+        assert!(apply_layout_action(&mut ws, ClientAction::PopOutInspector));
+        assert!(ws.inspector_popped);
+        assert!(!apply_layout_action(&mut ws, ClientAction::PopOutInspector));
+        assert!(apply_layout_action(&mut ws, ClientAction::DockInspector));
+        assert!(!ws.inspector_popped);
+        assert!(apply_layout_action(&mut ws, ClientAction::NudgeBottomUp) || !ws.bottom_open);
+        assert!(apply_layout_action(&mut ws, ClientAction::NextRegion));
+        assert_eq!(ws.focus_region, crate::workspace::FocusRegion::Right);
+        assert!(apply_layout_action(&mut ws, ClientAction::OpenAbout));
+        assert!(ws.settings_open);
+        assert_eq!(ws.settings_section, crate::settings::SettingsSection::About);
+        assert!(apply_layout_action(&mut ws, ClientAction::PinThread));
+        assert!(ws.threads[0].pinned);
     }
 
     #[test]

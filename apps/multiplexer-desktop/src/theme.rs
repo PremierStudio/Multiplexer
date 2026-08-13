@@ -10,6 +10,8 @@ use multiplexer_theme::{Density, HslaTuple, ThemeMode, ThemeTokens, TypeScale};
 
 static THEME_MODE: AtomicU8 = AtomicU8::new(0);
 static THEME_DENSITY: AtomicU8 = AtomicU8::new(0);
+static THEME_CONTRAST: AtomicU8 = AtomicU8::new(0);
+static THEME_SCALE: AtomicU8 = AtomicU8::new(100);
 
 pub struct Theme;
 
@@ -32,6 +34,22 @@ impl Theme {
             },
             Ordering::Relaxed,
         );
+    }
+
+    pub fn set_high_contrast(on: bool) {
+        THEME_CONTRAST.store(if on { 1 } else { 0 }, Ordering::Relaxed);
+    }
+
+    pub fn set_ui_scale(scale: u16) {
+        THEME_SCALE.store(scale.clamp(100, 200) as u8, Ordering::Relaxed);
+    }
+
+    pub fn high_contrast() -> bool {
+        THEME_CONTRAST.load(Ordering::Relaxed) == 1
+    }
+
+    pub fn ui_scale() -> f32 {
+        f32::from(THEME_SCALE.load(Ordering::Relaxed)) / 100.0
     }
 
     pub fn tokens() -> ThemeTokens {
@@ -96,6 +114,59 @@ impl Theme {
     pub fn surface() -> Hsla {
         Self::c(Self::tokens().surface)
     }
+    pub fn transparent() -> Hsla {
+        Self::c(Self::tokens().hairline.with_alpha(0.0))
+    }
+    pub fn wash() -> Hsla {
+        Self::c(Self::tokens().hairline_bright.with_alpha(0.08))
+    }
+    pub fn wash_soft() -> Hsla {
+        Self::c(Self::tokens().hairline.with_alpha(0.05))
+    }
+    pub fn overlay_scrim() -> Hsla {
+        let t = Self::tokens();
+        Self::c(
+            t.ink
+                .with_alpha(if Self::high_contrast() { 0.55 } else { 0.45 }),
+        )
+    }
+    pub fn hover_fill() -> Hsla {
+        Self::c(Self::tokens().accent_muted.with_alpha(0.28))
+    }
+    pub fn hover_strong() -> Hsla {
+        Self::c(Self::tokens().accent_muted.with_alpha(0.40))
+    }
+    pub fn bubble_user() -> Hsla {
+        Self::c(Self::tokens().selection.with_alpha(0.55))
+    }
+    pub fn bubble_assistant() -> Hsla {
+        Self::wash()
+    }
+    pub fn reminder_fill() -> Hsla {
+        Self::c(Self::tokens().warn.with_alpha(0.22))
+    }
+    pub fn approval_fill() -> Hsla {
+        Self::c(Self::tokens().danger.with_alpha(0.22))
+    }
+    pub fn toast_fill(kind: multiplexer_shell::NoticeKind) -> Hsla {
+        let t = Self::tokens();
+        let base = match kind {
+            multiplexer_shell::NoticeKind::Good => t.good,
+            multiplexer_shell::NoticeKind::Warn => t.warn,
+            multiplexer_shell::NoticeKind::Danger => t.danger,
+            _ => t.accent_muted,
+        };
+        Self::c(base.with_alpha(0.28))
+    }
+    pub fn ghost_fill() -> Hsla {
+        Self::c(Self::tokens().hairline_bright.with_alpha(0.07))
+    }
+    pub fn title_height() -> Pixels {
+        px(48.0 * Self::ui_scale())
+    }
+    pub fn rail_width() -> Pixels {
+        px(48.0 * Self::ui_scale())
+    }
     pub fn panel_radius() -> Pixels {
         px(multiplexer_theme::Radius::MD)
     }
@@ -109,9 +180,10 @@ impl Theme {
         px(TypeScale::BODY)
     }
     pub fn row_height() -> Pixels {
+        let scale = Self::ui_scale();
         match THEME_DENSITY.load(Ordering::Relaxed) {
-            1 => px(44.0),
-            _ => px(56.0),
+            1 => px(48.0 * scale),
+            _ => px(56.0 * scale),
         }
     }
     pub fn icon_size() -> Pixels {
@@ -136,15 +208,16 @@ impl Theme {
         }
     }
     pub fn shadow() -> Vec<BoxShadow> {
+        let t = Self::tokens();
         vec![
             BoxShadow {
-                color: hsla(0.64, 0.30, 0.04, 0.38),
+                color: Self::c(t.ink.with_alpha(0.38)),
                 offset: point(px(0.), px(12.)),
                 blur_radius: px(32.),
                 spread_radius: px(-6.),
             },
             BoxShadow {
-                color: hsla(0.0, 0.0, 1.0, 0.07),
+                color: Self::c(t.hairline.with_alpha(0.07)),
                 offset: point(px(0.), px(1.)),
                 blur_radius: px(0.),
                 spread_radius: px(0.),
@@ -173,13 +246,22 @@ mod tests {
         Theme::set_density(Density::Comfortable);
         assert_eq!(Theme::row_height(), px(56.0));
         Theme::set_density(Density::Compact);
-        assert_eq!(Theme::row_height(), px(44.0));
+        Theme::set_ui_scale(100);
+        assert_eq!(Theme::row_height(), px(48.0));
         Theme::set_density(Density::Comfortable);
         assert_eq!(Theme::icon_size(), px(32.0));
         Theme::set_mode(ThemeMode::Light);
         assert_eq!(Theme::tokens().mode, ThemeMode::Light);
+        assert!(Theme::tokens().text.l < 0.35);
         Theme::set_mode(ThemeMode::Dark);
         assert_eq!(Theme::tokens().mode, ThemeMode::Dark);
+        Theme::set_high_contrast(true);
+        assert!(Theme::high_contrast());
+        Theme::set_high_contrast(false);
+        assert!(!Theme::high_contrast());
+        assert!(Theme::glass().a <= 0.55);
+        assert!(Theme::approval_fill().a <= 0.55);
+        assert!(Theme::toast_fill(multiplexer_shell::NoticeKind::Danger).a <= 0.55);
     }
 
     #[test]

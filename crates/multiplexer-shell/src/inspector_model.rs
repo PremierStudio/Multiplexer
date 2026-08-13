@@ -333,12 +333,11 @@ fn file_rows(ws: &Workspace) -> Vec<ListRowSpec> {
                 ChromeGlyph::Diff.mark()
             };
             let selected = ws.selected_file.as_deref() == Some(p.as_str());
-            let title = if selected {
-                format!("* {p}")
-            } else {
-                p.clone()
-            };
-            let mut row = ListRowSpec::new(format!("file:{p}"), title).with_icon(icon);
+            let leaf = crate::persist::leaf_name(&p);
+            let title = if selected { format!("* {leaf}") } else { leaf };
+            let mut row = ListRowSpec::new(format!("file:{p}"), title)
+                .with_icon(icon)
+                .with_subtitle(p.clone());
             row.selected = selected;
             mark_expanded(row, ws)
         })
@@ -389,10 +388,13 @@ fn agent_rows(ws: &Workspace) -> Vec<ListRowSpec> {
         .iter()
         .enumerate()
         .map(|(i, t)| {
-            let mut row = ListRowSpec::new(format!("agent:{}", t.id), t.title.clone())
-                .with_icon(ChromeGlyph::Agent.mark())
-                .with_subtitle(t.status.clone())
-                .with_meta(format!("{} msgs", t.messages.len()));
+            let mut row = ListRowSpec::new(
+                format!("agent:{}", t.id),
+                crate::persist::thread_leaf_title(&t.title, &t.id),
+            )
+            .with_icon(ChromeGlyph::Agent.mark())
+            .with_subtitle(t.status.clone())
+            .with_meta(format!("{} · {} msgs", t.model, t.messages.len()));
             row.selected = i == ws.selected;
             mark_expanded(row, ws)
         })
