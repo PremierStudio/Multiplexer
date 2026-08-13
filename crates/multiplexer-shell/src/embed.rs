@@ -11,7 +11,7 @@ pub struct EmbedTarget {
 }
 
 /// Open-here: selected shell path, or grok if nothing was detected.
-pub fn embed_from_selection(term: Option<&SystemTerminal>) -> EmbedTarget {
+pub fn embed_from_selection(term: Option<&SystemTerminal>, cwd: &str) -> EmbedTarget {
     match term {
         Some(t) if !t.path.trim().is_empty() => EmbedTarget {
             program: t.path.clone(),
@@ -22,15 +22,23 @@ pub fn embed_from_selection(term: Option<&SystemTerminal>) -> EmbedTarget {
                 t.label.clone()
             },
         },
-        _ => embed_grok(),
+        _ => embed_grok(cwd),
     }
 }
 
-/// Open Grok in the pane, independent of the selected shell.
-pub fn embed_grok() -> EmbedTarget {
+/// Interactive Grok for a chat. `--trust` skips the folder gate;
+/// `--always-approve` skips tool prompts; no `-p` so the pager stays up.
+pub fn embed_grok(cwd: impl AsRef<str>) -> EmbedTarget {
+    let cwd = cwd.as_ref().trim();
+    let cwd = if cwd.is_empty() { "." } else { cwd };
     EmbedTarget {
         program: "grok".into(),
-        args: Vec::new(),
+        args: vec![
+            "--always-approve".into(),
+            "--trust".into(),
+            "--cwd".into(),
+            cwd.to_owned(),
+        ],
         label: "Grok".into(),
     }
 }
@@ -55,7 +63,7 @@ mod tests {
     #[test]
     fn selection_uses_path_and_label() {
         let t = term("cmd", "Command Prompt", r"C:\Windows\System32\cmd.exe");
-        let got = embed_from_selection(Some(&t));
+        let got = embed_from_selection(Some(&t), "C:/repo");
         assert_eq!(got.program, t.path);
         assert!(got.args.is_empty());
         assert_eq!(got.label, "Command Prompt");
@@ -65,16 +73,32 @@ mod tests {
 
     #[test]
     fn empty_or_missing_falls_back_to_grok() {
-        assert_eq!(embed_from_selection(None), embed_grok());
+        assert_eq!(embed_from_selection(None, "C:/repo"), embed_grok("C:/repo"));
         let blank = term("x", "X", "   ");
-        assert_eq!(embed_from_selection(Some(&blank)).program, "grok");
+        assert_eq!(
+            embed_from_selection(Some(&blank), "C:/repo").program,
+            "grok"
+        );
         let no_label = term("zsh", "  ", "/bin/zsh");
-        assert_eq!(embed_from_selection(Some(&no_label)).label, "zsh");
-        assert_eq!(embed_grok().program, "grok");
-        assert_eq!(embed_grok().label, "Grok");
-        assert!(embed_grok().args.is_empty());
-        assert_ne!(embed_grok().label, "grok");
+        assert_eq!(embed_from_selection(Some(&no_label), ".").label, "zsh");
+        assert_eq!(embed_grok("C:/repo").program, "grok");
+        assert_eq!(embed_grok("C:/repo").label, "Grok");
+        assert_ne!(embed_grok("C:/repo").label, "grok");
         assert_eq!(embed_surface("Grok"), "in-app Grok");
         assert_ne!(embed_surface("Grok"), "Grok");
+    }
+
+    #[test]
+    fn grok_skips_folder_gate_and_tool_prompts() {
+        let got = embed_grok("C:/work/app");
+        assert_eq!(
+            got.args,
+            vec!["--always-approve", "--trust", "--cwd", "C:/work/app"]
+        );
+        assert!(!got.args.iter().any(|a| a == "-p"));
+        assert_ne!(got.args, embed_grok("D:/other").args);
+        assert_eq!(embed_grok("   ").args.last().map(String::as_str), Some("."));
+        assert_eq!(embed_grok("").args[2], "--cwd");
+        assert_ne!(embed_grok("C:/work/app").args.len(), 0);
     }
 }

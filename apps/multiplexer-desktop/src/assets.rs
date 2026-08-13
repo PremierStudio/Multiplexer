@@ -9,6 +9,16 @@ pub struct DesktopAssets;
 
 pub const UI_FONT: &str = "Geist";
 pub const MONO_FONT: &str = "Geist Mono";
+pub const TUI_FONT: &str = "Cascadia Mono";
+
+/// Cascadia Mono if present (braille + box drawing). Geist Mono is not a
+/// terminal face: Grok's splash is U+2800 art and looks like tofu there.
+pub fn tui_font_candidates() -> &'static [&'static str] {
+    &[
+        r"C:\Windows\Fonts\CascadiaMono.ttf",
+        r"C:\Windows\Fonts\cascadiamono.ttf",
+    ]
+}
 
 impl DesktopAssets {
     pub fn font_bytes() -> Vec<Cow<'static, [u8]>> {
@@ -142,6 +152,11 @@ mod tests {
         }
         assert_eq!(UI_FONT, "Geist");
         assert_eq!(MONO_FONT, "Geist Mono");
+        assert_eq!(TUI_FONT, "Cascadia Mono");
         assert_ne!(UI_FONT, MONO_FONT);
+        assert_ne!(TUI_FONT, MONO_FONT);
+        assert!(tui_font_candidates()
+            .iter()
+            .any(|p| p.ends_with("CascadiaMono.ttf")));
     }
 }

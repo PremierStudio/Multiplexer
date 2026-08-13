@@ -8,13 +8,15 @@ mod rows;
 mod theme;
 mod widgets;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use article::render_article;
-use assets::{DesktopAssets, MONO_FONT, UI_FONT};
+use assets::{tui_font_candidates, DesktopAssets, MONO_FONT, TUI_FONT, UI_FONT};
 use gpui::{
     div, font, prelude::*, px, size, App, Application, Bounds, ClipboardItem, Context, CursorStyle,
     KeyDownEvent, MouseButton, MouseMoveEvent, SharedString, Window,
@@ -112,6 +114,7 @@ pub(crate) struct ShellView {
     capture: Option<ProcessCapture>,
     embedded: HashMap<String, EmbeddedSession>,
     frames: HashMap<String, PtyFrame>,
+    tui_font: SharedString,
     pending_diff: Option<(String, Receiver<CommandResult>)>,
     turn_started: Option<Instant>,
 }
@@ -212,6 +215,7 @@ impl ShellView {
             capture: None,
             embedded: HashMap::new(),
             frames: HashMap::new(),
+            tui_font: tui_family(),
             pending_diff: None,
             turn_started: None,
         };
@@ -224,6 +228,7 @@ impl ShellView {
         view.refresh_worktrees();
         view.refresh_reminder();
         view.run_shell("git status --short --branch");
+        view.warm_thread_grok();
         view.term_meta("ready  grok -p off the UI thread  Ctrl+K palette  F1 help  F2 settings");
         assert!(controls::no_dead_labels());
         assert_eq!(controls::REQUIRED_IDS.len(), controls::all_controls().len());
@@ -384,14 +389,25 @@ impl ShellView {
         self.ensure_thread_grok();
     }
 
+    fn warm_thread_grok(&mut self) {
+        self.spawn_thread_grok(false);
+    }
+
     fn ensure_thread_grok(&mut self) {
+        self.spawn_thread_grok(true);
+    }
+
+    fn spawn_thread_grok(&mut self, flip_center: bool) {
         let Some(id) = self.selected_thread_id() else {
             return;
         };
         if self.embedded.contains_key(&id) {
             if let Some(t) = self.workspace.selected_thread() {
                 if t.tui.life == TuiLife::Running {
-                    self.focus = Focus::Tui;
+                    if flip_center {
+                        let _ = self.workspace.set_center_mode(CenterMode::GrokTui);
+                        self.focus = Focus::Tui;
+                    }
                     return;
                 }
             }
@@ -400,12 +416,22 @@ impl ShellView {
             }
             self.frames.remove(&id);
         }
-        let target = embed_grok();
-        self.start_embedded_for(&id, &target.program, &[], &target.label);
+        let target = embed_grok(&self.workspace.project);
+        let args: Vec<&str> = target.args.iter().map(String::as_str).collect();
+        self.start_embedded_for(&id, &target.program, &args, &target.label, flip_center);
     }
 
-    fn start_embedded_for(&mut self, thread_id: &str, program: &str, args: &[&str], label: &str) {
-        let _ = self.workspace.set_center_mode(CenterMode::GrokTui);
+    fn start_embedded_for(
+        &mut self,
+        thread_id: &str,
+        program: &str,
+        args: &[&str],
+        label: &str,
+        flip_center: bool,
+    ) {
+        if flip_center {
+            let _ = self.workspace.set_center_mode(CenterMode::GrokTui);
+        }
         let (cols, rows) = self.pty_cols_rows();
         let spec = TerminalSpec::new(cols, rows, &self.workspace.project);
         match EmbeddedSession::spawn(program, args, &spec) {
@@ -422,7 +448,9 @@ impl ShellView {
                     .grok_tui
                     .mark_running(pid, program, embed_surface(label));
                 self.workspace.grok_tui.scrollback.clear();
-                self.focus = Focus::Tui;
+                if flip_center {
+                    self.focus = Focus::Tui;
+                }
             }
             Err(err) => {
                 if let Some(t) = self.workspace.selected_thread_mut() {
@@ -442,7 +470,7 @@ impl ShellView {
             self.workspace.chrome.occupied_left() + self.workspace.chrome.occupied_right() + 24.0;
         let chrome_h = 36.0 + 28.0 + self.workspace.occupied_bottom() + 28.0 + 16.0;
         let (pw, ph) = tui_host_px(self.win_w, self.win_h, chrome_w, chrome_h);
-        pty_grid_from_px(pw, ph, 8.0, 16.0)
+        pty_grid_from_px(pw, ph, 8.0, 18.0)
     }
 
     fn sync_embedded_size(&mut self) {
@@ -682,8 +710,13 @@ impl ShellView {
                 match action {
                     ClientAction::NewThread => {
                         self.session_id = None;
-                        self.focus = Focus::Composer;
                         self.persist_crash();
+                        if self.workspace.selected_center_mode() == CenterMode::GrokTui {
+                            self.ensure_thread_grok();
+                        } else {
+                            self.focus = Focus::Composer;
+                            self.warm_thread_grok();
+                        }
                     }
                     ClientAction::PinThread
                     | ClientAction::ArchiveThread
@@ -1685,8 +1718,8 @@ impl ShellView {
                     frame.resize(cols, rows);
                 }
                 frame.feed(&chunk);
-                let text = frame.display();
-                if !text.is_empty() {
+                if frame.has_ink() {
+                    let text = frame.lines().join("\n");
                     if let Some(t) = self.workspace.selected_thread_mut() {
                         t.tui.set_output(&text);
                     }
@@ -3604,9 +3637,9 @@ impl ShellView {
                     .id("tui-scroll")
                     .flex_1()
                     .min_h_0()
-                    .px_3()
-                    .py_2()
-                    .overflow_y_scroll()
+                    .px_1()
+                    .py_1()
+                    .overflow_hidden()
                     .cursor_pointer()
                     .on_mouse_down(
                         MouseButton::Left,
@@ -3615,13 +3648,13 @@ impl ShellView {
                             cx.notify();
                         }),
                     )
-                    .font(font(MONO_FONT))
-                    .text_size(Theme::text_ui())
+                    .font(font(self.tui_font.clone()))
+                    .text_size(px(13.0))
                     .text_color(Theme::text())
                     .children(
                         lines
                             .into_iter()
-                            .map(|line| div().whitespace_nowrap().child(line)),
+                            .map(|line| div().whitespace_nowrap().h(px(18.0)).child(line)),
                     ),
             )
             .into_any()
@@ -4741,11 +4774,37 @@ fn checkpoint_diff_text(frames: &[String]) -> Option<String> {
     None
 }
 
+static TUI_FAMILY: OnceLock<String> = OnceLock::new();
+
+fn install_tui_font(cx: &mut App) {
+    let mut cascadias = false;
+    for path in tui_font_candidates() {
+        if let Ok(bytes) = std::fs::read(path) {
+            if cx.text_system().add_fonts(vec![Cow::Owned(bytes)]).is_ok() {
+                cascadias = true;
+                break;
+            }
+        }
+    }
+    if cascadias {
+        let _ = TUI_FAMILY.set(TUI_FONT.to_owned());
+        std::env::set_var("GROK_FORCE_LEGACY_CONSOLE", "0");
+    } else {
+        let _ = TUI_FAMILY.set(MONO_FONT.to_owned());
+        std::env::set_var("GROK_FORCE_LEGACY_CONSOLE", "1");
+    }
+}
+
+fn tui_family() -> SharedString {
+    SharedString::from(TUI_FAMILY.get().map(String::as_str).unwrap_or(MONO_FONT))
+}
+
 fn main() {
     Application::new()
         .with_assets(DesktopAssets)
         .run(|cx: &mut App| {
             let _ = cx.text_system().add_fonts(DesktopAssets::font_bytes());
+            install_tui_font(cx);
             let bounds = Bounds::centered(None, size(px(1360.0), px(860.0)), cx);
             cx.open_window(Theme::window_options(bounds), |_, cx| {
                 cx.new(|_| ShellView::new())

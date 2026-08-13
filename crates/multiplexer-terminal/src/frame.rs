@@ -116,15 +116,30 @@ impl PtyFrame {
         }
     }
 
-    /// Trailing spaces and empty rows dropped so a blank screen stays empty.
+    /// Every row, trailing spaces kept, so a TUI grid does not collapse.
     #[must_use]
-    pub fn display(&self) -> String {
-        let mut lines: Vec<String> = (0..self.rows)
+    pub fn lines(&self) -> Vec<String> {
+        (0..self.rows)
             .map(|r| {
                 let start = r * self.cols;
                 let end = start + self.cols;
-                self.cells[start..end].iter().collect::<String>()
+                self.cells[start..end].iter().collect()
             })
+            .collect()
+    }
+
+    /// True when any cell is not a space. CSI-only frames stay blank.
+    #[must_use]
+    pub fn has_ink(&self) -> bool {
+        self.cells.iter().any(|ch| *ch != ' ')
+    }
+
+    /// Trailing spaces and empty rows dropped so a blank screen stays empty.
+    #[must_use]
+    pub fn display(&self) -> String {
+        let mut lines: Vec<String> = self
+            .lines()
+            .into_iter()
             .map(|line| line.trim_end().to_owned())
             .collect();
         while lines.last().is_some_and(|line| line.is_empty()) {
@@ -541,6 +556,23 @@ mod tests {
         assert_ne!(f.display(), "HELLO");
         f.feed("");
         assert_eq!(f.display(), "hello");
+    }
+
+    #[test]
+    fn lines_keep_full_grid_and_ink() {
+        let mut f = frame(4, 3);
+        assert!(!f.has_ink());
+        assert_eq!(f.lines().len(), 3);
+        assert_eq!(f.lines()[0], "    ");
+        f.feed("ab");
+        assert!(f.has_ink());
+        assert_eq!(f.lines()[0], "ab  ");
+        assert_eq!(f.lines()[1], "    ");
+        assert_eq!(f.display(), "ab");
+        assert_ne!(f.lines()[0], "ab");
+        f.feed("\u{1b}[2J\u{1b}[H");
+        assert!(!f.has_ink());
+        assert_eq!(f.lines().len(), 3);
     }
 
     #[test]
