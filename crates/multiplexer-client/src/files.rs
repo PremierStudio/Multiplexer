@@ -7,7 +7,7 @@ use std::fs;
 use std::path::Path;
 
 /// Always omitted from [`list_project_tree`] (not listed, not descended).
-const SKIP_TREE_DIR_NAMES: &[&str] = &[".git", "node_modules", "target"];
+const SKIP_TREE_DIR_NAMES: &[&str] = &[".git", "node_modules", "target", "third_party"];
 
 /// One listed file or directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -302,6 +302,10 @@ mod tests {
         let mo = root.mkdir("mutants.out.layout");
         fs::write(mo.join("log.txt"), b"x").expect("mutants log");
 
+        let vendor = root.mkdir("third_party");
+        fs::create_dir_all(vendor.join("grok-build")).expect("third_party/grok-build");
+        fs::write(vendor.join("grok-build").join("Cargo.toml"), b"x").expect("vendor file");
+
         let got = list_project_tree(
             &root.path,
             ListOptions {
@@ -337,6 +341,12 @@ mod tests {
         assert!(
             !got_paths.iter().any(|p| p.contains("mutants.out")),
             "mutants.out* must be skipped: {got_paths:?}"
+        );
+        assert!(
+            !got_paths
+                .iter()
+                .any(|p| p.split('/').any(|s| s == "third_party")),
+            "third_party must be skipped: {got_paths:?}"
         );
         assert!(got.iter().all(|e| !e.path.contains('\\')));
         assert_eq!(

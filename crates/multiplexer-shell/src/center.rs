@@ -66,8 +66,8 @@ impl GrokTuiHost {
             pid: None,
             program: "grok".into(),
             cwd: cwd.into(),
-            note: "Grok owns the agent TUI. Multiplexer hosts the session in-app.".into(),
-            surface: "in-app".into(),
+            note: "Grok owns the agent TUI. Open it in a system terminal.".into(),
+            surface: "system terminal".into(),
             scrollback: String::new(),
         }
     }
@@ -138,16 +138,16 @@ mod tests {
         let mut host = GrokTuiHost::idle("C:/repo");
         assert_eq!(host.life, TuiLife::Stopped);
         assert!(host.pid.is_none());
-        assert!(host.note.contains("in-app"));
+        assert!(host.note.contains("system terminal"));
         assert!(host.summary().contains("stopped"));
         assert!(host.scrollback.is_empty());
 
-        host.mark_running(Some(4242), "grok", "in-app");
+        host.mark_running(Some(4242), "grok", "Windows Terminal");
         assert_eq!(host.life, TuiLife::Running);
         assert_eq!(host.pid, Some(4242));
         assert!(host.summary().contains("4242"));
         assert!(host.summary().contains("running"));
-        assert!(host.summary().contains("in-app"));
+        assert!(host.summary().contains("Windows Terminal"));
         assert!(!host.summary().contains("in-pane pager"));
         host.push_output("hello from grok\n");
         assert!(host.scrollback.contains("hello from grok"));

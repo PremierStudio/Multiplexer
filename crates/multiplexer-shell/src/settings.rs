@@ -54,6 +54,7 @@ pub struct UiSettings {
     pub reduce_motion: bool,
     pub ui_scale: u16,
     pub high_contrast: bool,
+    pub preferred_terminal: String,
 }
 
 impl Default for UiSettings {
@@ -66,6 +67,7 @@ impl Default for UiSettings {
             reduce_motion: false,
             ui_scale: 100,
             high_contrast: false,
+            preferred_terminal: String::new(),
         }
     }
 }
@@ -157,6 +159,7 @@ pub fn settings_to_json(s: &UiSettings) -> String {
         "reduce_motion": s.reduce_motion,
         "ui_scale": s.ui_scale,
         "high_contrast": s.high_contrast,
+        "preferred_terminal": s.preferred_terminal,
     })
     .to_string()
 }
@@ -208,6 +211,9 @@ pub fn settings_from_json(raw: &str) -> UiSettings {
     }
     if let Some(flag) = v.get("high_contrast").and_then(|x| x.as_bool()) {
         out.high_contrast = flag;
+    }
+    if let Some(term) = v.get("preferred_terminal").and_then(|x| x.as_str()) {
+        out.preferred_terminal = term.to_owned();
     }
     out
 }
@@ -263,7 +269,10 @@ mod tests {
         assert!(raw.contains("grok-4.6"));
         assert!(!raw.to_lowercase().contains("secret"));
         assert!(!raw.contains("op://"));
+        s.preferred_terminal = "wt".into();
+        let raw = settings_to_json(&s);
         let back = settings_from_json(&raw);
+        assert_eq!(back.preferred_terminal, "wt");
         assert_eq!(back.mode, ThemeMode::Light);
         assert_eq!(back.density, Density::Compact);
         assert_eq!(back.default_model, "grok-4.6");

@@ -70,6 +70,86 @@ pub fn preferred_browser(found: &[(String, String)]) -> Option<&(String, String)
     found.first()
 }
 
+/// One installed system terminal. `id` is stable (`wt`, `cmd`, `conhost`, …).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemTerminal {
+    pub id: String,
+    pub label: String,
+    pub path: String,
+}
+
+/// Well-known Windows terminals. Detect is path-exists only.
+pub fn default_terminal_candidates() -> Vec<(String, String, String)> {
+    let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
+    let user = std::env::var("USERPROFILE").unwrap_or_default();
+    vec![
+        (
+            "wt".into(),
+            "Windows Terminal".into(),
+            format!("{local}\\Microsoft\\WindowsApps\\wt.exe"),
+        ),
+        (
+            "conhost".into(),
+            "Windows Console".into(),
+            r"C:\Windows\System32\conhost.exe".into(),
+        ),
+        (
+            "cmd".into(),
+            "Command Prompt".into(),
+            r"C:\Windows\System32\cmd.exe".into(),
+        ),
+        (
+            "powershell".into(),
+            "Windows PowerShell".into(),
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe".into(),
+        ),
+        (
+            "pwsh".into(),
+            "PowerShell".into(),
+            format!("{local}\\Microsoft\\WindowsApps\\pwsh.exe"),
+        ),
+        (
+            "wezterm".into(),
+            "WezTerm".into(),
+            r"C:\Program Files\WezTerm\wezterm-gui.exe".into(),
+        ),
+        (
+            "alacritty".into(),
+            "Alacritty".into(),
+            r"C:\Program Files\Alacritty\alacritty.exe".into(),
+        ),
+        (
+            "ghostty".into(),
+            "Ghostty".into(),
+            format!("{user}\\scoop\\apps\\ghostty\\current\\ghostty.exe"),
+        ),
+    ]
+}
+
+pub fn detect_terminals(candidates: &[(String, String, String)]) -> Vec<SystemTerminal> {
+    candidates
+        .iter()
+        .filter(|(_, _, path)| std::path::Path::new(path).is_file())
+        .map(|(id, label, path)| SystemTerminal {
+            id: id.clone(),
+            label: label.clone(),
+            path: path.clone(),
+        })
+        .collect()
+}
+
+pub fn preferred_terminal<'a>(
+    found: &'a [SystemTerminal],
+    want: &str,
+) -> Option<&'a SystemTerminal> {
+    if !want.trim().is_empty() {
+        if let Some(hit) = found.iter().find(|t| t.id == want) {
+            return Some(hit);
+        }
+    }
+    found.first()
+}
+
 /// Stable activity rows for left and right Activity. Cap 20.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActivityItem {
@@ -204,6 +284,42 @@ mod tests {
         );
         assert!(preferred_browser(&[]).is_none());
         assert!(!default_browser_candidates().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn detect_terminals_only_existing_files() {
+        let dir = std::env::temp_dir().join(format!("mux-term-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let wt = dir.join("wt.exe");
+        std::fs::write(&wt, b"x").unwrap();
+        let missing = dir.join("nope.exe");
+        let found = detect_terminals(&[
+            (
+                "wt".into(),
+                "Windows Terminal".into(),
+                wt.to_string_lossy().into(),
+            ),
+            (
+                "cmd".into(),
+                "Command Prompt".into(),
+                missing.to_string_lossy().into(),
+            ),
+        ]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, "wt");
+        assert_eq!(
+            preferred_terminal(&found, "").map(|t| t.id.as_str()),
+            Some("wt")
+        );
+        assert_eq!(
+            preferred_terminal(&found, "wt").map(|t| t.label.as_str()),
+            Some("Windows Terminal")
+        );
+        assert!(preferred_terminal(&[], "wt").is_none());
+        assert!(default_terminal_candidates()
+            .iter()
+            .any(|c| c.0 == "wt" && c.1 == "Windows Terminal"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

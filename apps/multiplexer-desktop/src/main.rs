@@ -32,20 +32,20 @@ use multiplexer_shell::{
     about_info, activity_items, apply_deep_link, apply_layout_action, auto_dismisses,
     bottom_height_from_mouse, cap_text, changes_headline, default_browser_candidates,
     default_crash_path, default_first_run_path, default_layout_path, default_settings_path,
-    delete_forward, detect_browsers, detect_remotes, first_run_completed,
-    first_run_keychain_notice, format_line, git_diff_line, help_text, hit_action, insert_at,
-    inspector_rows, is_tui_hatch, join_project_path, journal_from_workspace, leaf_name, menu_for,
-    menu_for_thread, merge_cores, merge_mcp, merge_models, move_end, move_home, move_left,
-    move_right, move_word_left, move_word_right, open_external_program, palette_hits,
-    parse_builtin, parse_deep_link, parse_model_keys, parse_slash, plan_send, read_crash_journal,
-    read_layout, read_settings, remotes_pill_label, remotes_serve_note, row_detail,
-    search_workspace, slash_arg, status_from, status_line, status_mark, thread_leaf_title,
-    title_overflow, visible_notices, visible_tail, working_copy, write_crash_journal,
-    write_first_run_done, write_layout, write_settings, BindingTable, BuiltinCmd, CenterMode,
-    CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow, FocusRegion, InspectorTab,
-    LeftSection, McpRow, MenuKind, NoticeKind, PaletteState, RemoteRow, Role, SearchKind, SendPlan,
-    SettingsSection, SkillItem, SlashCommand, TermLineKind, TuiLife, Workspace, WorktreeCard,
-    DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
+    default_terminal_candidates, delete_forward, detect_browsers, detect_remotes, detect_terminals,
+    first_run_completed, first_run_keychain_notice, format_line, git_diff_line, help_text,
+    hit_action, insert_at, inspector_rows, join_project_path, journal_from_workspace, leaf_name,
+    menu_for, menu_for_thread, merge_cores, merge_mcp, merge_models, move_end, move_home,
+    move_left, move_right, move_word_left, move_word_right, open_external_program, palette_hits,
+    parse_builtin, parse_deep_link, parse_model_keys, parse_slash, plan_send, preferred_terminal,
+    read_crash_journal, read_layout, read_settings, remotes_pill_label, remotes_serve_note,
+    row_detail, search_workspace, slash_arg, status_from, status_line, status_mark,
+    thread_leaf_title, title_overflow, visible_notices, visible_tail, working_copy,
+    write_crash_journal, write_first_run_done, write_layout, write_settings, BindingTable,
+    BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow, FocusRegion,
+    InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind, PaletteState, RemoteRow, Role,
+    SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand, TermLineKind, TuiLife,
+    Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
 };
 use multiplexer_terminal::ProcessCapture;
 use multiplexer_wire::codec::{decode_frame, encode_frame};
@@ -74,7 +74,6 @@ enum Focus {
     FileFilter,
     Commit,
     ChatFilter,
-    Tui,
 }
 
 pub(crate) struct ShellView {
@@ -99,7 +98,6 @@ pub(crate) struct ShellView {
     bindings: BindingTable,
     notice_born: Vec<(u64, Instant)>,
     capture: Option<ProcessCapture>,
-    embedded_tui: Option<ProcessCapture>,
     pending_diff: Option<(String, Receiver<CommandResult>)>,
     turn_started: Option<Instant>,
 }
@@ -162,21 +160,19 @@ impl ShellView {
                 .map(|r| format!("{} [{}]", r.name, r.source))
                 .collect(),
         );
-        let mut store = HiddenGitStore::new(ProcessGitExec::new(), cwd.clone());
-        match store.create("local", "start") {
-            Ok(start) => {
-                workspace.git_checkpoints = true;
-                workspace.checkpoints.push(CheckpointRow {
-                    id: start.id.to_string(),
-                    label: start.label,
-                });
-            }
-            Err(err) => {
-                workspace.push_notice(
-                    NoticeKind::Warn,
-                    format!("hidden-git start snapshot skipped: {err}"),
-                );
-            }
+        let store = HiddenGitStore::new(ProcessGitExec::new(), cwd.clone());
+        for start in store.list("local") {
+            workspace.git_checkpoints = true;
+            workspace.checkpoints.push(CheckpointRow {
+                id: start.id.to_string(),
+                label: start.label,
+            });
+        }
+        workspace.terminals = detect_terminals(&default_terminal_candidates());
+        if let Some(term) =
+            preferred_terminal(&workspace.terminals, &workspace.settings.preferred_terminal)
+        {
+            workspace.selected_terminal = term.id.clone();
         }
         let server = Server::with_local();
         server.install_checkpoints(store);
@@ -199,7 +195,6 @@ impl ShellView {
             bindings,
             notice_born: Vec::new(),
             capture: None,
-            embedded_tui: None,
             pending_diff: None,
             turn_started: None,
         };
@@ -358,73 +353,54 @@ impl ShellView {
         }
     }
 
-    fn wt_available() -> bool {
-        std::process::Command::new("where.exe")
-            .arg("wt.exe")
-            .output()
-            .map(|o| o.status.success() && !o.stdout.is_empty())
-            .unwrap_or(false)
-    }
-
     fn launch_grok_tui(&mut self) {
-        if self.workspace.grok_tui.life == TuiLife::Running
-            && (self.embedded_tui.is_some() || self.grok_tui.is_some())
-        {
-            let _ = self.workspace.set_center_mode(CenterMode::GrokTui);
-            self.focus = Focus::Tui;
+        self.workspace.terminals = detect_terminals(&default_terminal_candidates());
+        let Some(term) =
+            preferred_terminal(&self.workspace.terminals, &self.workspace.selected_terminal)
+                .cloned()
+        else {
+            self.workspace
+                .grok_tui
+                .mark_failed("No system terminal found.");
+            self.workspace.push_notice(
+                NoticeKind::Warn,
+                "No system terminal detected. Install Windows Terminal.",
+            );
             return;
-        }
+        };
+        self.workspace.selected_terminal = term.id.clone();
+        self.workspace.settings.preferred_terminal = term.id.clone();
+        self.persist_settings();
         let _ = self.workspace.set_center_mode(CenterMode::GrokTui);
-        let cwd = std::path::PathBuf::from(&self.workspace.project);
-        match ProcessCapture::spawn("grok", &[], &cwd) {
-            Ok(cap) => {
-                self.embedded_tui = Some(cap);
-                self.workspace.grok_tui.mark_running(None, "grok", "in-app");
+        let launch = TuiLaunch::system(&term.id, &term.path, &self.workspace.project, "grok");
+        match spawn_grok_tui(&launch) {
+            Ok(child) => {
+                drop(child);
+                self.grok_tui = None;
                 self.workspace
                     .grok_tui
-                    .push_output("starting grok session…\n");
-                self.focus = Focus::Tui;
+                    .mark_running(None, "grok", term.label.clone());
                 self.workspace
-                    .push_notice(NoticeKind::Good, "Grok session hosted in-app.");
+                    .push_notice(NoticeKind::Good, format!("Opened grok in {}.", term.label));
             }
-            Err(pipe_err) => {
-                let launch =
-                    TuiLaunch::prefer_wt(&self.workspace.project, "grok", Self::wt_available());
-                match spawn_grok_tui(&launch) {
-                    Ok(child) => {
-                        let pid = child.id();
-                        self.grok_tui = Some(child);
-                        self.workspace
-                            .grok_tui
-                            .mark_running(Some(pid), "grok", "new console");
-                        self.workspace.push_notice(
-                            NoticeKind::Warn,
-                            format!("In-app spawn failed ({pipe_err}). Grok opened in a console."),
-                        );
-                    }
-                    Err(err) => {
-                        self.workspace
-                            .grok_tui
-                            .mark_failed(format!("spawn failed: {err}"));
-                        self.workspace
-                            .push_notice(NoticeKind::Danger, format!("Grok TUI: {err}"));
-                    }
-                }
+            Err(err) => {
+                self.workspace
+                    .grok_tui
+                    .mark_failed(format!("spawn failed: {err}"));
+                self.workspace
+                    .push_notice(NoticeKind::Danger, format!("{}: {err}", term.label));
             }
         }
     }
 
     fn stop_grok_tui(&mut self) {
-        if let Some(mut cap) = self.embedded_tui.take() {
-            let _ = cap.kill();
-        }
         if let Some(mut child) = self.grok_tui.take() {
             let _ = child.kill();
             let _ = child.wait();
         }
         self.workspace.grok_tui.mark_exited();
         self.workspace
-            .push_notice(NoticeKind::Info, "Grok TUI stopped");
+            .push_notice(NoticeKind::Info, "Grok TUI marked stopped");
     }
 
     fn reload_diffs(&mut self) {
@@ -616,12 +592,6 @@ impl ShellView {
                 let changed = apply_layout_action(&mut self.workspace, action);
                 match action {
                     ClientAction::NewThread => self.session_id = None,
-                    ClientAction::SetCenterTui | ClientAction::ToggleCenterMode => {
-                        if self.workspace.center_mode == CenterMode::GrokTui {
-                            self.launch_grok_tui();
-                            self.focus = Focus::Tui;
-                        }
-                    }
                     ClientAction::SetCenterGui => {
                         self.focus = Focus::Composer;
                     }
@@ -1560,11 +1530,6 @@ impl ShellView {
                 );
             }
         }
-        if let Some(cap) = self.embedded_tui.as_mut() {
-            for line in cap.try_read() {
-                self.workspace.grok_tui.push_output(&format!("{line}\n"));
-            }
-        }
         if let Some((path, rx)) = self.pending_diff.take() {
             match rx.try_recv() {
                 Ok(out) => {
@@ -1719,7 +1684,6 @@ impl ShellView {
             || self.pending_cmd.is_some()
             || self.capture.is_some()
             || self.pending_diff.is_some()
-            || self.embedded_tui.is_some()
             || self.workspace.grok_tui.life == TuiLife::Running
             || self
                 .workspace
@@ -1775,25 +1739,13 @@ impl ShellView {
         }
 
         if let Some(action) = bound {
-            let tui_running = self.workspace.center_mode == CenterMode::GrokTui
-                && self.workspace.grok_tui.life == TuiLife::Running;
-            if self.focus == Focus::Tui {
-                if is_tui_hatch(action) {
-                    self.dispatch_bound(action, cx);
-                    return;
-                }
-            } else {
-                if tui_running && !is_tui_hatch(action) {
-                    return;
-                }
-                if matches!(action, ClientAction::Send) && mods.shift {
-                    self.insert_text("\n");
-                    cx.notify();
-                    return;
-                }
-                self.dispatch_bound(action, cx);
+            if matches!(action, ClientAction::Send) && mods.shift {
+                self.insert_text("\n");
+                cx.notify();
                 return;
             }
+            self.dispatch_bound(action, cx);
+            return;
         }
 
         if self.workspace.pending.is_some()
@@ -1836,26 +1788,6 @@ impl ShellView {
                         }
                         self.workspace.chat_filter.push(c);
                     }
-                }
-            }
-            cx.notify();
-            return;
-        }
-
-        if self.focus == Focus::Tui {
-            if let Some(cap) = self.embedded_tui.as_mut() {
-                if key == "enter" {
-                    let _ = cap.write_bytes(b"\r");
-                } else if key == "backspace" {
-                    let _ = cap.write_bytes(b"\x7f");
-                } else if key == "tab" {
-                    let _ = cap.write_bytes(b"\t");
-                } else if let Some(ch) = event.keystroke.key_char.as_deref() {
-                    if !mods.control {
-                        let _ = cap.write_bytes(ch.as_bytes());
-                    }
-                } else if key == "space" {
-                    let _ = cap.write_bytes(b" ");
                 }
             }
             cx.notify();
@@ -2014,12 +1946,6 @@ impl ShellView {
         }
         if self.focus == Focus::ChatFilter {
             self.workspace.chat_filter.push_str(text);
-            return;
-        }
-        if self.focus == Focus::Tui {
-            if let Some(cap) = self.embedded_tui.as_mut() {
-                let _ = cap.write_bytes(text.as_bytes());
-            }
             return;
         }
         if self.focus == Focus::Commit {
@@ -3301,65 +3227,87 @@ impl ShellView {
     }
 
     fn grok_tui_host(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        if self.workspace.terminals.is_empty() {
+            self.workspace.terminals = detect_terminals(&default_terminal_candidates());
+        }
+        let selected =
+            preferred_terminal(&self.workspace.terminals, &self.workspace.selected_terminal)
+                .map(|t| t.id.clone())
+                .unwrap_or_default();
         let host = self.workspace.grok_tui.clone();
-        let body = if host.scrollback.is_empty() {
-            host.summary()
-        } else {
-            host.scrollback.clone()
-        };
+        let terms = self.workspace.terminals.clone();
         div()
             .id("grok-tui-host")
             .flex_1()
             .min_h_0()
+            .px_6()
+            .py_5()
             .flex()
             .flex_col()
+            .gap_3()
             .child(
                 div()
-                    .px_3()
-                    .py_1()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .border_b_1()
-                    .border_color(Theme::hairline())
-                    .child(
+                    .text_size(Theme::text_title())
+                    .text_color(Theme::text())
+                    .child("Open Grok in a system terminal"),
+            )
+            .child(
+                div()
+                    .text_size(Theme::text_caption())
+                    .text_color(Theme::faint())
+                    .child("Multiplexer is not a terminal. Pick the app already on this machine."),
+            )
+            .children(if terms.is_empty() {
+                vec![div()
+                    .text_color(Theme::muted())
+                    .child("No terminal detected. Install Windows Terminal.")
+                    .into_any()]
+            } else {
+                terms
+                    .into_iter()
+                    .map(|term| {
+                        let id = term.id.clone();
+                        let pick = id.clone();
+                        let on = selected == id;
                         div()
-                            .flex_1()
-                            .text_size(Theme::text_caption())
-                            .text_color(Theme::faint())
-                            .child(format!(
-                                "Grok session  ·  {}  ·  {}",
-                                host.life.label(),
-                                host.surface
-                            )),
-                    )
-                    .child(ghost_btn("Launch", "console", cx, |this, cx| {
+                            .id(SharedString::from(format!("term-{id}")))
+                            .h(px(32.0))
+                            .flex()
+                            .items_center()
+                            .cursor_pointer()
+                            .text_color(if on { Theme::text() } else { Theme::muted() })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.workspace.selected_terminal = pick.clone();
+                                    this.workspace.settings.preferred_terminal = pick.clone();
+                                    this.persist_settings();
+                                    cx.notify();
+                                }),
+                            )
+                            .child(format!("{}   {}", term.label, term.path))
+                            .into_any()
+                    })
+                    .collect()
+            })
+            .child(
+                div()
+                    .flex()
+                    .gap_3()
+                    .child(ghost_btn("Open Grok", "launch", cx, |this, cx| {
                         this.launch_grok_tui();
                         cx.notify();
                     }))
-                    .child(ghost_btn("Stop", "kill", cx, |this, cx| {
-                        this.stop_grok_tui();
+                    .child(ghost_btn("Refresh", "detect", cx, |this, cx| {
+                        this.workspace.terminals = detect_terminals(&default_terminal_candidates());
                         cx.notify();
                     })),
             )
             .child(
                 div()
-                    .id("tui-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .px_3()
-                    .py_2()
-                    .overflow_y_scroll()
-                    .cursor_pointer()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            this.focus = Focus::Tui;
-                            cx.notify();
-                        }),
-                    )
-                    .text_color(Theme::text())
-                    .child(body),
+                    .text_size(Theme::text_caption())
+                    .text_color(Theme::faint())
+                    .child(format!("{}  ·  {}", host.life.label(), host.surface)),
             )
             .into_any()
     }

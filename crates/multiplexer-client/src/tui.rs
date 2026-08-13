@@ -58,6 +58,80 @@ impl TuiLaunch {
         }
     }
 
+    /// Launch `grok` inside a detected system terminal. Never a Multiplexer PTY.
+    pub fn system(
+        id: &str,
+        program: impl Into<PathBuf>,
+        cwd: impl Into<PathBuf>,
+        grok: impl Into<PathBuf>,
+    ) -> Self {
+        let cwd = cwd.into();
+        let grok = grok.into();
+        let program = program.into();
+        match id {
+            "wt" => Self {
+                program,
+                args: vec![
+                    OsString::from("-d"),
+                    cwd.as_os_str().to_os_string(),
+                    grok.as_os_str().to_os_string(),
+                ],
+                cwd,
+                new_console: false,
+            },
+            "wezterm" => Self {
+                program,
+                args: vec![
+                    OsString::from("start"),
+                    OsString::from("--cwd"),
+                    cwd.as_os_str().to_os_string(),
+                    OsString::from("--"),
+                    grok.as_os_str().to_os_string(),
+                ],
+                cwd,
+                new_console: false,
+            },
+            "alacritty" => Self {
+                program,
+                args: vec![
+                    OsString::from("--working-directory"),
+                    cwd.as_os_str().to_os_string(),
+                    OsString::from("-e"),
+                    grok.as_os_str().to_os_string(),
+                ],
+                cwd,
+                new_console: false,
+            },
+            "cmd" => Self {
+                program,
+                args: vec![OsString::from("/K"), grok.as_os_str().to_os_string()],
+                cwd,
+                new_console: true,
+            },
+            "powershell" | "pwsh" => Self {
+                program,
+                args: vec![
+                    OsString::from("-NoExit"),
+                    OsString::from("-Command"),
+                    grok.as_os_str().to_os_string(),
+                ],
+                cwd,
+                new_console: true,
+            },
+            "conhost" => Self {
+                program,
+                args: vec![
+                    OsString::from("cmd.exe"),
+                    OsString::from("/K"),
+                    grok.as_os_str().to_os_string(),
+                ],
+                cwd,
+                new_console: false,
+            },
+            _ => Self::grok(cwd, grok),
+        }
+    }
+
     #[cfg(windows)]
     pub fn creation_flags(&self) -> u32 {
         if self.new_console {
@@ -111,6 +185,19 @@ mod tests {
         assert_eq!(grok, TuiLaunch::grok("C:/repo", "grok"));
         let wt = TuiLaunch::prefer_wt("C:/repo", "grok", true);
         assert_eq!(wt.program, PathBuf::from("wt.exe"));
+        let sys = TuiLaunch::system("wt", r"C:\wt.exe", "C:/repo", "grok");
+        assert_eq!(sys.program, PathBuf::from(r"C:\wt.exe"));
+        assert_eq!(sys.args[0], OsString::from("-d"));
+        let cmd = TuiLaunch::system("cmd", r"C:\Windows\System32\cmd.exe", "C:/repo", "grok");
+        assert!(cmd.new_console);
+        assert_eq!(cmd.args[0], OsString::from("/K"));
+        let ps = TuiLaunch::system(
+            "powershell",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "C:/repo",
+            "grok",
+        );
+        assert!(ps.args.iter().any(|a| a == "-NoExit"));
     }
 
     #[cfg(windows)]

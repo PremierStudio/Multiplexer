@@ -104,8 +104,9 @@ pub use widgets::{
     Tone, HEIGHT_CARD, HEIGHT_RAIL, HEIGHT_TITLE,
 };
 pub use workbench::{
-    activity_items, default_browser_candidates, detect_browsers, filter_files, join_project_path,
-    merge_mcp, preferred_browser, ActivityItem,
+    activity_items, default_browser_candidates, default_terminal_candidates, detect_browsers,
+    detect_terminals, filter_files, join_project_path, merge_mcp, preferred_browser,
+    preferred_terminal, ActivityItem, SystemTerminal,
 };
 pub use workspace::{
     ChatMessage, CheckpointRow, ChromeLayout, CoreRow, FocusRegion, InspectorTab, LeftSection,
