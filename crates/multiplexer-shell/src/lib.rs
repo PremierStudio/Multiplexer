@@ -57,7 +57,8 @@ pub use composer::{
     move_right, move_word_left, move_word_right,
 };
 pub use diff_view::{
-    changes_headline, mark_last_turn, parse_porcelain, sort_diffs, status_mark, DiffRow, DiffSort,
+    changes_headline, hunks_for_path, mark_last_turn, parse_porcelain, parse_unified_diff,
+    sort_diffs, status_mark, DiffHunk, DiffRow, DiffSort, HunkLine, HunkLineKind,
 };
 pub use embed::{embed_from_selection, embed_grok, embed_surface, EmbedTarget};
 pub use fuzzy::{fuzzy_best, fuzzy_score};

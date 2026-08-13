@@ -34,19 +34,19 @@ use multiplexer_shell::{
     default_crash_path, default_first_run_path, default_layout_path, default_settings_path,
     default_terminal_candidates, delete_forward, detect_browsers, detect_remotes, detect_terminals,
     embed_from_selection, embed_grok, embed_surface, first_run_completed,
-    first_run_keychain_notice, format_line, git_diff_line, help_text, hit_action, insert_at,
-    inspector_rows, is_tui_hatch, join_project_path, journal_from_workspace, leaf_name, menu_for,
-    menu_for_thread, merge_cores, merge_mcp, merge_models, move_end, move_home, move_left,
-    move_right, move_word_left, move_word_right, open_external_program, palette_hits,
-    parse_builtin, parse_deep_link, parse_model_keys, parse_slash, plan_send, preferred_terminal,
-    read_crash_journal, read_layout, read_settings, remotes_pill_label, remotes_serve_note,
-    row_detail, search_workspace, slash_arg, status_from, status_line, status_mark,
-    thread_leaf_title, title_overflow, tui_host_px, visible_notices, visible_tail, working_copy,
-    write_crash_journal, write_first_run_done, write_layout, write_settings, BindingTable,
-    BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow, FocusRegion,
-    InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind, PaletteState, RemoteRow, Role,
-    SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand, TermLineKind, TuiLife,
-    Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
+    first_run_keychain_notice, format_line, git_diff_line, help_text, hit_action, hunks_for_path,
+    insert_at, inspector_rows, is_tui_hatch, join_project_path, journal_from_workspace, leaf_name,
+    menu_for, menu_for_thread, merge_cores, merge_mcp, merge_models, move_end, move_home,
+    move_left, move_right, move_word_left, move_word_right, open_external_program, palette_hits,
+    parse_builtin, parse_deep_link, parse_model_keys, parse_slash, parse_unified_diff, plan_send,
+    preferred_terminal, read_crash_journal, read_layout, read_settings, remotes_pill_label,
+    remotes_serve_note, row_detail, search_workspace, slash_arg, status_from, status_line,
+    status_mark, thread_leaf_title, title_overflow, tui_host_px, visible_notices, visible_tail,
+    working_copy, write_crash_journal, write_first_run_done, write_layout, write_settings,
+    BindingTable, BuiltinCmd, CenterMode, CheckpointRow, Chord, ChromeGlyph, ClientAction, CoreRow,
+    FocusRegion, HunkLineKind, InspectorTab, LeftSection, McpRow, MenuKind, NoticeKind,
+    PaletteState, RemoteRow, Role, SearchKind, SendPlan, SettingsSection, SkillItem, SlashCommand,
+    TermLineKind, TuiLife, Workspace, WorktreeCard, DIFF_TEXT_CAP, NOTICE_AUTO_MS, TERM_PROMPT,
 };
 use multiplexer_terminal::{
     pty_grid_from_px, pty_input, pty_paste_bytes, visible_pty_text, EmbeddedSession,
@@ -2891,12 +2891,16 @@ impl ShellView {
                 .child("No working-tree changes")
                 .into_any()];
         }
-        rows.into_iter()
+        let selected = self.workspace.selected_diff.clone();
+        let preview = self.workspace.diff_text.clone();
+        let parsed = parse_unified_diff(&preview);
+        let mut out: Vec<gpui::AnyElement> = rows
+            .into_iter()
             .map(|d| {
                 let path = d.path.clone();
                 let pick = path.clone();
                 let mark = status_mark(&d.status);
-                let on = self.workspace.selected_diff.as_deref() == Some(path.as_str());
+                let on = selected.as_deref() == Some(path.as_str());
                 div()
                     .id(SharedString::from(format!("diff:{path}")))
                     .px_3()
@@ -2941,7 +2945,65 @@ impl ShellView {
                     )
                     .into_any()
             })
-            .collect()
+            .collect();
+        if let Some(path) = selected {
+            let hunks: Vec<_> = hunks_for_path(&parsed, &path)
+                .into_iter()
+                .cloned()
+                .collect();
+            if hunks.is_empty() {
+                if !preview.is_empty() {
+                    out.push(
+                        div()
+                            .px_3()
+                            .pt_2()
+                            .text_size(Theme::text_caption())
+                            .text_color(Theme::faint())
+                            .child(preview)
+                            .into_any(),
+                    );
+                }
+            } else {
+                out.push(
+                    div()
+                        .px_3()
+                        .pt_2()
+                        .text_size(Theme::text_caption())
+                        .text_color(Theme::faint())
+                        .child(format!("{path}  ·  text only, no apply"))
+                        .into_any(),
+                );
+                for (i, hunk) in hunks.into_iter().enumerate() {
+                    out.push(
+                        div()
+                            .id(SharedString::from(format!("hunk-{i}")))
+                            .px_3()
+                            .pt_1()
+                            .text_size(Theme::text_caption())
+                            .text_color(Theme::muted())
+                            .child(hunk.header)
+                            .into_any(),
+                    );
+                    for (j, line) in hunk.lines.into_iter().take(80).enumerate() {
+                        let color = match line.kind {
+                            HunkLineKind::Add => Theme::good(),
+                            HunkLineKind::Del => Theme::danger(),
+                            HunkLineKind::Context => Theme::muted(),
+                        };
+                        out.push(
+                            div()
+                                .id(SharedString::from(format!("hunk-{i}-{j}")))
+                                .px_3()
+                                .text_size(Theme::text_caption())
+                                .text_color(color)
+                                .child(line.text)
+                                .into_any(),
+                        );
+                    }
+                }
+            }
+        }
+        out
     }
 
     fn commit_box(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
