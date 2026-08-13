@@ -63,13 +63,15 @@ pub use diff_view::{
     sort_diffs, status_mark, DiffHunk, DiffRow, DiffSort, HunkLine, HunkLineKind,
 };
 pub use embed::{
-    embed_from_selection, embed_grok, embed_surface, gui_send_route, live_pty_takes_gui_send,
-    EmbedTarget, GuiSendRoute,
+    embed_from_selection, embed_grok, embed_grok_bound, embed_surface, grok_session_bind,
+    grok_session_flag, gui_send_route, live_pty_takes_gui_send, EmbedTarget, GrokSessionBind,
+    GuiSendRoute,
 };
 pub use fuzzy::{fuzzy_best, fuzzy_score};
 pub use grok_history::{
     apply_grok_history, default_grok_home, encode_session_cwd, find_history_file,
-    grok_history_path, grok_session_uuid, parse_chat_history, HistoryLine,
+    grok_history_path, grok_session_dir, grok_session_exists, grok_session_uuid,
+    parse_chat_history, HistoryLine,
 };
 pub use icons::{lucide_for_gpui, BrandIcon, ChromeGlyph};
 pub use inspector_model::{inspector_rows, row_detail};

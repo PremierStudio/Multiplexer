@@ -1,6 +1,33 @@
 //! Decide which system shell or grok to host in the in-app PTY.
 
+use crate::grok_history::{default_grok_home, grok_session_exists};
 use crate::workbench::SystemTerminal;
+
+/// Bind this chat to a grok session. `--session-id` is create-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GrokSessionBind {
+    None,
+    Create,
+    Resume,
+}
+
+pub fn grok_session_bind(session_id: &str, exists: bool) -> GrokSessionBind {
+    if session_id.trim().is_empty() {
+        GrokSessionBind::None
+    } else if exists {
+        GrokSessionBind::Resume
+    } else {
+        GrokSessionBind::Create
+    }
+}
+
+pub fn grok_session_flag(bind: GrokSessionBind) -> Option<&'static str> {
+    match bind {
+        GrokSessionBind::None => None,
+        GrokSessionBind::Create => Some("--session-id"),
+        GrokSessionBind::Resume => Some("--resume"),
+    }
+}
 
 /// Program, argv, and label for [`multiplexer_terminal::EmbeddedSession::spawn`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,9 +54,20 @@ pub fn embed_from_selection(term: Option<&SystemTerminal>, cwd: &str) -> EmbedTa
 }
 
 /// Interactive Grok for a chat. `--trust` skips the folder gate;
-/// `--always-approve` skips tool prompts; `--session-id` ties Chat to
-/// `chat_history.jsonl`. No `-p` so the pager stays up.
+/// `--always-approve` skips tool prompts. Existing sessions use `--resume`;
+/// a new UUID uses `--session-id`. No `-p` so the pager stays up.
 pub fn embed_grok(cwd: impl AsRef<str>, session_id: impl AsRef<str>) -> EmbedTarget {
+    let cwd = cwd.as_ref();
+    let sid = session_id.as_ref();
+    let exists = grok_session_exists(&default_grok_home(), cwd, sid);
+    embed_grok_bound(cwd, sid, exists)
+}
+
+pub fn embed_grok_bound(
+    cwd: impl AsRef<str>,
+    session_id: impl AsRef<str>,
+    exists: bool,
+) -> EmbedTarget {
     let cwd = cwd.as_ref().trim();
     let cwd = if cwd.is_empty() { "." } else { cwd };
     let mut args = vec![
@@ -39,8 +77,8 @@ pub fn embed_grok(cwd: impl AsRef<str>, session_id: impl AsRef<str>) -> EmbedTar
         cwd.to_owned(),
     ];
     let sid = session_id.as_ref().trim();
-    if !sid.is_empty() {
-        args.push("--session-id".into());
+    if let Some(flag) = grok_session_flag(grok_session_bind(sid, exists)) {
+        args.push(flag.into());
         args.push(sid.to_owned());
     }
     EmbedTarget {
@@ -136,13 +174,38 @@ mod tests {
         );
         assert_eq!(embed_grok("", "").args[2], "--cwd");
         assert_ne!(embed_grok("C:/work/app", "").args.len(), 0);
-        let sid = embed_grok("C:/work/app", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+        let sid = embed_grok_bound("C:/work/app", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", false);
         assert!(sid.args.iter().any(|a| a == "--session-id"));
+        assert!(!sid.args.iter().any(|a| a == "--resume"));
         assert!(sid
             .args
             .iter()
             .any(|a| a == "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"));
         assert_ne!(sid.args, got.args);
+        let resume = embed_grok_bound("C:/work/app", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", true);
+        assert!(resume.args.iter().any(|a| a == "--resume"));
+        assert!(!resume.args.iter().any(|a| a == "--session-id"));
+        assert_ne!(resume.args, sid.args);
+        assert_eq!(grok_session_bind("", false), GrokSessionBind::None);
+        assert_eq!(grok_session_bind("  ", true), GrokSessionBind::None);
+        assert_eq!(
+            grok_session_bind("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", false),
+            GrokSessionBind::Create
+        );
+        assert_eq!(
+            grok_session_bind("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", true),
+            GrokSessionBind::Resume
+        );
+        assert_eq!(grok_session_flag(GrokSessionBind::None), None);
+        assert_eq!(
+            grok_session_flag(GrokSessionBind::Create),
+            Some("--session-id")
+        );
+        assert_eq!(grok_session_flag(GrokSessionBind::Resume), Some("--resume"));
+        assert_ne!(
+            grok_session_flag(GrokSessionBind::Create),
+            grok_session_flag(GrokSessionBind::Resume)
+        );
     }
 
     #[test]

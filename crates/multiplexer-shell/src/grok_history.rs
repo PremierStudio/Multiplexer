@@ -54,12 +54,26 @@ pub fn default_grok_home() -> PathBuf {
     PathBuf::from(base).join(".grok")
 }
 
-pub fn grok_history_path(grok_home: &Path, cwd: &str, session_id: &str) -> PathBuf {
+pub fn grok_session_dir(grok_home: &Path, cwd: &str, session_id: &str) -> PathBuf {
     grok_home
         .join("sessions")
         .join(encode_session_cwd(cwd))
         .join(session_id)
-        .join("chat_history.jsonl")
+}
+
+pub fn grok_history_path(grok_home: &Path, cwd: &str, session_id: &str) -> PathBuf {
+    grok_session_dir(grok_home, cwd, session_id).join("chat_history.jsonl")
+}
+
+/// Grok treats a session as taken when `summary.json` exists under that cwd.
+pub fn grok_session_exists(grok_home: &Path, cwd: &str, session_id: &str) -> bool {
+    let sid = session_id.trim();
+    if sid.is_empty() {
+        return false;
+    }
+    grok_session_dir(grok_home, cwd, sid)
+        .join("summary.json")
+        .is_file()
 }
 
 /// Walk `sessions/*/<id>/chat_history.jsonl` when cwd encoding does not match.
@@ -208,6 +222,36 @@ mod tests {
         assert!(!home.as_os_str().is_empty());
         assert!(home.ends_with(".grok") || std::env::var("GROK_HOME").is_ok());
         assert_ne!(home, PathBuf::new());
+    }
+
+    #[test]
+    fn session_exists_requires_summary_json() {
+        let root = std::env::temp_dir().join(format!(
+            "mux-sess-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(1)
+        ));
+        let sid = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        let cwd = r"C:\work";
+        assert!(!grok_session_exists(&root, cwd, sid));
+        assert!(!grok_session_exists(&root, cwd, ""));
+        let dir = grok_session_dir(&root, cwd, sid);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(
+            !grok_session_exists(&root, cwd, sid),
+            "dir without summary is not taken"
+        );
+        std::fs::write(dir.join("summary.json"), "{}").unwrap();
+        assert!(grok_session_exists(&root, cwd, sid));
+        assert!(!grok_session_exists(
+            &root,
+            cwd,
+            "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        ));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
