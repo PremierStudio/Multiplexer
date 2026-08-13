@@ -1697,9 +1697,9 @@ impl Workspace {
                     .collect(),
                 status: t.status.clone(),
                 model: t.model.clone(),
-                pinned: false,
-                unread: false,
-                archived: false,
+                pinned: t.pinned,
+                unread: t.unread,
+                archived: t.archived,
                 center_mode: crate::center::CenterMode::Gui,
                 tui: crate::center::GrokTuiHost::idle(self.project.clone()),
             })
@@ -2840,10 +2840,16 @@ mod tests {
         let mut src = Workspace::new("p", "m");
         src.set_draft("restored");
         src.send_draft();
+        src.threads[0].pinned = true;
+        src.threads[0].archived = true;
         let j = crate::persist::journal_from_workspace(&src);
+        assert!(j.threads[0].pinned && j.threads[0].archived);
         let mut dest = Workspace::new("p", "m");
         assert!(dest.restore_crash(&j));
-        assert!(dest.threads.iter().any(|t| t.title == "restored"));
+        assert!(dest
+            .threads
+            .iter()
+            .any(|t| t.title == "restored" && t.pinned && t.archived));
         assert!(dest.notices.iter().any(|n| n.text.contains("not replayed")));
         let empty = crate::persist::CrashJournal::default();
         assert!(!dest.restore_crash(&empty));

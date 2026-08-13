@@ -221,6 +221,9 @@ pub struct CrashThread {
     pub status: String,
     pub model: String,
     pub messages: Vec<(String, String)>,
+    pub pinned: bool,
+    pub unread: bool,
+    pub archived: bool,
 }
 
 pub fn crash_journal_to_json(j: &CrashJournal) -> String {
@@ -239,6 +242,9 @@ pub fn crash_journal_to_json(j: &CrashJournal) -> String {
                 "status": t.status,
                 "model": t.model,
                 "messages": msgs,
+                "pinned": t.pinned,
+                "unread": t.unread,
+                "archived": t.archived,
             })
         })
         .collect();
@@ -300,6 +306,18 @@ pub fn crash_journal_from_json(raw: &str) -> CrashJournal {
                     .unwrap_or("grok")
                     .to_owned(),
                 messages,
+                pinned: item
+                    .get("pinned")
+                    .and_then(|x| x.as_bool())
+                    .unwrap_or(false),
+                unread: item
+                    .get("unread")
+                    .and_then(|x| x.as_bool())
+                    .unwrap_or(false),
+                archived: item
+                    .get("archived")
+                    .and_then(|x| x.as_bool())
+                    .unwrap_or(false),
             });
         }
     }
@@ -343,6 +361,9 @@ pub fn journal_from_workspace(ws: &Workspace) -> CrashJournal {
                 title: t.title.clone(),
                 status: t.status.clone(),
                 model: t.model.clone(),
+                pinned: t.pinned,
+                unread: t.unread,
+                archived: t.archived,
                 messages: t
                     .messages
                     .iter()
@@ -668,6 +689,9 @@ mod tests {
                 status: "idle".into(),
                 model: "grok".into(),
                 messages: vec![("user".into(), "hi".into())],
+                pinned: true,
+                unread: false,
+                archived: true,
             }],
             drafts: vec![("thr-1".into(), "draft".into(), 2)],
             marker: true,
@@ -679,6 +703,9 @@ mod tests {
         let back = crash_journal_from_json(&raw);
         assert_eq!(back.threads.len(), 1);
         assert_eq!(back.threads[0].title, "Hello");
+        assert!(back.threads[0].pinned);
+        assert!(back.threads[0].archived);
+        assert!(!back.threads[0].unread);
         assert_eq!(back.drafts[0].1, "draft");
         assert!(back.marker);
         assert_eq!(crash_journal_from_json("nope"), CrashJournal::default());

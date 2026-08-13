@@ -662,6 +662,13 @@ impl ShellView {
                     ClientAction::NewThread => {
                         self.session_id = None;
                         self.focus = Focus::Composer;
+                        self.persist_crash();
+                    }
+                    ClientAction::PinThread
+                    | ClientAction::ArchiveThread
+                    | ClientAction::UnarchiveThread
+                    | ClientAction::MarkUnread => {
+                        self.persist_crash();
                     }
                     ClientAction::SetCenterGui => {
                         self.focus = Focus::Composer;
@@ -819,6 +826,11 @@ impl ShellView {
             self.dispatch(ClientAction::SelectTab(InspectorTab::Activity), cx);
             self.focus = Focus::Terminal;
         } else if id.starts_with("act:approval:") {
+            self.focus = Focus::Composer;
+            if self.workspace.pending.is_none() {
+                self.workspace
+                    .push_notice(NoticeKind::Info, "no pending approval");
+            }
             cx.notify();
         } else {
             self.dispatch(ClientAction::SelectTab(InspectorTab::Activity), cx);
@@ -2675,12 +2687,14 @@ impl ShellView {
                         "agent-none",
                         ChromeGlyph::Agent,
                         "No sessions",
-                        "Local threads only",
+                        "New chat",
                         "",
                         false,
                         false,
                         cx,
-                        |_this, _cx| {},
+                        |this, cx| {
+                            this.dispatch(ClientAction::NewThread, cx);
+                        },
                     )]
                 } else {
                     rows.into_iter()
