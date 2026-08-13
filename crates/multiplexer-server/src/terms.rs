@@ -172,6 +172,7 @@ fn term_rpc(err: TerminalError) -> RpcError {
             format!("spawn `{program}`: {message}"),
         ),
         TerminalError::Io(message) => RpcError::app(AppErrorKind::ProviderError, message),
+        TerminalError::Unsupported(message) => RpcError::app(AppErrorKind::ProviderError, message),
     }
 }
 

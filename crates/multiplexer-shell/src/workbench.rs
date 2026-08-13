@@ -78,21 +78,29 @@ pub struct SystemTerminal {
     pub path: String,
 }
 
-/// Well-known Windows terminals. Detect is path-exists only.
+/// Well-known **shells** we can host in an in-app PTY (not GUI terminal apps).
 pub fn default_terminal_candidates() -> Vec<(String, String, String)> {
+    #[cfg(windows)]
+    {
+        windows_terminal_candidates()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos_terminal_candidates()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux_terminal_candidates()
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        Vec::new()
+    }
+}
+
+pub fn windows_terminal_candidates() -> Vec<(String, String, String)> {
     let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
-    let user = std::env::var("USERPROFILE").unwrap_or_default();
-    vec![
-        (
-            "wt".into(),
-            "Windows Terminal".into(),
-            format!("{local}\\Microsoft\\WindowsApps\\wt.exe"),
-        ),
-        (
-            "conhost".into(),
-            "Windows Console".into(),
-            r"C:\Windows\System32\conhost.exe".into(),
-        ),
+    let mut out = vec![
         (
             "cmd".into(),
             "Command Prompt".into(),
@@ -108,28 +116,78 @@ pub fn default_terminal_candidates() -> Vec<(String, String, String)> {
             "PowerShell".into(),
             format!("{local}\\Microsoft\\WindowsApps\\pwsh.exe"),
         ),
+    ];
+    if let Some(grok) = path_program("grok") {
+        out.insert(0, ("grok".into(), "Grok".into(), grok));
+    }
+    out
+}
+
+pub fn macos_terminal_candidates() -> Vec<(String, String, String)> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let mut out = vec![
+        ("zsh".into(), "zsh".into(), "/bin/zsh".into()),
+        ("bash".into(), "bash".into(), "/bin/bash".into()),
+        ("sh".into(), "sh".into(), "/bin/sh".into()),
         (
-            "wezterm".into(),
-            "WezTerm".into(),
-            r"C:\Program Files\WezTerm\wezterm-gui.exe".into(),
+            "fish".into(),
+            "fish".into(),
+            "/opt/homebrew/bin/fish".into(),
         ),
         (
-            "alacritty".into(),
-            "Alacritty".into(),
-            r"C:\Program Files\Alacritty\alacritty.exe".into(),
+            "fish".into(),
+            "fish".into(),
+            format!("{home}/.local/bin/fish"),
         ),
+    ];
+    if let Some(grok) = path_program("grok") {
+        out.insert(0, ("grok".into(), "Grok".into(), grok));
+    }
+    out
+}
+
+pub fn linux_terminal_candidates() -> Vec<(String, String, String)> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let mut out = vec![
+        ("bash".into(), "bash".into(), "/bin/bash".into()),
+        ("zsh".into(), "zsh".into(), "/bin/zsh".into()),
+        ("sh".into(), "sh".into(), "/bin/sh".into()),
+        ("fish".into(), "fish".into(), "/usr/bin/fish".into()),
         (
-            "ghostty".into(),
-            "Ghostty".into(),
-            format!("{user}\\scoop\\apps\\ghostty\\current\\ghostty.exe"),
+            "fish".into(),
+            "fish".into(),
+            format!("{home}/.local/bin/fish"),
         ),
-    ]
+    ];
+    if let Some(grok) = path_program("grok") {
+        out.insert(0, ("grok".into(), "Grok".into(), grok));
+    }
+    out
+}
+
+/// First executable named `name` on PATH (adds `.exe` on Windows).
+pub fn path_program(name: &str) -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let direct = dir.join(name);
+        if direct.is_file() {
+            return Some(direct.display().to_string());
+        }
+        #[cfg(windows)]
+        {
+            let exe = dir.join(format!("{name}.exe"));
+            if exe.is_file() {
+                return Some(exe.display().to_string());
+            }
+        }
+    }
+    None
 }
 
 pub fn detect_terminals(candidates: &[(String, String, String)]) -> Vec<SystemTerminal> {
     candidates
         .iter()
-        .filter(|(_, _, path)| std::path::Path::new(path).is_file())
+        .filter(|(_, _, path)| std::path::Path::new(path).exists())
         .map(|(id, label, path)| SystemTerminal {
             id: id.clone(),
             label: label.clone(),
@@ -317,9 +375,14 @@ mod tests {
             Some("Windows Terminal")
         );
         assert!(preferred_terminal(&[], "wt").is_none());
+        assert!(windows_terminal_candidates()
+            .iter()
+            .any(|c| c.0 == "cmd" && c.1 == "Command Prompt"));
+        assert!(macos_terminal_candidates().iter().any(|c| c.0 == "zsh"));
+        assert!(linux_terminal_candidates().iter().any(|c| c.0 == "bash"));
         assert!(default_terminal_candidates()
             .iter()
-            .any(|c| c.0 == "wt" && c.1 == "Windows Terminal"));
+            .any(|c| c.0 == "cmd" || c.0 == "zsh" || c.0 == "bash"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

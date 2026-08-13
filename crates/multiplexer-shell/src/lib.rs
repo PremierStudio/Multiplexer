@@ -105,8 +105,9 @@ pub use widgets::{
 };
 pub use workbench::{
     activity_items, default_browser_candidates, default_terminal_candidates, detect_browsers,
-    detect_terminals, filter_files, join_project_path, merge_mcp, preferred_browser,
-    preferred_terminal, ActivityItem, SystemTerminal,
+    detect_terminals, filter_files, join_project_path, linux_terminal_candidates,
+    macos_terminal_candidates, merge_mcp, preferred_browser, preferred_terminal,
+    windows_terminal_candidates, ActivityItem, SystemTerminal,
 };
 pub use workspace::{
     ChatMessage, CheckpointRow, ChromeLayout, CoreRow, FocusRegion, InspectorTab, LeftSection,

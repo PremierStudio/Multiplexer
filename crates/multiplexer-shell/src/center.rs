@@ -66,8 +66,8 @@ impl GrokTuiHost {
             pid: None,
             program: "grok".into(),
             cwd: cwd.into(),
-            note: "Grok owns the agent TUI. Open it in a system terminal.".into(),
-            surface: "system terminal".into(),
+            note: "Grok owns the agent TUI. Multiplexer hosts the system shell in-app.".into(),
+            surface: "in-app".into(),
             scrollback: String::new(),
         }
     }
@@ -138,7 +138,7 @@ mod tests {
         let mut host = GrokTuiHost::idle("C:/repo");
         assert_eq!(host.life, TuiLife::Stopped);
         assert!(host.pid.is_none());
-        assert!(host.note.contains("system terminal"));
+        assert!(host.note.contains("in-app"));
         assert!(host.summary().contains("stopped"));
         assert!(host.scrollback.is_empty());
 

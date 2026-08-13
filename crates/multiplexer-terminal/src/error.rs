@@ -14,6 +14,9 @@ pub enum TerminalError {
     /// Stdin write, kill, or other child I/O failed.
     #[error("{0}")]
     Io(String),
+    /// PTY backend missing on this OS or Windows older than ConPTY.
+    #[error("embedded session: {0}")]
+    Unsupported(String),
 }
 
 #[cfg(test)]
@@ -40,5 +43,7 @@ mod tests {
             "stdin closed"
         );
         assert_ne!(spawn, TerminalError::Io("stdin closed".into()));
+        let unsupported = TerminalError::Unsupported("no pty".into());
+        assert_eq!(unsupported.to_string(), "embedded session: no pty");
     }
 }
