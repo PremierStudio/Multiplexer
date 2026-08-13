@@ -3,8 +3,32 @@
 //! No GPUI types live here. The desktop binary projects [`DesktopChrome`]
 //! into a window. Tests and CI stay headless.
 
+mod actions;
+mod approval_ui;
+mod bars;
+mod bindings;
+mod composer;
+mod palette;
+mod slash;
+mod status;
+mod terminal_ui;
 mod workspace;
 
+pub use actions::{apply_layout_action, ClientAction};
+pub use approval_ui::PendingApproval;
+pub use bars::usage_bar;
+pub use bindings::{host_call, ActionContext, HostCall};
+pub use composer::{
+    clamp_cursor, delete_back, delete_forward, insert_at, move_end, move_home, move_left,
+    move_right, move_word_left, move_word_right,
+};
+pub use palette::{default_items, filter_items, PaletteItem, PaletteState};
+pub use slash::{parse_slash, slash_hint, SlashCommand};
+pub use status::{status_from, status_line, ClientStatus};
+pub use terminal_ui::{
+    format_line, help_text, parse_builtin, push_capped, visible_tail, BuiltinCmd, TermLineKind,
+    TERM_HISTORY_MAX, TERM_PROMPT,
+};
 pub use workspace::{
     ChatMessage, CheckpointRow, ChromeLayout, CoreRow, InspectorTab, McpRow, Role, Thread,
     Workspace, LEFT_WIDTH_MAX, LEFT_WIDTH_MIN, RAIL_COLLAPSED, RIGHT_WIDTH_MAX, RIGHT_WIDTH_MIN,

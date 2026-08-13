@@ -21,3 +21,4 @@ multiplexer-wire = { path = "../../crates/multiplexer-wire" }
 multiplexer-resman = { path = "../../crates/multiplexer-resman" }
 multiplexer-mcp = { path = "../../crates/multiplexer-mcp" }
 multiplexer-checkpoint = { path = "../../crates/multiplexer-checkpoint" }
+multiplexer-client = { path = "../../crates/multiplexer-client" }

@@ -7,18 +7,23 @@
 //! [`RuntimeBackend`] starts provider + resman + checkpoints together.
 
 mod backend;
+mod checkpoints;
 mod git;
 mod listen;
 mod provider_bridge;
 mod runtime;
 mod server;
+mod terms;
+mod worktree_create;
 
 pub use backend::{
     BackendError, FakeBackend, SessionBackend, SessionSnapshot, SessionStartParams, SessionSummary,
     StartedSession,
 };
+pub use checkpoints::{CheckpointCatalog, CheckpointInfo};
 pub use git::{GitCatalog, WorktreeInfo};
 pub use listen::{serve, serve_listener, ListenError};
+pub use multiplexer_checkpoint::CheckpointStore;
 pub use provider_bridge::ProviderBridge;
 pub use runtime::RuntimeBackend;
 pub use server::Server;

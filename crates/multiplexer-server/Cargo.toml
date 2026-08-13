@@ -10,7 +10,9 @@ description = "JSON-RPC request router and WebSocket listen loop for the Multipl
 multiplexer-wire = { path = "../multiplexer-wire" }
 multiplexer-provider = { path = "../multiplexer-provider" }
 multiplexer-worktree = { path = "../multiplexer-worktree" }
+multiplexer-terminal = { path = "../multiplexer-terminal" }
 multiplexer-core = { path = "../multiplexer-core" }
+multiplexer-checkpoint = { path = "../multiplexer-checkpoint" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

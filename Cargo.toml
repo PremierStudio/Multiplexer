@@ -11,6 +11,7 @@ members = [
     "crates/multiplexer-shell",
     "crates/multiplexer-terminal",
     "crates/multiplexer-auth",
+    "crates/multiplexer-client",
     "crates/multiplexer-core",
     "crates/multiplexer-server",
     "apps/multiplexer-desktop",

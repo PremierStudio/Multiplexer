@@ -531,6 +531,7 @@ fn method_constants_match_spec_namespaces() {
         (methods::USER_INPUT_RESPOND, "userInput.respond"),
         (methods::USER_INPUT_CANCEL, "userInput.cancel"),
         (methods::CHECKPOINT_LIST, "checkpoint.list"),
+        (methods::CHECKPOINT_CREATE, "checkpoint.create"),
         (methods::CHECKPOINT_DIFF, "checkpoint.diff"),
         (methods::CHECKPOINT_REVERT, "checkpoint.revert"),
         (methods::CHECKPOINT_APPLY, "checkpoint.apply"),

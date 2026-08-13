@@ -29,6 +29,7 @@ pub const USER_INPUT_CANCEL: &str = "userInput.cancel";
 
 // checkpoint.* (plan/04 §4.5)
 pub const CHECKPOINT_LIST: &str = "checkpoint.list";
+pub const CHECKPOINT_CREATE: &str = "checkpoint.create";
 pub const CHECKPOINT_DIFF: &str = "checkpoint.diff";
 pub const CHECKPOINT_REVERT: &str = "checkpoint.revert";
 pub const CHECKPOINT_APPLY: &str = "checkpoint.apply";

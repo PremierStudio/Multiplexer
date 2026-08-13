@@ -2,6 +2,7 @@
 
 use std::sync::{Mutex, MutexGuard};
 
+use multiplexer_terminal::TerminalHub;
 use multiplexer_wire::approval::ApprovalDecision;
 use multiplexer_wire::codec::{decode_frame, encode_frame, CodecError};
 use multiplexer_wire::error::{standard, AppErrorKind, RpcError};
@@ -11,12 +12,15 @@ use multiplexer_wire::protocol::PROTOCOL_VERSION;
 use serde_json::{json, Map, Value};
 
 use crate::backend::{BackendError, FakeBackend, SessionBackend, SessionStartParams};
+use crate::checkpoints::CheckpointCatalog;
 use crate::git::GitCatalog;
 
 /// In-process JSON-RPC router. Holds the session backend behind a mutex.
 pub struct Server<B = FakeBackend> {
     backend: Mutex<B>,
     git: Mutex<Option<Box<dyn GitCatalog>>>,
+    checkpoints: Mutex<Option<Box<dyn CheckpointCatalog>>>,
+    terminals: Mutex<Option<TerminalHub>>,
 }
 
 impl Server<FakeBackend> {
@@ -54,6 +58,8 @@ impl
         server.install_git(multiplexer_worktree::WorktreeService::new(
             multiplexer_worktree::ProcessGit::new(),
         ));
+        server.install_checkpoints(multiplexer_checkpoint::CheckpointStore::new());
+        server.install_terminals(multiplexer_terminal::TerminalHub::new());
         server
     }
 }
@@ -76,12 +82,24 @@ impl<B: SessionBackend> Server<B> {
         Self {
             backend: Mutex::new(backend),
             git: Mutex::new(None),
+            checkpoints: Mutex::new(None),
+            terminals: Mutex::new(None),
         }
     }
 
     /// Install or replace the git catalog used by `git.worktrees`.
     pub fn install_git<G: GitCatalog + 'static>(&self, git: G) {
         *self.git.lock().unwrap_or_else(|p| p.into_inner()) = Some(Box::new(git));
+    }
+
+    /// Install or replace the checkpoint catalog used by `checkpoint.list` / `checkpoint.revert`.
+    pub fn install_checkpoints<C: CheckpointCatalog + 'static>(&self, store: C) {
+        *self.checkpoints.lock().unwrap_or_else(|p| p.into_inner()) = Some(Box::new(store));
+    }
+
+    /// Install or replace the hub used by `terminal.*`.
+    pub fn install_terminals(&self, hub: TerminalHub) {
+        *self.terminals.lock().unwrap_or_else(|p| p.into_inner()) = Some(hub);
     }
 
     /// Decode `text`, dispatch, and return the response frame plus any
@@ -117,6 +135,14 @@ impl<B: SessionBackend> Server<B> {
             methods::TURN_SEND => self.turn_send(req),
             methods::APPROVAL_RESPOND => self.approval_respond(req),
             methods::GIT_WORKTREES => self.git_worktrees(req),
+            methods::GIT_WORKTREE_CREATE => crate::worktree_create::create(&self.git, req),
+            methods::CHECKPOINT_LIST => self.checkpoint_list(req),
+            methods::CHECKPOINT_CREATE => self.checkpoint_create(req),
+            methods::CHECKPOINT_REVERT => self.checkpoint_revert(req),
+            methods::TERMINAL_CREATE => crate::terms::create(&self.terminals, req),
+            methods::TERMINAL_LIST => crate::terms::list(&self.terminals, req),
+            methods::TERMINAL_INPUT => crate::terms::input(&self.terminals, req),
+            methods::TERMINAL_KILL => crate::terms::kill(&self.terminals, req),
             methods::SYSTEM_PING => vec![ok_frame(req.id, json!({ "pong": true }))],
             methods::SYSTEM_HELLO => self.system_hello(req),
             _ => vec![error_frame(
@@ -208,6 +234,75 @@ impl<B: SessionBackend> Server<B> {
         match backend.approval_respond(&session_id, &request_id, decision) {
             Ok(()) => respond_and_drain(&mut *backend, req.id, json!({})),
             Err(e) => vec![error_frame(req.id, backend_rpc(e))],
+        }
+    }
+
+    fn checkpoint_create(&self, req: Request) -> Vec<String> {
+        let (session_id, label) = match parse_checkpoint_create(&req.params) {
+            Ok(pair) => pair,
+            Err(e) => return vec![error_frame(req.id, e)],
+        };
+        let mut store = self.checkpoints.lock().unwrap_or_else(|p| p.into_inner());
+        match store.as_mut() {
+            Some(catalog) => match catalog.create(&session_id, &label) {
+                Ok(checkpoint) => vec![ok_frame(
+                    req.id,
+                    serde_json::to_value(checkpoint).expect("checkpoint encodes"),
+                )],
+                Err(e) => vec![error_frame(req.id, backend_rpc(e))],
+            },
+            None => vec![error_frame(
+                req.id,
+                RpcError::app(
+                    AppErrorKind::Unsupported,
+                    "checkpoint catalog not configured",
+                ),
+            )],
+        }
+    }
+
+    fn checkpoint_list(&self, req: Request) -> Vec<String> {
+        let session_id = match parse_session_id(&req.params) {
+            Ok(id) => id,
+            Err(e) => return vec![error_frame(req.id, e)],
+        };
+        let store = self.checkpoints.lock().unwrap_or_else(|p| p.into_inner());
+        match store.as_ref() {
+            Some(catalog) => {
+                let checkpoints = catalog.list(&session_id);
+                vec![ok_frame(req.id, json!({ "checkpoints": checkpoints }))]
+            }
+            None => vec![error_frame(
+                req.id,
+                RpcError::app(
+                    AppErrorKind::Unsupported,
+                    "checkpoint catalog not configured",
+                ),
+            )],
+        }
+    }
+
+    fn checkpoint_revert(&self, req: Request) -> Vec<String> {
+        let checkpoint_id = match parse_checkpoint_id(&req.params) {
+            Ok(id) => id,
+            Err(e) => return vec![error_frame(req.id, e)],
+        };
+        let mut store = self.checkpoints.lock().unwrap_or_else(|p| p.into_inner());
+        match store.as_mut() {
+            Some(catalog) => match catalog.revert(&checkpoint_id) {
+                Ok(checkpoint) => vec![ok_frame(
+                    req.id,
+                    serde_json::to_value(checkpoint).expect("checkpoint encodes"),
+                )],
+                Err(e) => vec![error_frame(req.id, backend_rpc(e))],
+            },
+            None => vec![error_frame(
+                req.id,
+                RpcError::app(
+                    AppErrorKind::Unsupported,
+                    "checkpoint catalog not configured",
+                ),
+            )],
         }
     }
 
@@ -331,6 +426,17 @@ fn parse_approval(params: &Value) -> Result<(String, String, ApprovalDecision), 
 
 fn parse_cwd(params: &Value) -> Result<String, RpcError> {
     require_nonempty_string(require_object(params)?, "cwd")
+}
+
+fn parse_checkpoint_id(params: &Value) -> Result<String, RpcError> {
+    require_nonempty_string(require_object(params)?, "checkpoint_id")
+}
+
+fn parse_checkpoint_create(params: &Value) -> Result<(String, String), RpcError> {
+    let obj = require_object(params)?;
+    let session_id = require_nonempty_string(obj, "session_id")?;
+    let label = require_nonempty_string(obj, "label")?;
+    Ok((session_id, label))
 }
 
 fn require_object(params: &Value) -> Result<&Map<String, Value>, RpcError> {

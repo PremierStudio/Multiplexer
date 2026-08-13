@@ -1,5 +1,7 @@
 //! Headless workspace model: threads, transcript, composer, inspector.
 
+use crate::approval_ui::PendingApproval;
+use crate::composer::{clamp_cursor, delete_back, insert_at};
 use crate::ConnectionState;
 
 /// Who wrote a transcript line.
@@ -32,6 +34,9 @@ pub enum InspectorTab {
     Resources,
     Mcp,
     Checkpoints,
+    Git,
+    Terminal,
+    Skills,
 }
 
 impl InspectorTab {
@@ -41,11 +46,22 @@ impl InspectorTab {
             Self::Resources => "Cores",
             Self::Mcp => "MCP",
             Self::Checkpoints => "Points",
+            Self::Git => "Git",
+            Self::Terminal => "Term",
+            Self::Skills => "Skills",
         }
     }
 
-    pub fn all() -> [InspectorTab; 4] {
-        [Self::Session, Self::Resources, Self::Mcp, Self::Checkpoints]
+    pub fn all() -> [InspectorTab; 7] {
+        [
+            Self::Session,
+            Self::Resources,
+            Self::Mcp,
+            Self::Checkpoints,
+            Self::Git,
+            Self::Terminal,
+            Self::Skills,
+        ]
     }
 }
 
@@ -162,14 +178,26 @@ pub struct Workspace {
     pub reminder: Option<(String, String)>,
     pub terminal_log: Vec<String>,
     pub busy: bool,
+    pub pending: Option<PendingApproval>,
+    pub cursor: usize,
+    pub models: Vec<String>,
+    pub files: Vec<String>,
+    pub skills: Vec<String>,
+    pub git_status: String,
+    pub term_draft: String,
+    pub palette_open: bool,
+    pub help_open: bool,
+    pub selected_checkpoint: Option<String>,
+    pub selected_worktree: Option<usize>,
     next_id: u64,
 }
 
 impl Workspace {
     pub fn new(project: impl Into<String>, model: impl Into<String>) -> Self {
+        let model = model.into();
         let mut ws = Self {
             project: project.into(),
-            model: model.into(),
+            model: model.clone(),
             connection: ConnectionState::Disconnected,
             threads: Vec::new(),
             selected: 0,
@@ -183,6 +211,17 @@ impl Workspace {
             reminder: None,
             terminal_log: Vec::new(),
             busy: false,
+            pending: None,
+            cursor: 0,
+            models: vec![model],
+            files: Vec::new(),
+            skills: Vec::new(),
+            git_status: String::new(),
+            term_draft: String::new(),
+            palette_open: false,
+            help_open: false,
+            selected_checkpoint: None,
+            selected_worktree: None,
             next_id: 1,
         };
         ws.new_thread();
@@ -217,6 +256,7 @@ impl Workspace {
         });
         self.selected = self.threads.len() - 1;
         self.draft.clear();
+        self.cursor = 0;
         id
     }
 
@@ -229,18 +269,69 @@ impl Workspace {
         }
     }
 
+    /// Remove a thread. Keeps at least one. If the selected thread is
+    /// removed, the previous index (or 0) becomes selected.
+    pub fn delete_thread(&mut self, index: usize) -> bool {
+        if self.threads.len() <= 1 || index >= self.threads.len() {
+            return false;
+        }
+        self.threads.remove(index);
+        if index < self.selected {
+            self.selected -= 1;
+        } else if index == self.selected {
+            self.selected = self.selected.saturating_sub(1);
+        }
+        true
+    }
+
+    pub fn rename_thread(&mut self, index: usize, title: impl Into<String>) -> bool {
+        match self.threads.get_mut(index) {
+            Some(thread) => {
+                thread.title = title.into();
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn set_draft(&mut self, text: impl Into<String>) {
         self.draft = text.into();
+        self.cursor = self.draft.chars().count();
     }
 
     pub fn type_char(&mut self, c: char) {
         if !c.is_control() {
-            self.draft.push(c);
+            let mut buf = [0u8; 4];
+            let s = c.encode_utf8(&mut buf);
+            self.cursor = insert_at(&mut self.draft, self.cursor, s);
         }
     }
 
     pub fn backspace(&mut self) {
-        self.draft.pop();
+        self.cursor = delete_back(&mut self.draft, self.cursor);
+    }
+
+    pub fn move_cursor_left(&mut self) {
+        self.cursor = clamp_cursor(&self.draft, self.cursor);
+        if self.cursor > 0 {
+            self.cursor -= 1;
+        }
+    }
+
+    pub fn move_cursor_right(&mut self) {
+        self.cursor = clamp_cursor(&self.draft, self.cursor);
+        let end = self.draft.chars().count();
+        if self.cursor < end {
+            self.cursor += 1;
+        }
+    }
+
+    pub fn move_cursor_home(&mut self) {
+        self.cursor = 0;
+    }
+
+    pub fn move_cursor_end(&mut self) {
+        self.cursor = self.draft.chars().count();
     }
 
     /// Take the draft as a user message. Returns the text if it was non-empty.
@@ -250,6 +341,7 @@ impl Workspace {
             return None;
         }
         self.draft.clear();
+        self.cursor = 0;
         if let Some(thread) = self.selected_thread_mut() {
             if thread.title == "New chat" {
                 thread.title = text.chars().take(40).collect();
@@ -317,6 +409,94 @@ impl Workspace {
         self.connection = ConnectionState::Connected { session_ids };
     }
 
+    /// Rotate `models`, assign `self.model`, and return the new model id.
+    pub fn cycle_model(&mut self) -> String {
+        if self.models.is_empty() {
+            self.models.push(self.model.clone());
+            return self.model.clone();
+        }
+        let i = self
+            .models
+            .iter()
+            .position(|m| m == &self.model)
+            .unwrap_or(0);
+        let next = (i + 1) % self.models.len();
+        self.model = self.models[next].clone();
+        self.model.clone()
+    }
+
+    /// Replace the model catalog. An empty list keeps the current model.
+    pub fn set_models(&mut self, models: Vec<String>) {
+        if models.is_empty() {
+            self.models = vec![self.model.clone()];
+            return;
+        }
+        self.models = models;
+        if !self.models.iter().any(|m| m == &self.model) {
+            self.model = self.models[0].clone();
+        }
+    }
+
+    pub fn create_local_checkpoint(&mut self, id: impl Into<String>, label: impl Into<String>) {
+        self.checkpoints.push(CheckpointRow {
+            id: id.into(),
+            label: label.into(),
+        });
+    }
+
+    pub fn select_checkpoint(&mut self, id: Option<String>) {
+        self.selected_checkpoint = id;
+    }
+
+    pub fn set_files(&mut self, files: Vec<String>) {
+        self.files = files;
+    }
+
+    pub fn set_skills(&mut self, skills: Vec<String>) {
+        self.skills = skills;
+    }
+
+    pub fn set_git_status(&mut self, status: impl Into<String>) {
+        self.git_status = status.into();
+    }
+
+    pub fn set_term_draft(&mut self, text: impl Into<String>) {
+        self.term_draft = text.into();
+    }
+
+    pub fn type_term_char(&mut self, c: char) {
+        if !c.is_control() {
+            self.term_draft.push(c);
+        }
+    }
+
+    pub fn backspace_term(&mut self) {
+        self.term_draft.pop();
+    }
+
+    /// Trim and take the terminal draft. Empty after trim yields `None`.
+    pub fn take_term_draft(&mut self) -> Option<String> {
+        let text = self.term_draft.trim().to_owned();
+        self.term_draft.clear();
+        if text.is_empty() {
+            None
+        } else {
+            Some(text)
+        }
+    }
+
+    pub fn toggle_palette(&mut self) {
+        self.palette_open = !self.palette_open;
+    }
+
+    pub fn close_palette(&mut self) {
+        self.palette_open = false;
+    }
+
+    pub fn toggle_help(&mut self) {
+        self.help_open = !self.help_open;
+    }
+
     /// Last line preview for the thread list.
     pub fn thread_preview(thread: &Thread) -> String {
         thread
@@ -334,13 +514,21 @@ impl Workspace {
     }
 
     pub fn session_detail(&self, session_id: Option<&str>) -> String {
+        let models = if self.models.is_empty() {
+            self.model.clone()
+        } else {
+            self.models.join(", ")
+        };
         format!(
-            "Project\n{}\n\nModel\n{}\n\nConnection\n{}\n\nSession\n{}\n\nThreads\n{}",
+            "Project\n{}\n\nModel\n{}\n\nConnection\n{}\n\nSession\n{}\n\nThreads\n{}\n\nModels\n{}\n\nPalette\n{}\n\nHelp\n{}",
             self.project,
             self.model,
             self.connection.status_label(),
             session_id.unwrap_or("(none yet)"),
-            self.threads.len()
+            self.threads.len(),
+            models,
+            if self.palette_open { "open" } else { "closed" },
+            if self.help_open { "open" } else { "closed" },
         )
     }
 
@@ -352,7 +540,12 @@ impl Workspace {
         } else {
             for c in &self.cores {
                 let mark = if c.reserved { "R" } else { " " };
-                out.push_str(&format!("[{mark}] cpu{:<2} {:>5.1}%\n", c.index, c.usage));
+                out.push_str(&format!(
+                    "[{mark}] cpu{:<2} {:>5.1}% {}\n",
+                    c.index,
+                    c.usage,
+                    tiny_usage_bar(c.usage)
+                ));
             }
         }
         out.push_str("\nWorktrees\n");
@@ -360,6 +553,12 @@ impl Workspace {
             out.push_str("(none listed)");
         } else {
             out.push_str(&self.worktrees.join("\n"));
+        }
+        out.push_str("\n\nFiles\n");
+        if self.files.is_empty() {
+            out.push_str("(none listed)");
+        } else {
+            out.push_str(&self.files.join("\n"));
         }
         out
     }
@@ -382,10 +581,73 @@ impl Workspace {
         }
         self.checkpoints
             .iter()
-            .map(|c| format!("{}  {}", c.id, c.label))
+            .map(|c| {
+                let mark = if self.selected_checkpoint.as_deref() == Some(c.id.as_str()) {
+                    "*"
+                } else {
+                    " "
+                };
+                format!("{mark} {}  {}", c.id, c.label)
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }
+
+    pub fn git_detail(&self) -> String {
+        let mut out = String::from("Worktrees\n");
+        if self.worktrees.is_empty() {
+            out.push_str("(none listed)");
+        } else {
+            for (i, wt) in self.worktrees.iter().enumerate() {
+                let mark = if self.selected_worktree == Some(i) {
+                    "*"
+                } else {
+                    " "
+                };
+                out.push_str(&format!("{mark} {wt}\n"));
+            }
+        }
+        out.push_str("\n\nStatus\n");
+        if self.git_status.is_empty() {
+            out.push_str("(none)");
+        } else {
+            out.push_str(&self.git_status);
+        }
+        out
+    }
+
+    pub fn terminal_detail(&self) -> String {
+        let mut out = String::from("Log\n");
+        if self.terminal_log.is_empty() {
+            out.push_str("(empty)");
+        } else {
+            out.push_str(&self.terminal_log.join("\n"));
+        }
+        out.push_str("\n\nDraft\n");
+        out.push_str(&self.term_draft);
+        out
+    }
+
+    pub fn skills_detail(&self) -> String {
+        if self.skills.is_empty() {
+            "No skills found under .grok/skills".to_owned()
+        } else {
+            self.skills.join("\n")
+        }
+    }
+}
+
+/// Tiny 8-tick bar. `usage` is a percent. NaN and non-finite values are empty.
+fn tiny_usage_bar(usage: f32) -> String {
+    let width = 8;
+    let usage = if usage.is_finite() {
+        usage.clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
+    let filled = ((usage / 100.0) * width as f32).round() as usize;
+    let filled = filled.min(width);
+    format!("{}{}", "█".repeat(filled), "░".repeat(width - filled))
 }
 
 #[cfg(test)]
@@ -403,6 +665,16 @@ mod tests {
         assert!(ws.title_bar().contains("Multiplexer"));
         assert!(ws.title_bar().contains("fake"));
         assert!(ws.title_bar().contains("disconnected"));
+        assert_eq!(ws.cursor, 0);
+        assert_eq!(ws.models.as_slice(), ["fake"]);
+        assert!(ws.files.is_empty());
+        assert!(ws.skills.is_empty());
+        assert!(ws.git_status.is_empty());
+        assert!(ws.term_draft.is_empty());
+        assert!(!ws.palette_open);
+        assert!(!ws.help_open);
+        assert!(ws.selected_checkpoint.is_none());
+        assert!(ws.selected_worktree.is_none());
     }
 
     #[test]
@@ -494,7 +766,10 @@ mod tests {
         assert_eq!(InspectorTab::Resources.label(), "Cores");
         assert_eq!(InspectorTab::Mcp.label(), "MCP");
         assert_eq!(InspectorTab::Checkpoints.label(), "Points");
-        assert_eq!(InspectorTab::all().len(), 4);
+        assert_eq!(InspectorTab::Git.label(), "Git");
+        assert_eq!(InspectorTab::Terminal.label(), "Term");
+        assert_eq!(InspectorTab::Skills.label(), "Skills");
+        assert_eq!(InspectorTab::all().len(), 7);
         let mut ws = Workspace::new("p", "m");
         ws.connect(vec!["sess-1".into()]);
         assert!(ws.connection.is_connected());
@@ -573,5 +848,245 @@ mod tests {
         assert_eq!(c.right_width, RIGHT_WIDTH_MIN + 40.0);
         c.nudge_left(-20.0);
         assert_eq!(c.left_width, LEFT_WIDTH_MAX - 20.0);
+    }
+
+    #[test]
+    fn inspector_all_is_seven_tabs() {
+        let all = InspectorTab::all();
+        assert_eq!(all.len(), 7);
+        assert_eq!(
+            all,
+            [
+                InspectorTab::Session,
+                InspectorTab::Resources,
+                InspectorTab::Mcp,
+                InspectorTab::Checkpoints,
+                InspectorTab::Git,
+                InspectorTab::Terminal,
+                InspectorTab::Skills,
+            ]
+        );
+        assert_eq!(
+            all.map(InspectorTab::label),
+            ["Session", "Cores", "MCP", "Points", "Git", "Term", "Skills"]
+        );
+    }
+
+    #[test]
+    fn delete_thread_refuses_last() {
+        let mut ws = Workspace::new("p", "m");
+        let id = ws.threads[0].id.clone();
+        assert_eq!(ws.threads.len(), 1);
+        assert!(!ws.delete_thread(0));
+        assert_eq!(ws.threads.len(), 1);
+        assert_eq!(ws.threads[0].id, id);
+        assert_eq!(ws.selected, 0);
+        assert!(!ws.delete_thread(1));
+        assert!(!ws.delete_thread(99));
+        assert_eq!(ws.threads.len(), 1);
+    }
+
+    #[test]
+    fn delete_thread_reselects() {
+        let mut ws = Workspace::new("p", "m");
+        ws.new_thread();
+        ws.new_thread();
+        assert_eq!(ws.threads.len(), 3);
+        assert_eq!(ws.selected, 2);
+        assert!(ws.rename_thread(1, "kept"));
+        assert_eq!(ws.threads[1].title, "kept");
+        assert!(!ws.rename_thread(9, "nope"));
+
+        assert!(ws.delete_thread(2));
+        assert_eq!(ws.threads.len(), 2);
+        assert_eq!(ws.selected, 1);
+        assert_eq!(ws.threads[1].title, "kept");
+
+        let keep_id = ws.threads[1].id.clone();
+        assert!(ws.delete_thread(0));
+        assert_eq!(ws.threads.len(), 1);
+        assert_eq!(ws.selected, 0);
+        assert_eq!(ws.threads[0].id, keep_id);
+        assert_eq!(ws.threads[0].title, "kept");
+
+        ws.new_thread();
+        ws.new_thread();
+        assert!(ws.select(1));
+        let prev_id = ws.threads[0].id.clone();
+        assert!(ws.delete_thread(1));
+        assert_eq!(ws.selected, 0);
+        assert_eq!(ws.threads[0].id, prev_id);
+        assert!(!ws.delete_thread(ws.threads.len()));
+    }
+
+    #[test]
+    fn cycle_model_rotates() {
+        let mut ws = Workspace::new("p", "m");
+        assert_eq!(ws.models.as_slice(), ["m"]);
+        assert_eq!(ws.model, "m");
+        assert_eq!(ws.cycle_model(), "m");
+        assert_eq!(ws.model, "m");
+
+        ws.set_models(vec!["alpha".into(), "beta".into(), "gamma".into()]);
+        assert_eq!(ws.models.as_slice(), ["alpha", "beta", "gamma"]);
+        assert_eq!(ws.model, "alpha");
+        assert_eq!(ws.cycle_model(), "beta");
+        assert_eq!(ws.model, "beta");
+        assert_eq!(ws.cycle_model(), "gamma");
+        assert_eq!(ws.cycle_model(), "alpha");
+        assert_eq!(ws.model, "alpha");
+
+        ws.set_models(Vec::new());
+        assert_eq!(ws.models.as_slice(), ["alpha"]);
+        assert_eq!(ws.model, "alpha");
+        assert_eq!(ws.cycle_model(), "alpha");
+
+        ws.set_models(vec!["alpha".into(), "delta".into()]);
+        assert_eq!(ws.model, "alpha");
+        assert_eq!(ws.cycle_model(), "delta");
+    }
+
+    #[test]
+    fn cursor_insert_and_backspace_middle() {
+        let mut ws = Workspace::new("p", "m");
+        ws.type_char('a');
+        ws.type_char('b');
+        ws.type_char('c');
+        assert_eq!(ws.draft, "abc");
+        assert_eq!(ws.cursor, 3);
+
+        ws.move_cursor_left();
+        ws.move_cursor_left();
+        assert_eq!(ws.cursor, 1);
+        ws.type_char('X');
+        assert_eq!(ws.draft, "aXbc");
+        assert_eq!(ws.cursor, 2);
+
+        ws.backspace();
+        assert_eq!(ws.draft, "abc");
+        assert_eq!(ws.cursor, 1);
+
+        ws.move_cursor_home();
+        assert_eq!(ws.cursor, 0);
+        ws.backspace();
+        assert_eq!(ws.draft, "abc");
+        assert_eq!(ws.cursor, 0);
+
+        ws.type_char('Z');
+        assert_eq!(ws.draft, "Zabc");
+        assert_eq!(ws.cursor, 1);
+
+        ws.move_cursor_end();
+        assert_eq!(ws.cursor, 4);
+        ws.move_cursor_right();
+        assert_eq!(ws.cursor, 4);
+        ws.type_char('!');
+        assert_eq!(ws.draft, "Zabc!");
+        assert_eq!(ws.cursor, 5);
+
+        ws.set_draft("éx");
+        assert_eq!(ws.cursor, 2);
+        ws.move_cursor_left();
+        ws.backspace();
+        assert_eq!(ws.draft, "x");
+        assert_eq!(ws.cursor, 0);
+    }
+
+    #[test]
+    fn palette_and_help_toggle() {
+        let mut ws = Workspace::new("p", "m");
+        assert!(!ws.palette_open);
+        assert!(!ws.help_open);
+        let closed = ws.session_detail(None);
+        assert!(closed.contains("Palette\nclosed"));
+        assert!(closed.contains("Help\nclosed"));
+        assert!(closed.contains("Models\nm"));
+
+        ws.toggle_palette();
+        assert!(ws.palette_open);
+        assert!(ws.session_detail(None).contains("Palette\nopen"));
+        ws.toggle_palette();
+        assert!(!ws.palette_open);
+        ws.toggle_palette();
+        ws.close_palette();
+        assert!(!ws.palette_open);
+        ws.close_palette();
+        assert!(!ws.palette_open);
+
+        ws.toggle_help();
+        assert!(ws.help_open);
+        assert!(!ws.palette_open);
+        assert!(ws.session_detail(None).contains("Help\nopen"));
+        ws.toggle_help();
+        assert!(!ws.help_open);
+    }
+
+    #[test]
+    fn take_term_draft_trims() {
+        let mut ws = Workspace::new("p", "m");
+        assert_eq!(ws.take_term_draft(), None);
+        assert!(ws.term_draft.is_empty());
+
+        ws.set_term_draft("  ls -la  ");
+        assert_eq!(ws.take_term_draft().as_deref(), Some("ls -la"));
+        assert!(ws.term_draft.is_empty());
+
+        ws.set_term_draft("   ");
+        assert_eq!(ws.take_term_draft(), None);
+        assert!(ws.term_draft.is_empty());
+
+        ws.type_term_char('e');
+        ws.type_term_char('c');
+        ws.type_term_char('h');
+        ws.type_term_char('o');
+        ws.type_term_char('\n');
+        assert_eq!(ws.term_draft, "echo");
+        ws.backspace_term();
+        assert_eq!(ws.term_draft, "ech");
+        assert_eq!(ws.take_term_draft().as_deref(), Some("ech"));
+        assert!(ws.term_draft.is_empty());
+    }
+
+    #[test]
+    fn git_terminal_skills_detail_copy() {
+        let mut ws = Workspace::new("p", "m");
+        assert_eq!(ws.skills_detail(), "No skills found under .grok/skills");
+        ws.set_skills(vec!["review".into(), "tdd".into()]);
+        let skills = ws.skills_detail();
+        assert!(skills.contains("review"));
+        assert!(skills.contains("tdd"));
+        assert!(!skills.contains("No skills found under .grok/skills"));
+
+        ws.worktrees.push("wt-a".into());
+        ws.worktrees.push("wt-b".into());
+        ws.selected_worktree = Some(1);
+        ws.set_git_status("main · clean");
+        let git = ws.git_detail();
+        assert!(git.contains("wt-a"));
+        assert!(git.contains("wt-b"));
+        assert!(git.contains("main · clean"));
+        assert!(git.contains("Worktrees"));
+        assert!(git.contains("Status"));
+
+        ws.push_terminal("ready");
+        ws.push_terminal("compiled");
+        ws.set_term_draft("git status");
+        let term = ws.terminal_detail();
+        assert!(term.contains("ready"));
+        assert!(term.contains("compiled"));
+        assert!(term.contains("git status"));
+
+        ws.set_files(vec!["src/lib.rs".into()]);
+        assert!(ws.resource_detail().contains("src/lib.rs"));
+        assert!(ws.resource_detail().contains("Files"));
+
+        ws.create_local_checkpoint("cp-local", "snap");
+        assert!(ws.checkpoint_detail().contains("cp-local"));
+        assert!(ws.checkpoint_detail().contains("snap"));
+        ws.select_checkpoint(Some("cp-local".into()));
+        assert_eq!(ws.selected_checkpoint.as_deref(), Some("cp-local"));
+        assert!(ws.checkpoint_detail().contains("cp-local"));
+        ws.select_checkpoint(None);
+        assert!(ws.selected_checkpoint.is_none());
     }
 }

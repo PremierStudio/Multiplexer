@@ -1,72 +1,53 @@
-//! Multiplexer desktop: glass chrome, hideable/resizable rails, live grok -p.
+//! Multiplexer desktop: glass chrome, live grok -p, working inspector and terminal.
+
+mod controls;
+mod inspector;
+mod theme;
+
+use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
+use std::time::{Duration, Instant};
 
 use gpui::{
-    div, hsla, point, prelude::*, px, size, App, Application, Bounds, BoxShadow, Context,
-    CursorStyle, Hsla, KeyDownEvent, MouseButton, MouseMoveEvent, SharedString, TitlebarOptions,
-    Window, WindowBackgroundAppearance, WindowBounds, WindowOptions,
+    div, hsla, prelude::*, px, size, App, Application, Bounds, ClipboardItem, Context, CursorStyle,
+    KeyDownEvent, MouseButton, MouseMoveEvent, SharedString, TitlebarOptions, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowOptions,
 };
+use inspector::{inspector_body, tab_buttons, InspectorAction};
 use multiplexer_checkpoint::CheckpointStore;
-use multiplexer_mcp::load_user_mcp_inventory;
+use multiplexer_client::{
+    list_project_tree, spawn_command, spawn_grok_turn, windows_cmd, CommandResult, ListOptions,
+    TurnRequest, TurnResult,
+};
+use multiplexer_mcp::{
+    list_dir_entry_names, load_user_mcp_inventory, merge_skill_rows, parse_skill_names,
+    skill_dir_candidates,
+};
 use multiplexer_resman::sample_cores;
 use multiplexer_server::Server;
-use multiplexer_shell::{CheckpointRow, CoreRow, InspectorTab, McpRow, Role, Workspace};
+use multiplexer_shell::{
+    apply_layout_action, delete_forward, format_line, help_text, insert_at, move_end, move_home,
+    move_left, move_right, move_word_left, move_word_right, parse_builtin, parse_slash,
+    status_from, status_line, visible_tail, BuiltinCmd, CheckpointRow, ClientAction, CoreRow,
+    InspectorTab, McpRow, PaletteState, Role, SlashCommand, TermLineKind, Workspace, TERM_PROMPT,
+};
 use multiplexer_wire::codec::{decode_frame, encode_frame};
 use multiplexer_wire::jsonrpc::{Id, Message, Request};
 use multiplexer_wire::methods;
 use serde_json::{json, Value};
+use theme::Theme;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum DragRail {
     Left,
     Right,
 }
 
-struct Theme;
-
-impl Theme {
-    fn glass() -> Hsla {
-        hsla(0.64, 0.16, 0.10, 0.52)
-    }
-    fn glass_strong() -> Hsla {
-        hsla(0.64, 0.18, 0.12, 0.68)
-    }
-    fn ink() -> Hsla {
-        hsla(0.64, 0.22, 0.06, 0.35)
-    }
-    fn hairline() -> Hsla {
-        hsla(0.0, 0.0, 1.0, 0.10)
-    }
-    fn hairline_bright() -> Hsla {
-        hsla(0.0, 0.0, 1.0, 0.18)
-    }
-    fn text() -> Hsla {
-        hsla(0.62, 0.08, 0.92, 0.94)
-    }
-    fn muted() -> Hsla {
-        hsla(0.62, 0.08, 0.72, 0.72)
-    }
-    fn accent() -> Hsla {
-        hsla(0.58, 0.72, 0.62, 0.95)
-    }
-    fn good() -> Hsla {
-        hsla(0.38, 0.55, 0.58, 0.95)
-    }
-    fn shadow() -> Vec<BoxShadow> {
-        vec![
-            BoxShadow {
-                color: hsla(0.64, 0.30, 0.04, 0.45),
-                offset: point(px(0.), px(10.)),
-                blur_radius: px(28.),
-                spread_radius: px(-4.),
-            },
-            BoxShadow {
-                color: hsla(0.0, 0.0, 1.0, 0.04),
-                offset: point(px(0.), px(1.)),
-                blur_radius: px(0.),
-                spread_radius: px(0.),
-            },
-        ]
-    }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Focus {
+    Composer,
+    Terminal,
+    Palette,
 }
 
 struct ShellView {
@@ -78,6 +59,13 @@ struct ShellView {
     >,
     session_id: Option<String>,
     drag: Option<DragRail>,
+    pending_turn: Option<Receiver<TurnResult>>,
+    pending_cmd: Option<Receiver<CommandResult>>,
+    palette: PaletteState,
+    focus: Focus,
+    ignore_turn: bool,
+    last_core_sample: Instant,
+    flash: Option<String>,
 }
 
 impl ShellView {
@@ -85,7 +73,8 @@ impl ShellView {
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| ".".into());
-        let mut workspace = Workspace::new(cwd, "grok");
+        let mut workspace = Workspace::new(cwd.clone(), "grok");
+        workspace.set_models(vec!["grok".into(), "grok-4.6".into(), "fake".into()]);
         workspace.connect(Vec::new());
         workspace.cores = sample_cores(&[0, 1])
             .into_iter()
@@ -103,6 +92,35 @@ impl ShellView {
                 transport: row.transport,
             })
             .collect();
+        workspace.set_files(
+            list_project_tree(std::path::Path::new(&cwd), ListOptions::default())
+                .into_iter()
+                .map(|e| {
+                    if e.is_dir {
+                        format!("{}/", e.path)
+                    } else {
+                        e.path
+                    }
+                })
+                .collect(),
+        );
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_default();
+        let cands = skill_dir_candidates(&home, &cwd);
+        let user = list_dir_entry_names(&cands[0].0);
+        let project = list_dir_entry_names(&cands[1].0);
+        let user_names: Vec<&str> = user.iter().map(String::as_str).collect();
+        let project_names: Vec<&str> = project.iter().map(String::as_str).collect();
+        let rows = merge_skill_rows(
+            &parse_skill_names(&user_names),
+            &parse_skill_names(&project_names),
+        );
+        workspace.set_skills(
+            rows.into_iter()
+                .map(|r| format!("{} [{}]", r.name, r.source))
+                .collect(),
+        );
         let mut store = CheckpointStore::new();
         let start = store.create("local", "start");
         workspace.checkpoints.push(CheckpointRow {
@@ -110,17 +128,124 @@ impl ShellView {
             label: start.label,
         });
         let server = Server::with_local();
+        server.install_checkpoints(store);
         let mut view = Self {
             workspace,
             server,
             session_id: None,
             drag: None,
+            pending_turn: None,
+            pending_cmd: None,
+            palette: PaletteState::new(),
+            focus: Focus::Composer,
+            ignore_turn: false,
+            last_core_sample: Instant::now(),
+            flash: None,
         };
         view.refresh_worktrees();
         view.refresh_reminder();
-        view.workspace
-            .push_terminal("ready  ·  grok -p  ·  cores sampled  ·  mcp inventory loaded");
+        view.term_meta("ready  grok -p off the UI thread  Ctrl+K palette  F1 help");
+        assert!(controls::no_dead_labels());
+        assert_eq!(controls::REQUIRED_IDS.len(), controls::all_controls().len());
+        assert!(controls::control_by_id("send").is_some());
+        assert!(!controls::controls_on(controls::Surface::TitleBar).is_empty());
+        assert!(controls::shortcut_map()
+            .iter()
+            .any(|(key, _)| *key == "ctrl-k"));
+        assert_eq!(controls::Surface::all().len(), 10);
         view
+    }
+
+    fn action_ctx(&self) -> multiplexer_shell::ActionContext {
+        multiplexer_shell::ActionContext {
+            session_id: self.session_id.clone(),
+            project: self.workspace.project.clone(),
+            checkpoint_id: self.workspace.selected_checkpoint.clone(),
+            approval_request_id: self
+                .workspace
+                .pending_approval()
+                .map(|a| a.request_id.clone()),
+            model: self.workspace.model.clone(),
+        }
+    }
+
+    fn dispatch(&mut self, action: ClientAction, cx: &mut Context<Self>) {
+        match multiplexer_shell::host_call(action, &self.action_ctx()) {
+            multiplexer_shell::HostCall::Local => {
+                let _ = apply_layout_action(&mut self.workspace, action);
+                match action {
+                    ClientAction::NewThread => self.session_id = None,
+                    ClientAction::TogglePalette => {
+                        self.palette.toggle();
+                        self.workspace.palette_open = self.palette.open;
+                        if self.palette.open {
+                            self.focus = Focus::Palette;
+                        } else if self.focus == Focus::Palette {
+                            self.focus = Focus::Composer;
+                        }
+                    }
+                    ClientAction::ClosePalette => {
+                        self.palette.close();
+                        self.workspace.close_palette();
+                        if self.focus == Focus::Palette {
+                            self.focus = Focus::Composer;
+                        }
+                    }
+                    ClientAction::ToggleHelp => {}
+                    ClientAction::CycleModel => {
+                        self.term_meta(&format!("model {}", self.workspace.model));
+                    }
+                    _ => {}
+                }
+            }
+            multiplexer_shell::HostCall::NeedsHost | multiplexer_shell::HostCall::Rpc { .. } => {
+                self.host_action(action, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn host_action(&mut self, action: ClientAction, cx: &mut Context<Self>) {
+        match action {
+            ClientAction::Send => self.send(),
+            ClientAction::Interrupt => self.interrupt(),
+            ClientAction::RefreshCores => self.refresh_cores(),
+            ClientAction::RefreshMcp => self.refresh_mcp(),
+            ClientAction::CreateCheckpoint => self.create_checkpoint(),
+            ClientAction::RestoreCheckpoint => self.revert_checkpoint(),
+            ClientAction::RefreshGit => self.refresh_worktrees(),
+            ClientAction::RunTerminal => self.run_terminal_draft(),
+            ClientAction::CycleFile => self.cycle_file(),
+            ClientAction::CopyLastMessage => self.copy_last_message(cx),
+            ClientAction::Approve => self.respond_approval("allow"),
+            ClientAction::Deny => self.respond_approval("deny"),
+            other => {
+                let _ = apply_layout_action(&mut self.workspace, other);
+            }
+        }
+    }
+
+    fn inspector_click(&mut self, action: InspectorAction, cx: &mut Context<Self>) {
+        match action {
+            InspectorAction::RefreshCores => self.refresh_cores(),
+            InspectorAction::RefreshMcp => self.refresh_mcp(),
+            InspectorAction::RefreshGit => self.refresh_worktrees(),
+            InspectorAction::CreateCheckpoint => self.create_checkpoint(),
+            InspectorAction::RevertCheckpoint => self.revert_checkpoint(),
+            InspectorAction::CycleModel => {
+                self.workspace.cycle_model();
+                self.term_meta(&format!("model {}", self.workspace.model));
+            }
+            InspectorAction::CopySession => self.copy_session(cx),
+            InspectorAction::RunGitStatus => self.run_shell("git status"),
+            InspectorAction::NewWorktreeHint => {
+                self.workspace
+                    .set_draft("git worktree add ../mux-feat -b feat");
+                self.focus = Focus::Composer;
+                self.term_meta("edit the worktree command, then Enter to send or run it in Term");
+            }
+        }
+        cx.notify();
     }
 
     fn interrupt(&mut self) {
@@ -131,7 +256,34 @@ impl ShellView {
                 json!({ "session_id": sid }),
             ));
         }
+        self.ignore_turn = true;
         self.workspace.mark_interrupted();
+        self.term_meta("interrupted");
+    }
+
+    fn refresh_cores(&mut self) {
+        self.workspace.cores = sample_cores(&(0..8).collect::<Vec<_>>())
+            .into_iter()
+            .map(|c| CoreRow {
+                index: c.index,
+                usage: c.usage,
+                reserved: c.reserved || c.index < 2,
+            })
+            .collect();
+        self.last_core_sample = Instant::now();
+        self.term_meta("cores resampled");
+    }
+
+    fn refresh_mcp(&mut self) {
+        self.workspace.mcp = load_user_mcp_inventory()
+            .into_iter()
+            .map(|row| McpRow {
+                name: row.name,
+                command: row.command,
+                transport: row.transport,
+            })
+            .collect();
+        self.term_meta(&format!("mcp inventory {}", self.workspace.mcp.len()));
     }
 
     fn refresh_reminder(&mut self) {
@@ -153,53 +305,533 @@ impl ShellView {
             json!({ "cwd": self.workspace.project }),
         ));
         self.workspace.worktrees = worktree_paths(&frames);
+        self.term_meta(&format!("worktrees {}", self.workspace.worktrees.len()));
+    }
+
+    fn create_checkpoint(&mut self) {
+        let sid = self
+            .session_id
+            .clone()
+            .unwrap_or_else(|| "local".to_owned());
+        let frames = self.server.handle_frame(&rpc(
+            "cp",
+            methods::CHECKPOINT_CREATE,
+            json!({ "session_id": sid, "label": "manual" }),
+        ));
+        if let Some(err) = first_error(&frames) {
+            self.workspace.create_local_checkpoint(
+                format!("local-{}", self.workspace.checkpoints.len() + 1),
+                "manual",
+            );
+            self.term_meta(&format!("checkpoint local ({err})"));
+            return;
+        }
+        if let Some((id, label)) = checkpoint_from(&frames) {
+            self.workspace.create_local_checkpoint(id.clone(), label);
+            self.workspace.select_checkpoint(Some(id));
+            self.term_meta("checkpoint created");
+        }
+    }
+
+    fn revert_checkpoint(&mut self) {
+        let Some(id) = self
+            .workspace
+            .selected_checkpoint
+            .clone()
+            .or_else(|| self.workspace.checkpoints.last().map(|c| c.id.clone()))
+        else {
+            self.term_meta("no checkpoint to revert");
+            return;
+        };
+        let frames = self.server.handle_frame(&rpc(
+            "cpr",
+            methods::CHECKPOINT_REVERT,
+            json!({ "checkpoint_id": id }),
+        ));
+        if let Some(err) = first_error(&frames) {
+            self.term_meta(&format!("revert failed: {err}"));
+            return;
+        }
+        self.workspace.select_checkpoint(Some(id.clone()));
+        self.term_meta(&format!("reverted to {id}"));
+    }
+
+    fn respond_approval(&mut self, decision: &str) {
+        let Some(pending) = self.workspace.pending_approval().cloned() else {
+            self.term_meta("no pending approval");
+            return;
+        };
+        let _ = self.server.handle_frame(&rpc(
+            "ap",
+            methods::APPROVAL_RESPOND,
+            json!({
+                "session_id": pending.session_id,
+                "request_id": pending.request_id,
+                "decision": decision,
+            }),
+        ));
+        self.workspace.clear_pending_approval();
+        self.term_meta(&format!("approval {decision}"));
+    }
+
+    fn copy_last_message(&mut self, cx: &mut Context<Self>) {
+        let text = self
+            .workspace
+            .selected_thread()
+            .and_then(|t| t.messages.last())
+            .map(|m| m.text.clone())
+            .unwrap_or_else(|| "no message".into());
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.flash = Some("copied last message".into());
+        self.term_meta("copied last message");
+    }
+
+    fn copy_session(&mut self, cx: &mut Context<Self>) {
+        let text = self
+            .session_id
+            .clone()
+            .unwrap_or_else(|| "(none yet)".into());
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.flash = Some("copied session id".into());
+        self.term_meta("copied session id");
+    }
+
+    fn cycle_file(&mut self) {
+        if self.workspace.files.is_empty() {
+            self.term_meta("no project files listed");
+            return;
+        }
+        let first = self.workspace.files.remove(0);
+        self.workspace.files.push(first);
+        self.term_meta(&format!("file {}", self.workspace.files[0]));
+    }
+
+    fn ensure_session(&mut self) -> bool {
+        if self.session_id.is_some() {
+            return true;
+        }
+        let frames = self.server.handle_frame(&rpc(
+            "start",
+            methods::SESSION_START,
+            json!({
+                "provider": "grok",
+                "model": self.workspace.model,
+                "workspace": self.workspace.project,
+            }),
+        ));
+        if let Some(err) = first_error(&frames) {
+            self.workspace.mark_error(err);
+            return false;
+        }
+        if let Some(id) = session_id_from(&frames) {
+            self.session_id = Some(id.clone());
+            self.workspace.connect(vec![id]);
+            true
+        } else {
+            self.workspace.mark_error("session.start returned no id");
+            false
+        }
     }
 
     fn send(&mut self) {
+        if self.pending_turn.is_some() || self.workspace.busy {
+            return;
+        }
+        let raw = self.workspace.draft.trim().to_owned();
+        if raw.is_empty() {
+            return;
+        }
+        if let Some(cmd) = parse_slash(&raw) {
+            self.workspace.draft.clear();
+            self.workspace.cursor = 0;
+            self.handle_slash(cmd);
+            return;
+        }
         let Some(text) = self.workspace.send_draft() else {
             return;
         };
-        let frames = if let Some(sid) = &self.session_id {
-            self.server.handle_frame(&rpc(
-                "turn",
-                methods::TURN_SEND,
-                json!({ "session_id": sid, "text": text }),
-            ))
-        } else {
-            let frames = self.server.handle_frame(&rpc(
-                "start",
-                methods::SESSION_START,
-                json!({
-                    "provider": "grok",
-                    "model": self.workspace.model,
-                    "workspace": self.workspace.project,
-                    "initial_prompt": text,
-                }),
-            ));
-            if let Some(id) = session_id_from(&frames) {
-                self.session_id = Some(id.clone());
-                self.workspace.connect(vec![id]);
+        if !self.ensure_session() {
+            return;
+        }
+        let cwd = PathBuf::from(&self.workspace.project);
+        let rx = spawn_grok_turn(TurnRequest {
+            cwd,
+            prompt: text,
+            program: PathBuf::from("grok"),
+        });
+        self.pending_turn = Some(rx);
+        self.ignore_turn = false;
+        self.term_meta("grok -p running in background");
+    }
+
+    fn handle_slash(&mut self, cmd: SlashCommand) {
+        match cmd {
+            SlashCommand::New => {
+                self.workspace.new_thread();
+                self.session_id = None;
             }
-            frames
-        };
-        if let Some(err) = first_error(&frames) {
-            self.workspace.mark_error(err);
-        } else {
-            let reply = assistant_text(&frames);
-            if reply.is_empty() {
-                self.workspace.push_assistant("(no text from grok -p)");
-            } else {
-                self.workspace.push_assistant(reply);
+            SlashCommand::Stop => self.interrupt(),
+            SlashCommand::Help => self.workspace.toggle_help(),
+            SlashCommand::Checkpoint => self.create_checkpoint(),
+            SlashCommand::Cores => self.workspace.inspector = InspectorTab::Resources,
+            SlashCommand::Mcp => self.workspace.inspector = InspectorTab::Mcp,
+            SlashCommand::Points => self.workspace.inspector = InspectorTab::Checkpoints,
+            SlashCommand::Git => self.workspace.inspector = InspectorTab::Git,
+            SlashCommand::Terminal => {
+                self.workspace.inspector = InspectorTab::Terminal;
+                self.focus = Focus::Terminal;
+            }
+            SlashCommand::Skills => self.workspace.inspector = InspectorTab::Skills,
+            SlashCommand::Palette => {
+                self.palette.toggle();
+                self.workspace.palette_open = self.palette.open;
+                self.focus = if self.palette.open {
+                    Focus::Palette
+                } else {
+                    Focus::Composer
+                };
+            }
+            SlashCommand::Model => {
+                self.workspace.cycle_model();
+                self.term_meta(&format!("model {}", self.workspace.model));
+            }
+            SlashCommand::Unknown(name) => {
+                self.term_meta(&format!(
+                    "unknown /{name}  try /help /new /stop /cp /cores /mcp /git /term /skills"
+                ));
             }
         }
-        self.refresh_worktrees();
+    }
+
+    fn run_terminal_draft(&mut self) {
+        let Some(line) = self.workspace.take_term_draft() else {
+            return;
+        };
+        self.run_shell(&line);
+    }
+
+    fn run_shell(&mut self, line: &str) {
+        self.term_line(TermLineKind::Input, line);
+        if let Some(builtin) = parse_builtin(line) {
+            match builtin {
+                BuiltinCmd::Clear => self.workspace.terminal_log.clear(),
+                BuiltinCmd::Help => {
+                    self.term_meta(help_text());
+                    self.workspace.toggle_help();
+                }
+                BuiltinCmd::Cores => self.workspace.inspector = InspectorTab::Resources,
+                BuiltinCmd::Mcp => self.workspace.inspector = InspectorTab::Mcp,
+                BuiltinCmd::Git => self.workspace.inspector = InspectorTab::Git,
+                BuiltinCmd::Checkpoint => self.workspace.inspector = InspectorTab::Checkpoints,
+                BuiltinCmd::Unknown => self.term_meta("unknown builtin"),
+            }
+            return;
+        }
+        if self.pending_cmd.is_some() {
+            self.term_meta("a shell command is already running");
+            return;
+        }
+        let rx = spawn_command(windows_cmd(line, PathBuf::from(&self.workspace.project)));
+        self.pending_cmd = Some(rx);
+        self.term_meta("shell running in background");
+    }
+
+    fn term_line(&mut self, kind: TermLineKind, text: &str) {
+        multiplexer_shell::push_capped(&mut self.workspace.terminal_log, format_line(kind, text));
+    }
+
+    fn term_meta(&mut self, text: &str) {
+        self.term_line(TermLineKind::Meta, text);
+    }
+
+    fn pump(&mut self, window: &mut Window) {
+        if self.workspace.inspector == InspectorTab::Resources
+            && self.last_core_sample.elapsed() > Duration::from_millis(1500)
+        {
+            self.workspace.cores = sample_cores(&[0, 1])
+                .into_iter()
+                .map(|c| CoreRow {
+                    index: c.index,
+                    usage: c.usage,
+                    reserved: c.reserved,
+                })
+                .collect();
+            self.last_core_sample = Instant::now();
+        }
+        if let Some(rx) = &self.pending_turn {
+            match rx.try_recv() {
+                Ok(out) => {
+                    self.pending_turn = None;
+                    if self.ignore_turn {
+                        self.ignore_turn = false;
+                    } else if out.ok {
+                        let text = out.stdout.trim();
+                        if text.is_empty() {
+                            self.workspace.push_assistant("(no text from grok -p)");
+                        } else {
+                            self.workspace.push_assistant(text.to_owned());
+                        }
+                    } else {
+                        let err = out.stderr.trim();
+                        self.workspace.mark_error(if err.is_empty() {
+                            "grok -p failed".into()
+                        } else {
+                            err.to_owned()
+                        });
+                    }
+                    self.refresh_worktrees();
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.pending_turn = None;
+                    if !self.ignore_turn {
+                        self.workspace.mark_error("grok worker dropped");
+                    }
+                    self.ignore_turn = false;
+                }
+            }
+        }
+        if let Some(rx) = &self.pending_cmd {
+            match rx.try_recv() {
+                Ok(out) => {
+                    self.pending_cmd = None;
+                    let body = if !out.ok && !out.stderr.is_empty() {
+                        out.stderr
+                    } else {
+                        out.stdout
+                    };
+                    if body.trim().is_empty() {
+                        self.term_line(
+                            if out.ok {
+                                TermLineKind::Meta
+                            } else {
+                                TermLineKind::Error
+                            },
+                            if out.ok { "ok" } else { "command failed" },
+                        );
+                    } else {
+                        for line in body.lines().take(40) {
+                            self.term_line(
+                                if out.ok {
+                                    TermLineKind::Output
+                                } else {
+                                    TermLineKind::Error
+                                },
+                                line,
+                            );
+                        }
+                    }
+                    if body.to_ascii_lowercase().contains("git")
+                        || self.workspace.inspector == InspectorTab::Git
+                    {
+                        self.workspace
+                            .set_git_status(body.chars().take(800).collect::<String>());
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.pending_cmd = None;
+                    self.term_line(TermLineKind::Error, "shell worker dropped");
+                }
+            }
+        }
+        if self.pending_turn.is_some() || self.pending_cmd.is_some() {
+            window.request_animation_frame();
+        }
+    }
+
+    fn handle_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let key = event.keystroke.key.as_str();
+        let mods = &event.keystroke.modifiers;
+        if key == "escape" {
+            if self.palette.open {
+                self.dispatch(ClientAction::ClosePalette, cx);
+                return;
+            }
+            if self.workspace.help_open {
+                self.workspace.toggle_help();
+                cx.notify();
+                return;
+            }
+            if self.workspace.reminder.is_some() {
+                self.workspace.dismiss_reminder();
+                cx.notify();
+                return;
+            }
+            self.focus = Focus::Composer;
+            cx.notify();
+            return;
+        }
+        if (key == "k" || key == "p") && mods.control {
+            self.dispatch(ClientAction::TogglePalette, cx);
+            return;
+        }
+        if key == "n" && mods.control {
+            self.dispatch(ClientAction::NewThread, cx);
+            return;
+        }
+        if key == "f1" {
+            self.dispatch(ClientAction::ToggleHelp, cx);
+            return;
+        }
+        if key == "[" && mods.control {
+            self.dispatch(ClientAction::ToggleLeft, cx);
+            return;
+        }
+        if key == "]" && mods.control {
+            self.dispatch(ClientAction::ToggleRight, cx);
+            return;
+        }
+        if key == "." && mods.control {
+            self.interrupt();
+            cx.notify();
+            return;
+        }
+        if key == "s" && mods.control {
+            self.create_checkpoint();
+            cx.notify();
+            return;
+        }
+        if key == "v" && mods.control {
+            if let Some(item) = cx.read_from_clipboard() {
+                if let Some(text) = item.text() {
+                    self.insert_text(&text);
+                }
+            }
+            cx.notify();
+            return;
+        }
+        if self.palette.open || self.focus == Focus::Palette {
+            self.palette_key(key, mods.control, cx);
+            return;
+        }
+        if self.focus == Focus::Terminal {
+            self.terminal_key(key, mods.control, cx);
+            return;
+        }
+        if key == "enter" {
+            if mods.shift {
+                self.insert_text("\n");
+            } else {
+                self.send();
+            }
+        } else if key == "backspace" {
+            if mods.control {
+                self.workspace.cursor = {
+                    let start = move_word_left(&self.workspace.draft, self.workspace.cursor);
+                    let mut draft = self.workspace.draft.clone();
+                    draft.replace_range(
+                        char_byte(&draft, start)..char_byte(&draft, self.workspace.cursor),
+                        "",
+                    );
+                    self.workspace.draft = draft;
+                    start
+                };
+            } else {
+                self.workspace.backspace();
+            }
+        } else if key == "delete" {
+            self.workspace.cursor =
+                delete_forward(&mut self.workspace.draft, self.workspace.cursor);
+        } else if key == "left" {
+            self.workspace.cursor = if mods.control {
+                move_word_left(&self.workspace.draft, self.workspace.cursor)
+            } else {
+                move_left(&self.workspace.draft, self.workspace.cursor)
+            };
+        } else if key == "right" {
+            self.workspace.cursor = if mods.control {
+                move_word_right(&self.workspace.draft, self.workspace.cursor)
+            } else {
+                move_right(&self.workspace.draft, self.workspace.cursor)
+            };
+        } else if key == "home" {
+            self.workspace.cursor = move_home(&self.workspace.draft, self.workspace.cursor);
+        } else if key == "end" {
+            self.workspace.cursor = move_end(&self.workspace.draft, self.workspace.cursor);
+        } else if key == "tab" {
+            self.focus = Focus::Terminal;
+        } else if key == "space" {
+            self.workspace.type_char(' ');
+        } else if key.len() == 1 {
+            if let Some(c) = key.chars().next() {
+                if !mods.control {
+                    self.workspace.type_char(c);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn insert_text(&mut self, text: &str) {
+        if self.focus == Focus::Terminal {
+            self.workspace.term_draft.push_str(text);
+            return;
+        }
+        if self.palette.open {
+            let mut q = self.palette.query.clone();
+            q.push_str(text);
+            self.palette.set_query(&q);
+            return;
+        }
+        self.workspace.cursor = insert_at(&mut self.workspace.draft, self.workspace.cursor, text);
+    }
+
+    fn palette_key(&mut self, key: &str, control: bool, cx: &mut Context<Self>) {
+        if key == "enter" {
+            if let Some(item) = self.palette.active_item() {
+                self.palette.close();
+                self.workspace.close_palette();
+                self.focus = Focus::Composer;
+                self.dispatch(item.action, cx);
+            }
+            return;
+        }
+        if key == "up" {
+            self.palette.move_up();
+        } else if key == "down" {
+            self.palette.move_down();
+        } else if key == "backspace" {
+            let mut q = self.palette.query.clone();
+            q.pop();
+            self.palette.set_query(&q);
+        } else if key == "space" {
+            let mut q = self.palette.query.clone();
+            q.push(' ');
+            self.palette.set_query(&q);
+        } else if !control && key.len() == 1 {
+            if let Some(c) = key.chars().next() {
+                let mut q = self.palette.query.clone();
+                q.push(c);
+                self.palette.set_query(&q);
+            }
+        }
+        cx.notify();
+    }
+
+    fn terminal_key(&mut self, key: &str, control: bool, cx: &mut Context<Self>) {
+        if key == "enter" {
+            self.run_terminal_draft();
+        } else if key == "backspace" {
+            self.workspace.backspace_term();
+        } else if key == "tab" {
+            self.focus = Focus::Composer;
+        } else if key == "space" {
+            self.workspace.type_term_char(' ');
+        } else if !control && key.len() == 1 {
+            if let Some(c) = key.chars().next() {
+                self.workspace.type_term_char(c);
+            }
+        }
+        cx.notify();
     }
 }
 
 impl Render for ShellView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.pump(window);
         let win_w = f32::from(window.viewport_size().width);
-        div()
+        let mut root = div()
             .flex()
             .flex_col()
             .size_full()
@@ -207,33 +839,7 @@ impl Render for ShellView {
             .text_color(Theme::text())
             .text_sm()
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                let key = event.keystroke.key.as_str();
-                if key == "enter" {
-                    this.send();
-                } else if key == "backspace" {
-                    this.workspace.backspace();
-                } else if key == "escape" {
-                    this.workspace.dismiss_reminder();
-                } else if key == "space" {
-                    this.workspace.type_char(' ');
-                } else if key == "v" && event.keystroke.modifiers.control {
-                    if let Some(item) = cx.read_from_clipboard() {
-                        if let Some(text) = item.text() {
-                            this.workspace.draft.push_str(&text);
-                        }
-                    }
-                } else if key == "[" && event.keystroke.modifiers.control {
-                    this.workspace.chrome.toggle_left();
-                } else if key == "]" && event.keystroke.modifiers.control {
-                    this.workspace.chrome.toggle_right();
-                } else if key == "." && event.keystroke.modifiers.control && this.workspace.busy {
-                    this.interrupt();
-                } else if key.len() == 1 {
-                    if let Some(c) = key.chars().next() {
-                        this.workspace.type_char(c);
-                    }
-                }
-                cx.notify();
+                this.handle_key(event, cx);
             }))
             .on_mouse_move(cx.listener(
                 move |this, event: &MouseMoveEvent, _, cx| match this.drag {
@@ -261,6 +867,7 @@ impl Render for ShellView {
             )
             .child(self.title_bar(cx))
             .child(self.reminder_bar(cx))
+            .child(self.approval_bar(cx))
             .child(
                 div()
                     .flex()
@@ -274,7 +881,15 @@ impl Render for ShellView {
                     .child(self.resize_handle(DragRail::Right, cx))
                     .child(self.right_rail(cx)),
             )
-            .child(self.terminal_strip())
+            .child(self.terminal_strip(cx))
+            .child(self.status_bar());
+        if self.palette.open {
+            root = root.child(self.palette_overlay(cx));
+        }
+        if self.workspace.help_open {
+            root = root.child(self.help_overlay(cx));
+        }
+        root
     }
 }
 
@@ -291,10 +906,7 @@ impl ShellView {
                 "Chats",
                 if left_on { "Hide" } else { "Show" },
                 cx,
-                |this, cx| {
-                    this.workspace.chrome.toggle_left();
-                    cx.notify();
-                },
+                |this, cx| this.dispatch(ClientAction::ToggleLeft, cx),
             ))
             .child(
                 div()
@@ -308,6 +920,12 @@ impl ShellView {
                         self.workspace.connection.status_label()
                     )),
             )
+            .child(ghost_btn("Palette", "Ctrl+K", cx, |this, cx| {
+                this.dispatch(ClientAction::TogglePalette, cx);
+            }))
+            .child(ghost_btn("Help", "F1", cx, |this, cx| {
+                this.dispatch(ClientAction::ToggleHelp, cx);
+            }))
             .child(if self.workspace.busy {
                 div().child(ghost_btn("Stop", "Ctrl+.", cx, |this, cx| {
                     this.interrupt();
@@ -320,10 +938,7 @@ impl ShellView {
                 "Inspector",
                 if right_on { "Hide" } else { "Show" },
                 cx,
-                |this, cx| {
-                    this.workspace.chrome.toggle_right();
-                    cx.notify();
-                },
+                |this, cx| this.dispatch(ClientAction::ToggleRight, cx),
             ))
     }
 
@@ -335,8 +950,7 @@ impl ShellView {
         let rail = glass_pane().w(px(w)).h_full().flex().flex_col();
         if !open {
             return rail.child(collapsed_strip("Chats", cx, |this, cx| {
-                this.workspace.chrome.toggle_left();
-                cx.notify();
+                this.dispatch(ClientAction::ToggleLeft, cx);
             }));
         }
         rail.child(
@@ -347,11 +961,17 @@ impl ShellView {
                 .justify_between()
                 .items_center()
                 .child(div().text_color(Theme::muted()).child("CHATS"))
-                .child(ghost_btn("New", "+", cx, |this, cx| {
-                    this.workspace.new_thread();
-                    this.session_id = None;
-                    cx.notify();
-                })),
+                .child(
+                    div()
+                        .flex()
+                        .gap_1()
+                        .child(ghost_btn("New", "+", cx, |this, cx| {
+                            this.dispatch(ClientAction::NewThread, cx);
+                        }))
+                        .child(ghost_btn("Del", "⌫", cx, |this, cx| {
+                            this.dispatch(ClientAction::DeleteThread, cx);
+                        })),
+                ),
         )
         .children(threads.into_iter().enumerate().map(|(i, t)| {
             let on = i == selected;
@@ -377,8 +997,7 @@ impl ShellView {
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _, _, cx| {
-                        this.workspace.select(i);
-                        cx.notify();
+                        this.dispatch(ClientAction::SelectThread(i), cx);
                     }),
                 )
                 .child(div().child(t.title.clone()))
@@ -403,14 +1022,15 @@ impl ShellView {
             .session_id
             .clone()
             .unwrap_or_else(|| "(none yet)".into());
+        let body = inspector_body(&self.workspace, Some(session.as_str()));
+        let buttons = tab_buttons(tab);
         let rail = glass_pane().w(px(w)).h_full().flex().flex_col();
         if !open {
             return rail.child(collapsed_strip("Info", cx, |this, cx| {
-                this.workspace.chrome.toggle_right();
-                cx.notify();
+                this.dispatch(ClientAction::ToggleRight, cx);
             }));
         }
-        rail.child(div().flex().px_2().pt_2().gap_1().children(
+        rail.child(div().flex().px_2().pt_2().gap_1().flex_wrap().children(
             InspectorTab::all().into_iter().map(|t| {
                 let on = tab == t;
                 div()
@@ -427,24 +1047,36 @@ impl ShellView {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, _, cx| {
-                            this.workspace.inspector = t;
-                            cx.notify();
+                            this.dispatch(ClientAction::SelectTab(t), cx);
                         }),
                     )
                     .child(t.label())
             }),
         ))
-        .child(div().p_3().text_color(Theme::muted()).child(match tab {
-            InspectorTab::Session => self.workspace.session_detail(Some(session.as_str())),
-            InspectorTab::Resources => self.workspace.resource_detail(),
-            InspectorTab::Mcp => self.workspace.mcp_detail(),
-            InspectorTab::Checkpoints => self.workspace.checkpoint_detail(),
-        }))
+        .child(
+            div()
+                .px_2()
+                .pt_2()
+                .flex()
+                .gap_1()
+                .children(buttons.into_iter().map(|b| {
+                    let action = b.action;
+                    ghost_btn(b.label, b.hint, cx, move |this, cx| {
+                        this.inspector_click(action, cx);
+                    })
+                })),
+        )
+        .child(div().p_3().flex_1().text_color(Theme::muted()).child(body))
     }
 
     fn center(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let thread = self.workspace.selected_thread().cloned();
-        let draft = self.workspace.draft.clone();
+        let draft = draft_display(
+            &self.workspace.draft,
+            self.workspace.cursor,
+            self.focus == Focus::Composer,
+        );
+        let slash = parse_slash(&self.workspace.draft);
         glass_pane()
             .flex_1()
             .h_full()
@@ -513,8 +1145,28 @@ impl ShellView {
                         div()
                             .flex()
                             .gap_2()
-                            .child(chip("What can you do?", cx))
-                            .child(chip("Summarize this repo", cx)),
+                            .flex_wrap()
+                            .child(chip("What can you do?", cx, |this, cx| {
+                                this.workspace.set_draft("What can you do?");
+                                this.send();
+                                cx.notify();
+                            }))
+                            .child(chip("Summarize this repo", cx, |this, cx| {
+                                this.workspace.set_draft("Summarize this repo");
+                                this.send();
+                                cx.notify();
+                            }))
+                            .child(chip("git status", cx, |this, cx| {
+                                this.run_shell("git status");
+                                cx.notify();
+                            }))
+                            .child(chip("dir", cx, |this, cx| {
+                                this.run_shell("dir /b");
+                                cx.notify();
+                            }))
+                            .child(chip("Copy last", cx, |this, cx| {
+                                this.copy_last_message(cx);
+                            })),
                     )
                     .child(
                         div()
@@ -530,9 +1182,23 @@ impl ShellView {
                                     .rounded_xl()
                                     .bg(hsla(0.0, 0.0, 1.0, 0.06))
                                     .border_1()
-                                    .border_color(Theme::hairline_bright())
-                                    .child(if draft.is_empty() {
-                                        SharedString::from("Message Grok…  Enter to send")
+                                    .border_color(if self.focus == Focus::Composer {
+                                        Theme::accent()
+                                    } else {
+                                        Theme::hairline_bright()
+                                    })
+                                    .cursor_pointer()
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.focus = Focus::Composer;
+                                            cx.notify();
+                                        }),
+                                    )
+                                    .child(if self.workspace.draft.is_empty() {
+                                        SharedString::from(
+                                            "Message Grok…  Enter send  Shift+Enter newline  /help",
+                                        )
                                     } else {
                                         SharedString::from(draft)
                                     }),
@@ -541,7 +1207,14 @@ impl ShellView {
                                 this.send();
                                 cx.notify();
                             })),
-                    ),
+                    )
+                    .child(if let Some(cmd) = slash {
+                        div()
+                            .text_color(Theme::accent())
+                            .child(format!("/  {}", multiplexer_shell::slash_hint(&cmd)))
+                    } else {
+                        div().child("")
+                    }),
             )
     }
 
@@ -565,25 +1238,228 @@ impl ShellView {
                     .child(format!("Existing worktree on {branch}: {path}")),
             )
             .child(ghost_btn("Dismiss", "Esc", cx, |this, cx| {
-                this.workspace.dismiss_reminder();
-                cx.notify();
+                this.dispatch(ClientAction::DismissReminder, cx);
             }))
             .into_any()
     }
 
-    fn terminal_strip(&self) -> impl IntoElement {
+    fn approval_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(pending) = self.workspace.pending_approval().cloned() else {
+            return div().id("no-approval").into_any();
+        };
+        div()
+            .id("approval-card")
+            .px_3()
+            .py_2()
+            .bg(hsla(0.08, 0.55, 0.22, 0.70))
+            .border_b_1()
+            .border_color(Theme::hairline())
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(div().flex_1().child(format!(
+                "{}  {}",
+                pending.card_title(),
+                pending.card_body()
+            )))
+            .child(ghost_btn(pending.allow_label(), "A", cx, |this, cx| {
+                this.dispatch(ClientAction::Approve, cx);
+            }))
+            .child(ghost_btn(pending.deny_label(), "D", cx, |this, cx| {
+                this.dispatch(ClientAction::Deny, cx);
+            }))
+            .into_any()
+    }
+
+    fn terminal_strip(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let lines = if self.workspace.terminal_log.is_empty() {
-            "Terminal: grok -p runs in this repo. Output lands in chat. A PTY pane is next."
-                .to_owned()
+            "Terminal: type a command and Enter. Builtins: clear, help, cores, mcp, git.".to_owned()
         } else {
-            self.workspace.terminal_log.join("\n")
+            visible_tail(&self.workspace.terminal_log, 4)
+        };
+        let draft = if self.workspace.term_draft.is_empty() {
+            format!("{TERM_PROMPT}  git status, dir, clear")
+        } else {
+            format!("{TERM_PROMPT} {}", self.workspace.term_draft)
         };
         glass_bar()
-            .h(px(72.0))
+            .h(px(108.0))
             .px_3()
             .rounded_none()
             .border_t_1()
-            .child(div().flex_1().text_color(Theme::muted()).child(lines))
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap_1()
+            .child(
+                div()
+                    .flex_1()
+                    .w_full()
+                    .text_color(Theme::muted())
+                    .child(lines),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("term-input")
+                            .flex_1()
+                            .px_2()
+                            .py_1()
+                            .rounded_lg()
+                            .bg(hsla(0.0, 0.0, 1.0, 0.05))
+                            .border_1()
+                            .border_color(if self.focus == Focus::Terminal {
+                                Theme::accent()
+                            } else {
+                                Theme::hairline()
+                            })
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.focus = Focus::Terminal;
+                                    cx.notify();
+                                }),
+                            )
+                            .child(draft),
+                    )
+                    .child(ghost_btn("Run", "↵", cx, |this, cx| {
+                        this.run_terminal_draft();
+                        cx.notify();
+                    }))
+                    .child(ghost_btn("Clear", "cls", cx, |this, cx| {
+                        this.workspace.terminal_log.clear();
+                        cx.notify();
+                    })),
+            )
+    }
+
+    fn status_bar(&self) -> impl IntoElement {
+        let s = status_from(&self.workspace, self.session_id.clone());
+        let extra = self.flash.clone().unwrap_or_default();
+        glass_bar()
+            .h(px(26.0))
+            .px_3()
+            .rounded_none()
+            .border_t_1()
+            .child(
+                div()
+                    .flex_1()
+                    .text_color(Theme::muted())
+                    .child(if extra.is_empty() {
+                        status_line(&s)
+                    } else {
+                        format!("{}   ·   {extra}", status_line(&s))
+                    }),
+            )
+    }
+
+    fn palette_overlay(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let items = multiplexer_shell::filter_items(&self.palette.query);
+        let selected = self.palette.selected;
+        div()
+            .id("palette")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .justify_center()
+            .pt(px(80.0))
+            .bg(hsla(0.64, 0.20, 0.04, 0.45))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.dispatch(ClientAction::ClosePalette, cx);
+                }),
+            )
+            .child(
+                div()
+                    .w(px(520.0))
+                    .rounded_xl()
+                    .bg(Theme::glass_strong())
+                    .border_1()
+                    .border_color(Theme::hairline_bright())
+                    .shadow(Theme::shadow())
+                    .p_3()
+                    .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                    .child(
+                        div()
+                            .px_2()
+                            .py_2()
+                            .mb_2()
+                            .rounded_lg()
+                            .bg(hsla(0.0, 0.0, 1.0, 0.06))
+                            .child(if self.palette.query.is_empty() {
+                                SharedString::from("Type to filter commands…")
+                            } else {
+                                SharedString::from(self.palette.query.clone())
+                            }),
+                    )
+                    .children(items.into_iter().enumerate().take(12).map(|(i, item)| {
+                        let action = item.action;
+                        div()
+                            .id(SharedString::from(format!("pal-{i}")))
+                            .px_2()
+                            .py_1()
+                            .rounded_lg()
+                            .bg(if i == selected {
+                                hsla(0.58, 0.40, 0.28, 0.50)
+                            } else {
+                                hsla(0.0, 0.0, 0.0, 0.0)
+                            })
+                            .cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.palette.close();
+                                    this.workspace.close_palette();
+                                    this.focus = Focus::Composer;
+                                    this.dispatch(action, cx);
+                                }),
+                            )
+                            .child(format!("{}   {}", item.label, item.hint))
+                    })),
+            )
+    }
+
+    fn help_overlay(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("help")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .justify_center()
+            .pt(px(72.0))
+            .bg(hsla(0.64, 0.20, 0.04, 0.45))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.workspace.toggle_help();
+                    cx.notify();
+                }),
+            )
+            .child(
+                div()
+                    .w(px(560.0))
+                    .rounded_xl()
+                    .bg(Theme::glass_strong())
+                    .border_1()
+                    .border_color(Theme::hairline_bright())
+                    .shadow(Theme::shadow())
+                    .p_4()
+                    .child("Keyboard")
+                    .child(div().text_color(Theme::muted()).mt_2().child(
+                        "Enter send   Shift+Enter newline   Ctrl+K palette   F1 help\nCtrl+N new chat   Ctrl+[ / ] rails   Ctrl+. stop   Ctrl+S checkpoint\nTab focuses the terminal   Esc closes overlays\nSlash: /new /stop /help /cp /cores /mcp /git /term /skills /model\nTerm builtins: clear  help  cores  mcp  git  points",
+                    )),
+            )
     }
 
     fn resize_handle(&mut self, rail: DragRail, cx: &mut Context<Self>) -> impl IntoElement {
@@ -616,7 +1492,7 @@ impl ShellView {
 
 fn glass_pane() -> gpui::Div {
     div()
-        .rounded_xl()
+        .rounded(Theme::panel_radius())
         .bg(Theme::glass())
         .border_1()
         .border_color(Theme::hairline())
@@ -658,12 +1534,14 @@ fn empty_center() -> gpui::Div {
         .items_center()
         .justify_center()
         .text_color(Theme::muted())
-        .child(
-            "Start a chat to run a real grok -p turn in this repo.\nCtrl+[ / Ctrl+] hide the rails. Drag the gutters to resize.",
-        )
+        .child("Start a chat, open the palette (Ctrl+K), or run a command in the terminal strip.")
 }
 
-fn chip(label: &'static str, cx: &mut Context<ShellView>) -> impl IntoElement {
+fn chip(
+    label: &'static str,
+    cx: &mut Context<ShellView>,
+    on_click: impl Fn(&mut ShellView, &mut Context<ShellView>) + 'static,
+) -> impl IntoElement {
     div()
         .id(SharedString::from(label))
         .px_2()
@@ -675,11 +1553,7 @@ fn chip(label: &'static str, cx: &mut Context<ShellView>) -> impl IntoElement {
         .cursor_pointer()
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |this, _, _, cx| {
-                this.workspace.set_draft(label);
-                this.send();
-                cx.notify();
-            }),
+            cx.listener(move |this, _, _, cx| on_click(this, cx)),
         )
         .child(label)
 }
@@ -700,7 +1574,13 @@ fn ghost_btn(
         .rounded_lg()
         .border_1()
         .border_color(Theme::hairline_bright())
-        .bg(hsla(0.0, 0.0, 1.0, 0.07))
+        .bg(if label == "Stop" {
+            Theme::danger()
+        } else if label == "Send" {
+            Theme::send_bg()
+        } else {
+            hsla(0.0, 0.0, 1.0, 0.07)
+        })
         .text_color(Theme::text())
         .cursor_pointer()
         .hover(|s| s.bg(hsla(0.58, 0.35, 0.28, 0.40)))
@@ -710,6 +1590,31 @@ fn ghost_btn(
         )
         .child(label)
         .child(div().text_color(Theme::muted()).child(hint))
+}
+
+fn draft_display(draft: &str, cursor: usize, show_caret: bool) -> String {
+    if !show_caret {
+        return draft.to_owned();
+    }
+    let cursor = cursor.min(draft.chars().count());
+    let mut out = String::new();
+    for (i, ch) in draft.chars().enumerate() {
+        if i == cursor {
+            out.push('|');
+        }
+        out.push(ch);
+    }
+    if cursor == draft.chars().count() {
+        out.push('|');
+    }
+    out
+}
+
+fn char_byte(s: &str, cursor: usize) -> usize {
+    s.char_indices()
+        .nth(cursor)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len())
 }
 
 fn short_path(path: &str) -> String {
@@ -764,23 +1669,19 @@ fn session_id_from(frames: &[String]) -> Option<String> {
     None
 }
 
-fn assistant_text(frames: &[String]) -> String {
-    let mut out = String::new();
+fn checkpoint_from(frames: &[String]) -> Option<(String, String)> {
     for f in frames {
-        if let Ok(Message::Notification(n)) = decode_frame(f) {
-            if n.method == methods::EVENT {
-                if let Some(text) = n
-                    .params
-                    .get("data")
-                    .and_then(|d| d.get("text"))
-                    .and_then(Value::as_str)
-                {
-                    out.push_str(text);
-                }
-            }
+        if let Ok(Message::Response(r)) = decode_frame(f) {
+            let id = r.result.get("id").and_then(Value::as_str)?;
+            let label = r
+                .result
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or("manual");
+            return Some((id.to_owned(), label.to_owned()));
         }
     }
-    out
+    None
 }
 
 fn main() {
