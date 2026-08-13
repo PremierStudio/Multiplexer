@@ -13,7 +13,7 @@
   <a href="https://github.com/PremierStudio/Multiplexer"><img alt="Mutation score" src="https://img.shields.io/badge/mutation-100%25%20(wire)-success.svg"/></a>
   <a href="https://www.rust-lang.org"><img alt="Rust" src="https://img.shields.io/badge/Rust-nightly-orange.svg?logo=rust"/></a>
   <a href="https://github.com/zed-industries/zed/tree/main/crates/gpui"><img alt="GPUI" src="https://img.shields.io/badge/GPUI-GPU--rendered-8b5cf6.svg"/></a>
-  <a href="https://github.com/xai-org/grok-build"><img alt="Grok Build" src="https://img.shields.io/badge/Grok%20Build-embedded-22d3ee.svg"/></a>
+  <a href="https://github.com/xai-org/grok-build"><img alt="Grok Build" src="https://img.shields.io/badge/Grok%20Build-vendored-22d3ee.svg"/></a>
   <a href="https://github.com/PremierStudio/Multiplexer/graphs/contributors"><img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg"/></a>
 </p>
 
@@ -25,8 +25,8 @@
 
 ## ✨ Highlights
 
-- **In-process, not a wrapper.** The Grok Build agent runtime is embedded as a library and called directly — no CLI subprocess, no ACP hop. Nobody else does this.
-- **A real editor.** A native, GPU-rendered editor with inline diff-apply, LSP, multi-cursor, and Vim mode as the trust/context mechanism for the agent loop.
+- **Outlook workbench around Grok.** Left list, center host, right inspector. Chat log is `grok -p`. Grok TUI is the real pager in a console (not a GPUI clone). In-process embedding is the destination, not the running desktop today.
+- **A review editor, not the center.** Native GPU editor (rope, LSP, Vim) as a pane or pop-out. Grok edits. Multiplexer reviews. `$VISUAL` until that crate lands.
 - **Your browsers, not a bundled one.** Detect and import the browsers you already have, drive them over CDP. No bundled Chromium.
 - **Ships with a HAR profiler/replayer.** Capture the network, visualize waterfalls, replay sessions, and feed the insight back to the agent.
 - **Panes that pop out.** Chat, build, and an instrumentation bar that can each float to their own window.

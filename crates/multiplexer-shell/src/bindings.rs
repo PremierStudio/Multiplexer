@@ -54,7 +54,15 @@ pub fn host_call(action: crate::ClientAction, ctx: &ActionContext) -> HostCall {
         | ClientAction::SetCenterGui
         | ClientAction::SetCenterTui
         | ClientAction::SortDiffLastTurn
-        | ClientAction::SortDiffFileName => HostCall::Local,
+        | ClientAction::SortDiffFileName
+        | ClientAction::HideLeft
+        | ClientAction::HideRight
+        | ClientAction::HideBottom
+        | ClientAction::FocusLayout
+        | ClientAction::OpenProjectFiles
+        | ClientAction::OpenGitTab
+        | ClientAction::OpenSessionTab
+        | ClientAction::OpenSettingsRemotes => HostCall::Local,
         ClientAction::CreateWorktree => worktree_create_call(ctx),
         ClientAction::Send
         | ClientAction::RefreshCores
@@ -349,6 +357,9 @@ mod tests {
             ClientAction::InsertFileMention,
             ClientAction::ToggleSettings,
             ClientAction::SelectModel,
+            ClientAction::HideLeft,
+            ClientAction::FocusLayout,
+            ClientAction::OpenGitTab,
         ] {
             assert_eq!(host_call(action, &ctx), HostCall::Local, "{action:?}");
             assert_ne!(host_call(action, &ctx), HostCall::NeedsHost, "{action:?}");

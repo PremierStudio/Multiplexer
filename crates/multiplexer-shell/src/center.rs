@@ -33,6 +33,7 @@ pub enum TuiLife {
     Stopped,
     Running,
     Exited,
+    Failed,
 }
 
 impl TuiLife {
@@ -41,6 +42,7 @@ impl TuiLife {
             Self::Stopped => "stopped",
             Self::Running => "running",
             Self::Exited => "exited",
+            Self::Failed => "failed",
         }
     }
 }
@@ -53,6 +55,7 @@ pub struct GrokTuiHost {
     pub program: String,
     pub cwd: String,
     pub note: String,
+    pub surface: String,
 }
 
 impl GrokTuiHost {
@@ -62,14 +65,21 @@ impl GrokTuiHost {
             pid: None,
             program: "grok".into(),
             cwd: cwd.into(),
-            note: "Grok owns the agent TUI. Multiplexer hosts it in a real console.".into(),
+            note: "Grok owns the agent TUI. Multiplexer hosts it in a real console. In-pane ConPTY is later.".into(),
+            surface: "new console".into(),
         }
     }
 
-    pub fn mark_running(&mut self, pid: u32, program: impl Into<String>) {
+    pub fn mark_running(
+        &mut self,
+        pid: Option<u32>,
+        program: impl Into<String>,
+        surface: impl Into<String>,
+    ) {
         self.life = TuiLife::Running;
-        self.pid = Some(pid);
+        self.pid = pid;
         self.program = program.into();
+        self.surface = surface.into();
     }
 
     pub fn mark_exited(&mut self) {
@@ -78,15 +88,16 @@ impl GrokTuiHost {
     }
 
     pub fn mark_failed(&mut self, message: impl Into<String>) {
-        self.life = TuiLife::Stopped;
+        self.life = TuiLife::Failed;
         self.pid = None;
         self.note = message.into();
     }
 
     pub fn summary(&self) -> String {
         format!(
-            "{}  {}  pid {}  {}\n{}",
+            "{}  {}  {}  pid {}  {}\n{}",
             self.life.label(),
+            self.surface,
             self.program,
             self.pid
                 .map(|p| p.to_string())
@@ -119,22 +130,36 @@ mod tests {
         assert!(host.note.contains("real console"));
         assert!(host.summary().contains("stopped"));
 
-        host.mark_running(4242, "grok");
+        host.mark_running(Some(4242), "grok", "new console");
         assert_eq!(host.life, TuiLife::Running);
         assert_eq!(host.pid, Some(4242));
         assert!(host.summary().contains("4242"));
         assert!(host.summary().contains("running"));
+        assert!(host.summary().contains("new console"));
+        assert!(!host.summary().to_ascii_lowercase().contains("embedded"));
+        assert!(!host.summary().contains("in-pane pager"));
 
         host.mark_exited();
         assert_eq!(host.life, TuiLife::Exited);
         assert!(host.pid.is_none());
 
         host.mark_failed("grok not on PATH");
-        assert_eq!(host.life, TuiLife::Stopped);
+        assert_eq!(host.life, TuiLife::Failed);
         assert!(host.note.contains("PATH"));
         assert_ne!(
             host.note,
-            "Grok owns the agent TUI. Multiplexer hosts it in a real console."
+            "Grok owns the agent TUI. Multiplexer hosts it in a real console. In-pane ConPTY is later."
         );
+    }
+
+    #[test]
+    fn summary_names_surface_not_embedded() {
+        let mut host = GrokTuiHost::idle("C:/repo");
+        host.mark_running(None, "grok", "Windows Terminal");
+        let s = host.summary();
+        assert!(s.contains("Windows Terminal"));
+        assert!(!s.contains("embedded"));
+        assert_eq!(host.life, TuiLife::Running);
+        assert!(host.pid.is_none());
     }
 }

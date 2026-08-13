@@ -23,7 +23,8 @@
 ## D4. Editor scope — full native editor in MVP (LOCKED)
 - **Decision:** Build the **full native editor** (rope buffer, multi-cursor, undo/redo, tree-sitter syntax highlighting, Vim mode, LSP) as part of the MVP.
 - **Rationale:** The native editor is differentiator #2 and the trust/context mechanism for the agent loop. A "lighter editor first" would be throwaway work and would ship a weak product. The editor core (§2 of plan/09) is shared and not throwaway.
-- **Note:** LSP server discovery/launch is included, but we do NOT bundle language servers (user installs them, matching grok-build's approach).
+- **Note:** LSP server discovery/launch is included, but we do NOT bundle language servers (user installs them, matching grok-build's approach). The editor is a **right-rail pane or pop-out**, never the Outlook center. Grok edits. Multiplexer reviews. `$VISUAL` / Open external is allowed until the crate lands.
+- **Pager:** Multiplexer **hosts** the real `grok` TUI. Do not rebuild `xai-grok-pager` in GPUI. Chat log is `grok -p` until a named Engine C milestone.
 
 ## D5. grok-build vendoring — vendored fork under `third_party/` + `[patch]` (LOCKED)
 - **Decision:** Clone `xai-org/grok-build` into `third_party/grok-build` as a vendored fork, wired via `[patch]` in our workspace Cargo.toml. Maintain our own fork (upstream doesn't accept contributions).
@@ -57,7 +58,7 @@
 
 ## D11. Subagent scheduling ownership — OUR scheduler, fork the cap (LOCKED)
 - **Decision:** **Multiplexer owns subagent scheduling.** We do NOT rely on grok-build's built-in 16-child cap. We fork the vendored `spawn_subagent`/workflow code as needed to raise the cap and implement our own parallel scheduler.
-- **Rationale:** The "dozens of concurrent subagents" differentiator requires it. We can't both "inherit the cap for free" and "raise it" — we choose to own it.
+- **Rationale:** The "dozens of concurrent subagents" differentiator requires it. We can't both "inherit the cap for free" and "raise it" — we choose to own it. Upstream default is now **32** (was 16); we still fork to own 1-100 and depth.
 - **Note:** Track upstream's fan-out changes (1.0.1 "bounded fan-out") closely; our fork may need to reconcile with upstream's approach.
 
 ## D12. Approval-decision model — 4-way enum everywhere (LOCKED)

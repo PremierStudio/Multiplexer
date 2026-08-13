@@ -106,6 +106,22 @@ pub const REQUIRED_IDS: &[&str] = &[
     "allow",
     "deny",
     "dismiss",
+    "project_pill",
+    "branch_pill",
+    "turns_pill",
+    "remotes_pill",
+    "focus_layout",
+    "hide_left",
+    "hide_right",
+    "hide_bottom",
+    "left_section_threads",
+    "left_section_agents",
+    "left_section_files",
+    "left_section_activity",
+    "tab_files",
+    "tab_activity",
+    "tab_agents",
+    "stop_tui",
 ];
 
 const fn spec(
@@ -212,9 +228,50 @@ const CONTROLS: &[ControlSpec] = &[
     spec("palette_filter", Surface::Palette, "Filter", None),
     spec("palette_run", Surface::Palette, "Run command", None),
     spec("help_close", Surface::HelpOverlay, "Close", Some("escape")),
-    spec("allow", Surface::ApprovalCard, "Allow", None),
-    spec("deny", Surface::ApprovalCard, "Deny", None),
+    spec("allow", Surface::ApprovalCard, "Allow", Some("a")),
+    spec("deny", Surface::ApprovalCard, "Deny", Some("d")),
     spec("dismiss", Surface::ReminderBar, "Dismiss", Some("escape")),
+    spec("project_pill", Surface::TitleBar, "Project", None),
+    spec("branch_pill", Surface::TitleBar, "Branch", None),
+    spec("turns_pill", Surface::TitleBar, "Turns", None),
+    spec("remotes_pill", Surface::TitleBar, "Remotes", None),
+    spec(
+        "focus_layout",
+        Surface::TitleBar,
+        "Focus layout",
+        Some("ctrl-shift-h"),
+    ),
+    spec("hide_left", Surface::LeftRail, "Hide left", None),
+    spec("hide_right", Surface::RightRail, "Hide right", None),
+    spec("hide_bottom", Surface::TermStrip, "Hide terminal", None),
+    spec(
+        "left_section_threads",
+        Surface::LeftRail,
+        "Chats",
+        Some("ctrl-1"),
+    ),
+    spec(
+        "left_section_agents",
+        Surface::LeftRail,
+        "Agents",
+        Some("ctrl-2"),
+    ),
+    spec(
+        "left_section_files",
+        Surface::LeftRail,
+        "Projects",
+        Some("ctrl-3"),
+    ),
+    spec(
+        "left_section_activity",
+        Surface::LeftRail,
+        "Activity",
+        Some("ctrl-4"),
+    ),
+    spec("tab_files", Surface::RightRail, "Files", None),
+    spec("tab_activity", Surface::RightRail, "Activity", None),
+    spec("tab_agents", Surface::RightRail, "Agents", None),
+    spec("stop_tui", Surface::Center, "Stop Grok TUI", None),
 ];
 
 /// Global chords. Escape is `close_overlay` (palette, help, reminder).
@@ -233,6 +290,12 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("ctrl-`", "toggle_bottom"),
     ("f2", "settings"),
     ("ctrl-shift-g", "center_tui"),
+    ("ctrl-shift-l", "layout_reset"),
+    ("ctrl-shift-h", "focus_layout"),
+    ("ctrl-1", "left_section_threads"),
+    ("ctrl-2", "left_section_agents"),
+    ("ctrl-3", "left_section_files"),
+    ("ctrl-4", "left_section_activity"),
 ];
 
 fn is_live_text(s: &str) -> bool {
@@ -297,9 +360,9 @@ mod tests {
             assert_eq!(spec.action, *required);
             assert!(spec.is_live(), "{required} is dead");
         }
-        assert_eq!(REQUIRED_IDS.len(), 51);
+        assert_eq!(REQUIRED_IDS.len(), 67);
         assert_eq!(have.len(), REQUIRED_IDS.len());
-        assert_eq!(all_controls().len(), 51);
+        assert_eq!(all_controls().len(), 67);
 
         let required_once = [
             "chats_toggle",
@@ -414,6 +477,22 @@ mod tests {
             ("allow", Surface::ApprovalCard),
             ("deny", Surface::ApprovalCard),
             ("dismiss", Surface::ReminderBar),
+            ("project_pill", Surface::TitleBar),
+            ("branch_pill", Surface::TitleBar),
+            ("turns_pill", Surface::TitleBar),
+            ("remotes_pill", Surface::TitleBar),
+            ("focus_layout", Surface::TitleBar),
+            ("hide_left", Surface::LeftRail),
+            ("hide_right", Surface::RightRail),
+            ("hide_bottom", Surface::TermStrip),
+            ("left_section_threads", Surface::LeftRail),
+            ("left_section_agents", Surface::LeftRail),
+            ("left_section_files", Surface::LeftRail),
+            ("left_section_activity", Surface::LeftRail),
+            ("tab_files", Surface::RightRail),
+            ("tab_activity", Surface::RightRail),
+            ("tab_agents", Surface::RightRail),
+            ("stop_tui", Surface::Center),
         ];
         for (id, surface) in pin {
             let spec = control_by_id(id).unwrap_or_else(|| panic!("missing {id}"));
@@ -510,12 +589,12 @@ mod tests {
             assert!(!on.is_empty(), "{surface:?} must have at least one control");
             assert!(on.iter().all(|c| c.surface == surface));
         }
-        assert_eq!(controls_on(Surface::TitleBar).len(), 8);
-        assert_eq!(controls_on(Surface::LeftRail).len(), 3);
-        assert_eq!(controls_on(Surface::Center).len(), 8);
+        assert_eq!(controls_on(Surface::TitleBar).len(), 13);
+        assert_eq!(controls_on(Surface::LeftRail).len(), 8);
+        assert_eq!(controls_on(Surface::Center).len(), 9);
         assert_eq!(controls_on(Surface::Composer).len(), 3);
-        assert_eq!(controls_on(Surface::RightRail).len(), 20);
-        assert_eq!(controls_on(Surface::TermStrip).len(), 3);
+        assert_eq!(controls_on(Surface::RightRail).len(), 24);
+        assert_eq!(controls_on(Surface::TermStrip).len(), 4);
         assert_eq!(controls_on(Surface::Palette).len(), 2);
         assert_eq!(controls_on(Surface::HelpOverlay).len(), 1);
         assert_eq!(controls_on(Surface::ApprovalCard).len(), 2);
@@ -545,7 +624,7 @@ mod tests {
 
     #[test]
     fn shortcut_map_has_required_bindings() {
-        assert_eq!(shortcut_map().len(), 14);
+        assert_eq!(shortcut_map().len(), 20);
         assert_eq!(shortcut_action("ctrl-shift-g"), Some("center_tui"));
         assert_eq!(shortcut_action("enter"), Some("send"));
         assert_eq!(shortcut_action("escape"), Some("close_overlay"));
@@ -586,7 +665,7 @@ mod tests {
                 "{key} maps to {action}, which is not a control action"
             );
         }
-        assert_eq!(keys.len(), 14);
+        assert_eq!(keys.len(), 20);
     }
 
     #[test]

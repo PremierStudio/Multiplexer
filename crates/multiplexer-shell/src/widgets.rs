@@ -175,8 +175,9 @@ pub struct EmptyStateSpec {
 impl EmptyStateSpec {
     pub fn chat() -> Self {
         Self {
-            title: "Start a session".into(),
-            body: "Run a real grok turn, open a worktree, or inspect MCP and cores.".into(),
+            title: "What should we build?".into(),
+            body: "Send a grok -p turn, list a worktree, or inspect inventory and CPU samples."
+                .into(),
             action: "New chat".into(),
         }
     }

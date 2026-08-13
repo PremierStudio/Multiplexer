@@ -61,8 +61,12 @@ pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
                 "Refresh MCP inventory",
                 InspectorAction::RefreshMcp,
             ),
-            button("Start", "Supervised ready", InspectorAction::StartMcp),
-            button("Stop", "Supervised stopped", InspectorAction::StopMcp),
+            button(
+                "Start",
+                "Set ready flag (no child)",
+                InspectorAction::StartMcp,
+            ),
+            button("Stop", "Clear ready flag", InspectorAction::StopMcp),
         ],
         InspectorTab::Checkpoints => vec![
             button(
@@ -71,8 +75,8 @@ pub fn tab_buttons(tab: InspectorTab) -> Vec<InspectorButton> {
                 InspectorAction::CreateCheckpoint,
             ),
             button(
-                "Revert",
-                "Revert to a checkpoint",
+                "Set pointer",
+                "Move pointer only, files unchanged",
                 InspectorAction::RevertCheckpoint,
             ),
         ],
@@ -167,7 +171,7 @@ mod tests {
             .any(|b| b.label == "New" && b.action == InspectorAction::CreateCheckpoint));
         assert!(buttons
             .iter()
-            .any(|b| b.label == "Revert" && b.action == InspectorAction::RevertCheckpoint));
+            .any(|b| b.label == "Set pointer" && b.action == InspectorAction::RevertCheckpoint));
     }
 
     #[test]

@@ -63,43 +63,43 @@ pub fn default_items() -> Vec<PaletteItem> {
         PaletteItem {
             id: "cores",
             label: "Cores",
-            hint: "g c",
+            hint: "",
             action: ClientAction::SelectTab(InspectorTab::Resources),
         },
         PaletteItem {
             id: "mcp",
             label: "MCP",
-            hint: "g m",
+            hint: "",
             action: ClientAction::SelectTab(InspectorTab::Mcp),
         },
         PaletteItem {
             id: "points",
             label: "Points",
-            hint: "g p",
+            hint: "",
             action: ClientAction::SelectTab(InspectorTab::Checkpoints),
         },
         PaletteItem {
             id: "git-tab",
             label: "Git",
-            hint: "g g",
+            hint: "",
             action: ClientAction::SelectTab(InspectorTab::Git),
         },
         PaletteItem {
             id: "term-tab",
             label: "Terminal",
-            hint: "g t",
+            hint: "",
             action: ClientAction::SelectTab(InspectorTab::Terminal),
         },
         PaletteItem {
             id: "skills-tab",
             label: "Skills",
-            hint: "g k",
+            hint: "",
             action: ClientAction::SelectTab(InspectorTab::Skills),
         },
         PaletteItem {
             id: "session",
             label: "Session",
-            hint: "g s",
+            hint: "",
             action: ClientAction::SelectTab(InspectorTab::Session),
         },
         PaletteItem {
@@ -123,7 +123,7 @@ pub fn default_items() -> Vec<PaletteItem> {
         PaletteItem {
             id: "help",
             label: "Toggle help",
-            hint: "?",
+            hint: "F1",
             action: ClientAction::ToggleHelp,
         },
         PaletteItem {
@@ -164,7 +164,7 @@ pub fn default_items() -> Vec<PaletteItem> {
         },
         PaletteItem {
             id: "restore-checkpoint",
-            label: "Restore checkpoint",
+            label: "Select checkpoint pointer",
             hint: "",
             action: ClientAction::RestoreCheckpoint,
         },
@@ -195,19 +195,19 @@ pub fn default_items() -> Vec<PaletteItem> {
         PaletteItem {
             id: "files-tab",
             label: "Files",
-            hint: "g f",
+            hint: "",
             action: ClientAction::SelectTab(InspectorTab::Files),
         },
         PaletteItem {
             id: "activity-tab",
             label: "Activity",
-            hint: "g a",
+            hint: "",
             action: ClientAction::SelectTab(InspectorTab::Activity),
         },
         PaletteItem {
             id: "agents-tab",
             label: "Agents",
-            hint: "g e",
+            hint: "",
             action: ClientAction::SelectTab(InspectorTab::Agents),
         },
         PaletteItem {
@@ -249,13 +249,13 @@ pub fn default_items() -> Vec<PaletteItem> {
         PaletteItem {
             id: "diff-tab",
             label: "Diffs",
-            hint: "g d",
+            hint: "",
             action: ClientAction::SelectTab(InspectorTab::Diff),
         },
         PaletteItem {
             id: "browser-tab",
             label: "Browser",
-            hint: "g b",
+            hint: "",
             action: ClientAction::SelectTab(InspectorTab::Browser),
         },
     ]
@@ -402,16 +402,16 @@ mod tests {
             ("checkpoint", "Ctrl+S", ClientAction::CreateCheckpoint),
             (
                 "cores",
-                "g c",
+                "",
                 ClientAction::SelectTab(InspectorTab::Resources),
             ),
-            ("mcp", "g m", ClientAction::SelectTab(InspectorTab::Mcp)),
+            ("mcp", "", ClientAction::SelectTab(InspectorTab::Mcp)),
             (
                 "points",
-                "g p",
+                "",
                 ClientAction::SelectTab(InspectorTab::Checkpoints),
             ),
-            ("help", "?", ClientAction::ToggleHelp),
+            ("help", "F1", ClientAction::ToggleHelp),
             ("close-palette", "Esc", ClientAction::ClosePalette),
         ];
         let items = default_items();

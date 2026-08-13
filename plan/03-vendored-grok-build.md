@@ -31,8 +31,8 @@ Scope covered here:
 
 | Crate | Role | Our disposition |
 |-------|------|-----------------|
-| `xai-grok-pager-bin` | Composition root → `xai-grok-pager` binary | **Replace** (we supply our own composition root) |
-| `xai-grok-pager` | TUI (terminal UI) | **Replace** with our GPUI UI |
+| `xai-grok-pager-bin` | Composition root → `xai-grok-pager` binary | **Host** the installed `grok` pager. Our composition root is Outlook chrome. |
+| `xai-grok-pager` | TUI (terminal UI) | **Host**, do not rebuild in GPUI |
 | `xai-grok-shell` | Agent runtime: leader / stdio / headless, session lifecycle, subagent orchestration | **Embed as library** |
 | `xai-grok-tools` | Tool implementations (fs, git, terminal, search, session, auth) | **Embed as library** |
 | `xai-grok-workspace` | Filesystem / VCS / execution / checkpoints | **Embed as library** |
@@ -95,8 +95,8 @@ Rationale:
 
 ### 4.2 Replace
 
-- **`xai-grok-pager`** (TUI) — replaced by our GPUI UI. We do **not** link the TUI crate.
-- **`xai-grok-pager-bin`** (composition root) — replaced by our own composition root in the Multiplexer binary. We own process startup, the GPUI event loop, and the JSON-RPC server.
+- **`xai-grok-pager`** (TUI) — hosted as the real interactive `grok` process. We do **not** rebuild the pager in GPUI. Chat log is `grok -p`.
+- **`xai-grok-pager-bin`** (composition root) — we still own the Multiplexer process, GPUI loop, and JSON-RPC server. The pager stays a hosted child.
 
 ### 4.3 Embedding boundary
 

@@ -192,14 +192,53 @@ pub const RIGHT_WIDTH_MAX: f32 = 480.0;
 pub const RAIL_COLLAPSED: f32 = 44.0;
 pub const BOTTOM_HEIGHT_COLLAPSED: f32 = 36.0;
 pub const BOTTOM_HEIGHT_EXPANDED: f32 = 240.0;
-pub const BOTTOM_HEIGHT_MIN: f32 = 36.0;
+pub const BOTTOM_HEIGHT_OPEN_MIN: f32 = 80.0;
+pub const BOTTOM_HEIGHT_MIN: f32 = BOTTOM_HEIGHT_OPEN_MIN;
 pub const BOTTOM_HEIGHT_MAX: f32 = 480.0;
+
+/// Left or right rail visibility. Hidden occupies 0. IconRail occupies 44.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RailVis {
+    #[default]
+    Open,
+    IconRail,
+    Hidden,
+}
+
+impl RailVis {
+    pub fn occupied(self, open_width: f32) -> f32 {
+        match self {
+            Self::Open => open_width,
+            Self::IconRail => RAIL_COLLAPSED,
+            Self::Hidden => 0.0,
+        }
+    }
+
+    /// Title bar: Open <-> IconRail. Hidden restores to IconRail.
+    pub fn cycle_icon(self) -> Self {
+        match self {
+            Self::Open => Self::IconRail,
+            Self::IconRail => Self::Open,
+            Self::Hidden => Self::IconRail,
+        }
+    }
+}
+
+/// Snapshot used by focus layout restore.
+#[derive(Debug, Clone, PartialEq)]
+struct ChromeSnapshot {
+    chrome: ChromeLayout,
+    bottom_open: bool,
+    bottom_hidden: bool,
+    bottom_height: f32,
+    last_open_height: f32,
+}
 
 /// Show/hide and width of the left and right rails.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChromeLayout {
-    pub left_open: bool,
-    pub right_open: bool,
+    pub left: RailVis,
+    pub right: RailVis,
     pub left_width: f32,
     pub right_width: f32,
 }
@@ -207,8 +246,8 @@ pub struct ChromeLayout {
 impl Default for ChromeLayout {
     fn default() -> Self {
         Self {
-            left_open: true,
-            right_open: true,
+            left: RailVis::Open,
+            right: RailVis::Open,
             left_width: 248.0,
             right_width: 300.0,
         }
@@ -216,30 +255,46 @@ impl Default for ChromeLayout {
 }
 
 impl ChromeLayout {
+    pub fn left_open(&self) -> bool {
+        self.left == RailVis::Open
+    }
+
+    pub fn right_open(&self) -> bool {
+        self.right == RailVis::Open
+    }
+
     pub fn toggle_left(&mut self) {
-        self.left_open = !self.left_open;
+        self.left = self.left.cycle_icon();
     }
 
     pub fn toggle_right(&mut self) {
-        self.right_open = !self.right_open;
+        self.right = self.right.cycle_icon();
     }
 
     pub fn hide_left(&mut self) {
-        self.left_open = false;
+        self.left = RailVis::Hidden;
     }
 
     pub fn hide_right(&mut self) {
-        self.right_open = false;
+        self.right = RailVis::Hidden;
+    }
+
+    pub fn open_left(&mut self) {
+        self.left = RailVis::Open;
+    }
+
+    pub fn open_right(&mut self) {
+        self.right = RailVis::Open;
     }
 
     pub fn set_left_width(&mut self, width: f32) {
         self.left_width = width.clamp(LEFT_WIDTH_MIN, LEFT_WIDTH_MAX);
-        self.left_open = true;
+        self.left = RailVis::Open;
     }
 
     pub fn set_right_width(&mut self, width: f32) {
         self.right_width = width.clamp(RIGHT_WIDTH_MIN, RIGHT_WIDTH_MAX);
-        self.right_open = true;
+        self.right = RailVis::Open;
     }
 
     pub fn nudge_left(&mut self, delta: f32) {
@@ -250,21 +305,13 @@ impl ChromeLayout {
         self.set_right_width(self.right_width + delta);
     }
 
-    /// Width the left rail occupies, including the collapsed strip.
+    /// Width the left rail occupies. Hidden is 0.
     pub fn occupied_left(&self) -> f32 {
-        if self.left_open {
-            self.left_width
-        } else {
-            RAIL_COLLAPSED
-        }
+        self.left.occupied(self.left_width)
     }
 
     pub fn occupied_right(&self) -> f32 {
-        if self.right_open {
-            self.right_width
-        } else {
-            RAIL_COLLAPSED
-        }
+        self.right.occupied(self.right_width)
     }
 }
 
@@ -300,7 +347,9 @@ pub struct Workspace {
     pub left_section: LeftSection,
     pub right_expanded_id: Option<String>,
     pub bottom_open: bool,
+    pub bottom_hidden: bool,
     pub bottom_height: f32,
+    pub last_open_height: f32,
     pub selected_file: Option<String>,
     pub notices: Vec<crate::notices::Notice>,
     pub settings: crate::settings::UiSettings,
@@ -319,6 +368,7 @@ pub struct Workspace {
     pub browser_url: String,
     next_id: u64,
     next_notice: u64,
+    focus_snapshot: Option<ChromeSnapshot>,
 }
 
 impl Workspace {
@@ -355,7 +405,9 @@ impl Workspace {
             left_section: LeftSection::Threads,
             right_expanded_id: None,
             bottom_open: false,
+            bottom_hidden: false,
             bottom_height: BOTTOM_HEIGHT_COLLAPSED,
+            last_open_height: BOTTOM_HEIGHT_EXPANDED,
             selected_file: None,
             notices: Vec::new(),
             settings: crate::settings::UiSettings::default(),
@@ -374,6 +426,7 @@ impl Workspace {
             browser_url: String::new(),
             next_id: 1,
             next_notice: 1,
+            focus_snapshot: None,
         };
         ws.new_thread();
         ws
@@ -558,7 +611,11 @@ impl Workspace {
     }
 
     pub fn connect(&mut self, session_ids: Vec<String>) {
-        self.connection = ConnectionState::Connected { session_ids };
+        if session_ids.is_empty() {
+            self.connection = ConnectionState::Ready;
+        } else {
+            self.connection = ConnectionState::Connected { session_ids };
+        }
     }
 
     /// Rotate `models`, assign `self.model`, and return the new model id.
@@ -686,8 +743,9 @@ impl Workspace {
     }
 
     pub fn resource_detail(&self) -> String {
-        let mut out =
-            String::from("Reserved cores: 0, 1 (app)\nJob Object kill-on-close is armed.\n\n");
+        let mut out = String::from(
+            "CPU samples only. Reservation is a local flag. Process containment is not attached.\n\n",
+        );
         if self.cores.is_empty() {
             out.push_str("Core samples: (waiting)\n");
         } else {
@@ -718,7 +776,7 @@ impl Workspace {
 
     pub fn mcp_detail(&self) -> String {
         if self.mcp.is_empty() {
-            return "No MCP servers in ~/.grok/config.toml\nReuse/teardown still applies when they start.".to_owned();
+            return "No MCP servers in ~/.grok/config.toml\nInventory only. No child, no reuse, no teardown.".to_owned();
         }
         self.mcp
             .iter()
@@ -737,21 +795,26 @@ impl Workspace {
 
     pub fn checkpoint_detail(&self) -> String {
         if self.checkpoints.is_empty() {
-            return "No checkpoints yet. A start checkpoint is created with the session runtime."
+            return "Pointer only. Files unchanged.\n\nNo pointers yet. Create adds a RAM pointer."
                 .to_owned();
         }
-        self.checkpoints
-            .iter()
-            .map(|c| {
-                let mark = if self.selected_checkpoint.as_deref() == Some(c.id.as_str()) {
-                    "*"
-                } else {
-                    " "
-                };
-                format!("{mark} {}  {}", c.id, c.label)
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        let mut out = String::from("Pointer only. Files unchanged.\n\n");
+        out.push_str(
+            &self
+                .checkpoints
+                .iter()
+                .map(|c| {
+                    let mark = if self.selected_checkpoint.as_deref() == Some(c.id.as_str()) {
+                        "*"
+                    } else {
+                        " "
+                    };
+                    format!("{mark} {}  {}", c.id, c.label)
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        out
     }
 
     pub fn git_detail(&self) -> String {
@@ -823,22 +886,92 @@ impl Workspace {
     }
 
     pub fn toggle_bottom(&mut self) {
+        if self.bottom_hidden {
+            self.bottom_hidden = false;
+            self.bottom_open = false;
+            self.bottom_height = BOTTOM_HEIGHT_COLLAPSED;
+            return;
+        }
         if self.bottom_open {
+            self.last_open_height = self
+                .bottom_height
+                .clamp(BOTTOM_HEIGHT_OPEN_MIN, BOTTOM_HEIGHT_MAX);
             self.bottom_open = false;
             self.bottom_height = BOTTOM_HEIGHT_COLLAPSED;
         } else {
             self.bottom_open = true;
-            self.bottom_height = BOTTOM_HEIGHT_EXPANDED;
+            self.bottom_height = self
+                .last_open_height
+                .clamp(BOTTOM_HEIGHT_OPEN_MIN, BOTTOM_HEIGHT_MAX);
         }
     }
 
+    pub fn hide_bottom(&mut self) {
+        if self.bottom_open {
+            self.last_open_height = self.bottom_height;
+        }
+        self.bottom_hidden = true;
+        self.bottom_open = false;
+    }
+
     pub fn set_bottom_height(&mut self, height: f32) {
-        self.bottom_height = height.clamp(BOTTOM_HEIGHT_MIN, BOTTOM_HEIGHT_MAX);
-        self.bottom_open = self.bottom_height > BOTTOM_HEIGHT_COLLAPSED + 0.5;
+        self.bottom_hidden = false;
+        if height < BOTTOM_HEIGHT_MIN {
+            self.bottom_open = false;
+            self.bottom_height = BOTTOM_HEIGHT_COLLAPSED;
+        } else {
+            self.bottom_height = height.clamp(BOTTOM_HEIGHT_MIN, BOTTOM_HEIGHT_MAX);
+            self.bottom_open = true;
+            self.last_open_height = self.bottom_height;
+        }
     }
 
     pub fn occupied_bottom(&self) -> f32 {
-        self.bottom_height
+        if self.bottom_hidden {
+            0.0
+        } else if self.bottom_open {
+            self.bottom_height
+        } else {
+            BOTTOM_HEIGHT_COLLAPSED
+        }
+    }
+
+    pub fn is_focus_layout(&self) -> bool {
+        self.chrome.left == RailVis::Hidden && self.chrome.right == RailVis::Hidden
+    }
+
+    pub fn focus_layout(&mut self) -> bool {
+        if self.is_focus_layout() {
+            if let Some(snap) = self.focus_snapshot.take() {
+                self.chrome = snap.chrome;
+                self.bottom_open = snap.bottom_open;
+                self.bottom_hidden = snap.bottom_hidden;
+                self.bottom_height = snap.bottom_height;
+                self.last_open_height = snap.last_open_height;
+                return true;
+            }
+            return false;
+        }
+        self.focus_snapshot = Some(ChromeSnapshot {
+            chrome: self.chrome.clone(),
+            bottom_open: self.bottom_open,
+            bottom_hidden: self.bottom_hidden,
+            bottom_height: self.bottom_height,
+            last_open_height: self.last_open_height,
+        });
+        self.chrome.hide_left();
+        self.chrome.hide_right();
+        self.bottom_hidden = false;
+        self.bottom_open = false;
+        self.bottom_height = BOTTOM_HEIGHT_COLLAPSED;
+        true
+    }
+
+    pub fn select_thread_id(&mut self, id: &str) -> bool {
+        match self.threads.iter().position(|t| t.id == id) {
+            Some(i) => self.select(i),
+            None => false,
+        }
     }
 
     pub fn toggle_right_row(&mut self, id: impl Into<String>) {
@@ -992,9 +1125,12 @@ impl Workspace {
     pub fn reset_outlook_chrome(&mut self) {
         self.chrome = ChromeLayout::default();
         self.bottom_open = false;
+        self.bottom_hidden = false;
         self.bottom_height = BOTTOM_HEIGHT_COLLAPSED;
+        self.last_open_height = BOTTOM_HEIGHT_EXPANDED;
         self.left_section = LeftSection::Threads;
         self.right_expanded_id = None;
+        self.focus_snapshot = None;
     }
 
     pub fn toggle_center_mode(&mut self) {
@@ -1279,7 +1415,7 @@ mod tests {
     #[test]
     fn chrome_default_is_open_with_roomy_rails() {
         let c = ChromeLayout::default();
-        assert!(c.left_open && c.right_open);
+        assert!(c.left_open() && c.right_open());
         assert!(c.left_width >= LEFT_WIDTH_MIN);
         assert!(c.right_width >= RIGHT_WIDTH_MIN);
         assert_eq!(c.occupied_left(), c.left_width);
@@ -1291,28 +1427,29 @@ mod tests {
         let mut c = ChromeLayout::default();
         c.toggle_left();
         c.toggle_right();
-        assert!(!c.left_open && !c.right_open);
+        assert!(!c.left_open() && !c.right_open());
+        assert_eq!(c.left, RailVis::IconRail);
         assert_eq!(c.occupied_left(), RAIL_COLLAPSED);
         assert_eq!(c.occupied_right(), RAIL_COLLAPSED);
         c.toggle_left();
-        assert!(c.left_open);
+        assert!(c.left_open());
         assert_eq!(c.occupied_left(), c.left_width);
         c.hide_left();
         c.hide_right();
-        assert!(!c.left_open && !c.right_open);
-        assert_eq!(c.occupied_left(), RAIL_COLLAPSED);
-        assert_eq!(c.occupied_right(), RAIL_COLLAPSED);
+        assert!(!c.left_open() && !c.right_open());
+        assert_eq!(c.occupied_left(), 0.0);
+        assert_eq!(c.occupied_right(), 0.0);
     }
 
     #[test]
     fn chrome_resize_clamps_and_reopens() {
         let mut c = ChromeLayout {
-            left_open: false,
+            left: RailVis::IconRail,
             ..ChromeLayout::default()
         };
         c.set_left_width(80.0);
         assert_eq!(c.left_width, LEFT_WIDTH_MIN);
-        assert!(c.left_open);
+        assert!(c.left_open());
         c.set_left_width(900.0);
         assert_eq!(c.left_width, LEFT_WIDTH_MAX);
         c.set_right_width(10.0);
@@ -1427,12 +1564,13 @@ mod tests {
     #[test]
     fn reset_outlook_chrome_reopens_rails_and_collapses_bottom() {
         let mut ws = Workspace::new("p", "m");
-        ws.chrome.left_open = false;
+        ws.chrome.left = RailVis::IconRail;
         ws.toggle_bottom();
         ws.select_left_section(LeftSection::Files);
         ws.reset_outlook_chrome();
-        assert!(ws.chrome.left_open && ws.chrome.right_open);
+        assert!(ws.chrome.left_open() && ws.chrome.right_open());
         assert!(!ws.bottom_open);
+        assert!(!ws.bottom_hidden);
         assert_eq!(ws.bottom_height, BOTTOM_HEIGHT_COLLAPSED);
         assert_eq!(ws.left_section, LeftSection::Threads);
     }
@@ -1456,8 +1594,8 @@ mod tests {
         assert!(ws.bottom_open);
         assert_eq!(ws.bottom_height, 200.0);
         ws.set_bottom_height(10.0);
-        assert_eq!(ws.bottom_height, BOTTOM_HEIGHT_MIN);
-        assert_eq!(BOTTOM_HEIGHT_MIN, 36.0);
+        assert_eq!(ws.bottom_height, BOTTOM_HEIGHT_COLLAPSED);
+        assert_eq!(BOTTOM_HEIGHT_OPEN_MIN, 80.0);
         assert!(!ws.bottom_open);
         assert_eq!(ws.occupied_bottom(), 36.0);
     }
@@ -1698,5 +1836,92 @@ mod tests {
         assert!(ws.checkpoint_detail().contains("cp-local"));
         ws.select_checkpoint(None);
         assert!(ws.selected_checkpoint.is_none());
+    }
+
+    #[test]
+    fn resource_detail_does_not_claim_job_object() {
+        let ws = Workspace::new("p", "m");
+        let detail = ws.resource_detail();
+        assert!(!detail.contains("Job Object"));
+        assert!(!detail.contains("armed"));
+        assert!(!detail.contains("kill-on-close"));
+        assert!(detail.contains("sample") || detail.contains("flag"));
+    }
+
+    #[test]
+    fn connect_empty_sessions_is_ready_not_connected() {
+        let mut ws = Workspace::new("p", "m");
+        assert_eq!(ws.connection.status_label(), "disconnected");
+        assert!(!ws.connection.is_connected());
+        ws.connect(Vec::new());
+        assert_eq!(ws.connection.status_label(), "ready");
+        assert!(!ws.connection.is_connected());
+        assert!(!ws.title_bar().contains("connected"));
+        ws.connect(vec!["sess-1".into()]);
+        assert!(ws.connection.is_connected());
+        assert!(ws.title_bar().contains("connected"));
+    }
+
+    #[test]
+    fn hide_left_is_hidden_not_icon() {
+        let mut c = ChromeLayout::default();
+        c.hide_left();
+        assert_eq!(c.left, RailVis::Hidden);
+        assert_eq!(c.occupied_left(), 0.0);
+        c.toggle_left();
+        assert_eq!(c.left, RailVis::IconRail);
+        c.toggle_left();
+        assert_eq!(c.left, RailVis::Open);
+    }
+
+    #[test]
+    fn bottom_hidden_occupies_zero_and_toggle_restores_last_open() {
+        let mut ws = Workspace::new("p", "m");
+        ws.set_bottom_height(200.0);
+        assert_eq!(ws.bottom_height, 200.0);
+        ws.toggle_bottom();
+        assert!(!ws.bottom_open);
+        assert_eq!(ws.occupied_bottom(), BOTTOM_HEIGHT_COLLAPSED);
+        ws.toggle_bottom();
+        assert_eq!(ws.bottom_height, 200.0);
+        ws.hide_bottom();
+        assert_eq!(ws.occupied_bottom(), 0.0);
+        ws.toggle_bottom();
+        assert!(!ws.bottom_hidden);
+        assert!(!ws.bottom_open);
+        assert_eq!(ws.occupied_bottom(), BOTTOM_HEIGHT_COLLAPSED);
+    }
+
+    #[test]
+    fn focus_layout_hides_both_rails_and_second_call_restores() {
+        let mut ws = Workspace::new("p", "m");
+        ws.chrome.set_left_width(300.0);
+        assert!(ws.focus_layout());
+        assert_eq!(ws.chrome.occupied_left(), 0.0);
+        assert_eq!(ws.chrome.occupied_right(), 0.0);
+        assert!(ws.is_focus_layout());
+        assert!(ws.focus_layout());
+        assert_eq!(ws.chrome.left_width, 300.0);
+        assert!(ws.chrome.left_open());
+        assert!(!ws.is_focus_layout());
+    }
+
+    #[test]
+    fn checkpoint_detail_says_pointer_only() {
+        let ws = Workspace::new("p", "m");
+        let detail = ws.checkpoint_detail();
+        assert!(detail.contains("Pointer only"));
+        assert!(detail.contains("Files unchanged") || detail.contains("not snapshotted"));
+        assert!(!detail.contains("session runtime"));
+    }
+
+    #[test]
+    fn agent_rows_are_threads_not_session_ids() {
+        let mut ws = Workspace::new("p", "m");
+        let before = ws.agent_rows().len();
+        ws.connect(vec!["sess-1".into()]);
+        assert_eq!(ws.agent_rows().len(), before);
+        assert_eq!(ws.agent_rows()[0].0, ws.threads[0].id);
+        assert!(ws.select_thread_id(&ws.threads[0].id.clone()));
     }
 }

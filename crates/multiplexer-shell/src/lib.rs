@@ -8,6 +8,7 @@ mod approval_ui;
 mod bars;
 mod bindings;
 mod center;
+mod chrome_geom;
 mod composer;
 mod diff_view;
 mod icons;
@@ -30,6 +31,7 @@ pub use approval_ui::PendingApproval;
 pub use bars::usage_bar;
 pub use bindings::{host_call, worktree_create_call, ActionContext, HostCall};
 pub use center::{CenterMode, GrokTuiHost, TuiLife};
+pub use chrome_geom::{bottom_height_from_mouse, remotes_pill_label, title_overflow};
 pub use composer::{
     clamp_cursor, delete_back, delete_forward, insert_at, move_end, move_home, move_left,
     move_right, move_word_left, move_word_right,
@@ -43,7 +45,7 @@ pub use palette::{default_items, filter_items, palette_hits, PaletteItem, Palett
 pub use remote::{detect_remotes, RemoteRow};
 pub use search::{search_workspace, SearchHit, SearchKind};
 pub use settings::UiSettings;
-pub use slash::{parse_slash, slash_hint, SlashCommand};
+pub use slash::{parse_slash, plan_send, slash_hint, SendPlan, SlashCommand};
 pub use status::{status_from, status_line, ClientStatus};
 pub use terminal_ui::{
     format_line, help_text, parse_builtin, push_capped, visible_tail, BuiltinCmd, TermLineKind,
@@ -56,8 +58,9 @@ pub use widgets::{
 };
 pub use workspace::{
     ChatMessage, CheckpointRow, ChromeLayout, CoreRow, InspectorTab, LeftSection, McpLife, McpRow,
-    Role, Thread, Workspace, BOTTOM_HEIGHT_COLLAPSED, BOTTOM_HEIGHT_EXPANDED, LEFT_WIDTH_MAX,
-    LEFT_WIDTH_MIN, RAIL_COLLAPSED, RIGHT_WIDTH_MAX, RIGHT_WIDTH_MIN,
+    RailVis, Role, Thread, Workspace, BOTTOM_HEIGHT_COLLAPSED, BOTTOM_HEIGHT_EXPANDED,
+    BOTTOM_HEIGHT_OPEN_MIN, LEFT_WIDTH_MAX, LEFT_WIDTH_MIN, RAIL_COLLAPSED, RIGHT_WIDTH_MAX,
+    RIGHT_WIDTH_MIN,
 };
 
 use multiplexer_layout::{LayoutForest, LayoutNode, PaneId};
@@ -70,12 +73,16 @@ pub const DEFAULT_WINDOW_TITLE: &str = "Multiplexer";
 pub enum ConnectionState {
     Disconnected,
     Connecting,
-    Connected { session_ids: Vec<String> },
+    /// Hello and ping succeeded. No session id yet.
+    Ready,
+    Connected {
+        session_ids: Vec<String>,
+    },
 }
 
 impl ConnectionState {
     pub fn is_connected(&self) -> bool {
-        matches!(self, ConnectionState::Connected { .. })
+        matches!(self, ConnectionState::Connected { session_ids } if !session_ids.is_empty())
     }
 
     pub fn session_count(&self) -> usize {
@@ -89,6 +96,8 @@ impl ConnectionState {
         match self {
             ConnectionState::Disconnected => "disconnected",
             ConnectionState::Connecting => "connecting",
+            ConnectionState::Ready => "ready",
+            ConnectionState::Connected { session_ids } if session_ids.is_empty() => "ready",
             ConnectionState::Connected { .. } => "connected",
         }
     }
@@ -141,7 +150,11 @@ impl DesktopChrome {
     }
 
     pub fn mark_connected(&mut self, session_ids: Vec<String>) {
-        self.connection = ConnectionState::Connected { session_ids };
+        if session_ids.is_empty() {
+            self.connection = ConnectionState::Ready;
+        } else {
+            self.connection = ConnectionState::Connected { session_ids };
+        }
     }
 
     pub fn mark_disconnected(&mut self) {

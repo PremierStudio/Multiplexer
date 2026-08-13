@@ -2,7 +2,10 @@
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use gpui::{hsla, point, px, BoxShadow, Hsla, Pixels};
+use gpui::{
+    hsla, point, px, size, Bounds, BoxShadow, Hsla, Pixels, TitlebarOptions,
+    WindowBackgroundAppearance, WindowBounds, WindowOptions,
+};
 use multiplexer_theme::{Density, HslaTuple, ThemeMode, ThemeTokens, TypeScale};
 
 static THEME_MODE: AtomicU8 = AtomicU8::new(0);
@@ -114,6 +117,24 @@ impl Theme {
     pub fn icon_size() -> Pixels {
         px(32.0)
     }
+
+    /// Native caption contract. `appears_transparent` stays false.
+    pub fn window_options(bounds: Bounds<Pixels>) -> WindowOptions {
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_background: WindowBackgroundAppearance::Blurred,
+            is_movable: true,
+            is_resizable: true,
+            is_minimizable: true,
+            window_min_size: Some(size(px(920.0), px(620.0))),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Multiplexer".into()),
+                appears_transparent: false,
+                traffic_light_position: None,
+            }),
+            ..Default::default()
+        }
+    }
     pub fn shadow() -> Vec<BoxShadow> {
         vec![
             BoxShadow {
@@ -159,5 +180,20 @@ mod tests {
         assert_eq!(Theme::tokens().mode, ThemeMode::Light);
         Theme::set_mode(ThemeMode::Dark);
         assert_eq!(Theme::tokens().mode, ThemeMode::Dark);
+    }
+
+    #[test]
+    fn window_options_keep_native_caption() {
+        let bounds = Bounds {
+            origin: point(px(0.0), px(0.0)),
+            size: size(px(1360.0), px(860.0)),
+        };
+        let opts = Theme::window_options(bounds);
+        let bar = opts.titlebar.expect("native titlebar");
+        assert!(!bar.appears_transparent);
+        assert!(opts.is_movable);
+        assert!(opts.is_resizable);
+        assert!(opts.is_minimizable);
+        assert_eq!(opts.window_background, WindowBackgroundAppearance::Blurred);
     }
 }

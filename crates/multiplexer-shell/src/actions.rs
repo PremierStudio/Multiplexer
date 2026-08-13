@@ -44,6 +44,14 @@ pub enum ClientAction {
     SortDiffLastTurn,
     SortDiffFileName,
     OpenBrowser,
+    HideLeft,
+    HideRight,
+    HideBottom,
+    FocusLayout,
+    OpenProjectFiles,
+    OpenGitTab,
+    OpenSessionTab,
+    OpenSettingsRemotes,
 }
 
 /// Apply a workspace-only layout action.
@@ -72,8 +80,8 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
         }
         ClientAction::SelectTab(tab) => {
             let changed = ws.select_inspector(tab);
-            if !ws.chrome.right_open {
-                ws.chrome.right_open = true;
+            if !ws.chrome.right_open() {
+                ws.chrome.open_right();
                 true
             } else {
                 changed
@@ -81,11 +89,63 @@ pub fn apply_layout_action(ws: &mut Workspace, action: ClientAction) -> bool {
         }
         ClientAction::SelectLeftSection(section) => {
             let changed = ws.select_left_section(section);
-            if !ws.chrome.left_open {
-                ws.chrome.left_open = true;
+            if !ws.chrome.left_open() {
+                ws.chrome.open_left();
                 true
             } else {
                 changed
+            }
+        }
+        ClientAction::HideLeft => {
+            if ws.chrome.left == crate::workspace::RailVis::Hidden {
+                false
+            } else {
+                ws.chrome.hide_left();
+                true
+            }
+        }
+        ClientAction::HideRight => {
+            if ws.chrome.right == crate::workspace::RailVis::Hidden {
+                false
+            } else {
+                ws.chrome.hide_right();
+                true
+            }
+        }
+        ClientAction::HideBottom => {
+            if ws.bottom_hidden {
+                false
+            } else {
+                ws.hide_bottom();
+                true
+            }
+        }
+        ClientAction::FocusLayout => ws.focus_layout(),
+        ClientAction::OpenProjectFiles => {
+            let sec = ws.select_left_section(crate::workspace::LeftSection::Files);
+            let tab = ws.select_inspector(crate::workspace::InspectorTab::Files);
+            ws.chrome.open_left();
+            ws.chrome.open_right();
+            sec || tab
+        }
+        ClientAction::OpenGitTab => {
+            let changed = ws.select_inspector(crate::workspace::InspectorTab::Git);
+            let was_closed = !ws.chrome.right_open();
+            ws.chrome.open_right();
+            changed || was_closed
+        }
+        ClientAction::OpenSessionTab => {
+            let changed = ws.select_inspector(crate::workspace::InspectorTab::Session);
+            let was_closed = !ws.chrome.right_open();
+            ws.chrome.open_right();
+            changed || was_closed
+        }
+        ClientAction::OpenSettingsRemotes => {
+            if ws.settings_open {
+                false
+            } else {
+                ws.settings_open = true;
+                true
             }
         }
         ClientAction::ToggleBottom => {
@@ -244,34 +304,34 @@ mod tests {
     #[test]
     fn toggle_left_and_right_flip_only_that_rail() {
         let mut ws = fresh();
-        assert!(ws.chrome.left_open && ws.chrome.right_open);
+        assert!(ws.chrome.left_open() && ws.chrome.right_open());
 
         assert!(apply_layout_action(&mut ws, ClientAction::ToggleLeft));
-        assert!(!ws.chrome.left_open);
-        assert!(ws.chrome.right_open);
+        assert!(!ws.chrome.left_open());
+        assert!(ws.chrome.right_open());
 
         assert!(apply_layout_action(&mut ws, ClientAction::ToggleRight));
-        assert!(!ws.chrome.left_open);
-        assert!(!ws.chrome.right_open);
+        assert!(!ws.chrome.left_open());
+        assert!(!ws.chrome.right_open());
 
         assert!(apply_layout_action(&mut ws, ClientAction::ToggleLeft));
-        assert!(ws.chrome.left_open);
-        assert!(!ws.chrome.right_open);
+        assert!(ws.chrome.left_open());
+        assert!(!ws.chrome.right_open());
 
         assert!(apply_layout_action(&mut ws, ClientAction::ToggleRight));
-        assert!(ws.chrome.left_open && ws.chrome.right_open);
+        assert!(ws.chrome.left_open() && ws.chrome.right_open());
     }
 
     #[test]
     fn select_tab_reopens_hidden_right_rail() {
         let mut ws = fresh();
         ws.chrome.hide_right();
-        assert!(!ws.chrome.right_open);
+        assert!(!ws.chrome.right_open());
         assert!(apply_layout_action(
             &mut ws,
             ClientAction::SelectTab(InspectorTab::Session)
         ));
-        assert!(ws.chrome.right_open);
+        assert!(ws.chrome.right_open());
         assert_eq!(ws.inspector, InspectorTab::Session);
     }
 
@@ -514,6 +574,18 @@ mod tests {
         ws.settings.set_default_model("missing");
         assert!(!apply_layout_action(&mut ws, ClientAction::SelectModel));
         assert_eq!(ws.model, "fake");
+    }
+
+    #[test]
+    fn hide_left_is_hidden_and_focus_layout_works() {
+        let mut ws = fresh();
+        assert!(apply_layout_action(&mut ws, ClientAction::HideLeft));
+        assert_eq!(ws.chrome.left, crate::workspace::RailVis::Hidden);
+        assert_eq!(ws.chrome.occupied_left(), 0.0);
+        assert!(apply_layout_action(&mut ws, ClientAction::FocusLayout));
+        assert!(ws.is_focus_layout());
+        assert!(apply_layout_action(&mut ws, ClientAction::FocusLayout));
+        assert!(!ws.is_focus_layout());
     }
 
     #[test]

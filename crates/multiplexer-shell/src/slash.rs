@@ -43,6 +43,30 @@ pub fn parse_slash(draft: &str) -> Option<SlashCommand> {
     })
 }
 
+/// What Enter should do with the current draft.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SendPlan {
+    Slash(SlashCommand),
+    StartTurn(String),
+    IgnoreEmpty,
+    IgnoreBusy,
+}
+
+/// Plan a send. `/stop` (and other slashes) run even while busy.
+pub fn plan_send(draft: &str, busy: bool) -> SendPlan {
+    let raw = draft.trim();
+    if raw.is_empty() {
+        return SendPlan::IgnoreEmpty;
+    }
+    if let Some(cmd) = parse_slash(raw) {
+        return SendPlan::Slash(cmd);
+    }
+    if busy {
+        return SendPlan::IgnoreBusy;
+    }
+    SendPlan::StartTurn(raw.to_owned())
+}
+
 /// Short help copy for a parsed slash command.
 pub fn slash_hint(cmd: &SlashCommand) -> &'static str {
     match cmd {
@@ -151,5 +175,28 @@ mod tests {
         }
         assert_eq!(slash_hint(&SlashCommand::New), "start a new chat");
         assert_eq!(slash_hint(&SlashCommand::Stop), "stop the running turn");
+    }
+
+    #[test]
+    fn plan_send_stop_works_while_busy() {
+        assert_eq!(plan_send("  ", false), SendPlan::IgnoreEmpty);
+        assert_eq!(plan_send("", true), SendPlan::IgnoreEmpty);
+        assert_eq!(
+            plan_send("/stop", true),
+            SendPlan::Slash(SlashCommand::Stop)
+        );
+        assert_eq!(
+            plan_send("/help", true),
+            SendPlan::Slash(SlashCommand::Help)
+        );
+        assert_eq!(plan_send("hello", true), SendPlan::IgnoreBusy);
+        assert_eq!(
+            plan_send("hello", false),
+            SendPlan::StartTurn("hello".into())
+        );
+        assert_eq!(
+            plan_send("/foo", false),
+            SendPlan::Slash(SlashCommand::Unknown("foo".into()))
+        );
     }
 }

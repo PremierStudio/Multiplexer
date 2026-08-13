@@ -58,7 +58,7 @@ pub fn row_detail(ws: &Workspace, id: &str) -> String {
             .find(|m| m.name == name)
             .map(|m| {
                 format!(
-                    "{} {} supervised (in-process table)",
+                    "{} {} inventory flag (no child)",
                     m.command,
                     m.state.label()
                 )
@@ -175,7 +175,7 @@ fn core_rows(ws: &Workspace) -> Vec<ListRowSpec> {
 }
 
 fn mcp_rows(ws: &Workspace) -> Vec<ListRowSpec> {
-    const SUPERVISED: &str = "supervised (in-process table)";
+    const SUPERVISED: &str = "inventory flag (no child)";
     if ws.mcp.is_empty() {
         return vec![ListRowSpec::new("mcp:empty", "No MCP servers")
             .with_icon(ChromeGlyph::Plug.mark())
@@ -189,7 +189,7 @@ fn mcp_rows(ws: &Workspace) -> Vec<ListRowSpec> {
                 .map(|b| b.slug().to_string())
                 .unwrap_or_else(|| ChromeGlyph::Plug.mark().to_string());
             let tone = match m.state {
-                crate::workspace::McpLife::Ready => Tone::Good,
+                crate::workspace::McpLife::Ready => Tone::Neutral,
                 crate::workspace::McpLife::Crashed | crate::workspace::McpLife::Failed => {
                     Tone::Danger
                 }
@@ -490,11 +490,12 @@ mod tests {
     }
 
     #[test]
-    fn row_detail_mcp_says_supervised() {
+    fn row_detail_mcp_says_no_child() {
         let mut empty = Workspace::new("p", "m");
         empty.inspector = InspectorTab::Mcp;
         let empty_rows = inspector_rows(&empty);
-        assert!(empty_rows[0]
+        assert!(empty_rows[0].subtitle.contains("inventory flag (no child)"));
+        assert!(!empty_rows[0]
             .subtitle
             .contains("supervised (in-process table)"));
 
@@ -508,11 +509,11 @@ mod tests {
         let detail = row_detail(&ws, "mcp:github");
         assert!(detail.contains("npx"));
         assert!(detail.contains("stopped"));
-        assert!(detail.contains("supervised (in-process table)"));
+        assert!(detail.contains("inventory flag (no child)"));
 
         ws.inspector = InspectorTab::Mcp;
         let rows = inspector_rows(&ws);
-        assert!(rows[0].subtitle.contains("supervised (in-process table)"));
+        assert!(rows[0].subtitle.contains("inventory flag (no child)"));
     }
 
     #[test]
