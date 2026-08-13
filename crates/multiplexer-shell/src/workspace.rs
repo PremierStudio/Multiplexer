@@ -70,7 +70,7 @@ impl InspectorTab {
             Self::Files => "Files",
             Self::Activity => "Activity",
             Self::Agents => "Agents",
-            Self::Diff => "Diffs",
+            Self::Diff => "Changes",
             Self::Browser => "Browser",
         }
     }
@@ -106,6 +106,24 @@ impl InspectorTab {
             Self::Agents,
             Self::Diff,
             Self::Browser,
+        ]
+    }
+
+    /// Right-rail order used by the product chrome (Changes first).
+    pub fn rail_order() -> [InspectorTab; 12] {
+        [
+            Self::Diff,
+            Self::Files,
+            Self::Terminal,
+            Self::Git,
+            Self::Browser,
+            Self::Mcp,
+            Self::Session,
+            Self::Skills,
+            Self::Checkpoints,
+            Self::Agents,
+            Self::Activity,
+            Self::Resources,
         ]
     }
 }
@@ -384,6 +402,7 @@ pub struct Workspace {
     pub settings_section: crate::settings::SettingsSection,
     pub recent_commands: Vec<String>,
     pub file_filter: String,
+    pub commit_draft: String,
     pub thread_drafts: Vec<(String, String, usize)>,
     pub file_expanded: Vec<String>,
     pub usage_turns: u64,
@@ -495,6 +514,7 @@ impl Workspace {
             settings_section: crate::settings::SettingsSection::Appearance,
             recent_commands: Vec::new(),
             file_filter: String::new(),
+            commit_draft: String::new(),
             thread_drafts: Vec::new(),
             file_expanded: Vec::new(),
             usage_turns: 0,
@@ -1869,7 +1889,7 @@ mod tests {
         assert_eq!(InspectorTab::Files.label(), "Files");
         assert_eq!(InspectorTab::Activity.label(), "Activity");
         assert_eq!(InspectorTab::Agents.label(), "Agents");
-        assert_eq!(InspectorTab::Diff.label(), "Diffs");
+        assert_eq!(InspectorTab::Diff.label(), "Changes");
         assert_eq!(InspectorTab::Browser.label(), "Browser");
         assert_eq!(InspectorTab::all().len(), 12);
         let mut ws = Workspace::new("p", "m");
@@ -1986,9 +2006,11 @@ mod tests {
             all.map(InspectorTab::label),
             [
                 "Session", "Cores", "MCP", "Points", "Git", "Term", "Skills", "Files", "Activity",
-                "Agents", "Diffs", "Browser"
+                "Agents", "Changes", "Browser"
             ]
         );
+        assert_eq!(InspectorTab::rail_order()[0], InspectorTab::Diff);
+        assert_eq!(InspectorTab::rail_order()[0].label(), "Changes");
     }
 
     #[test]

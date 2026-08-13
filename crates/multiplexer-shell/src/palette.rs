@@ -260,7 +260,7 @@ pub fn default_items() -> Vec<PaletteItem> {
         },
         PaletteItem {
             id: "diff-tab",
-            label: "Diffs",
+            label: "Changes",
             hint: "",
             action: ClientAction::SelectTab(InspectorTab::Diff),
         },
@@ -352,7 +352,7 @@ pub fn pane_items() -> Vec<PaletteItem> {
         },
         PaletteItem {
             id: "pane-diffs",
-            label: "Diffs",
+            label: "Changes",
             hint: "",
             action: ClientAction::SelectTab(InspectorTab::Diff),
         },

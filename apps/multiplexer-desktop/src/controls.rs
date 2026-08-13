@@ -229,7 +229,7 @@ const CONTROLS: &[ControlSpec] = &[
     spec("tab_git", Surface::RightRail, "Git", None),
     spec("tab_term", Surface::RightRail, "Term", None),
     spec("tab_skills", Surface::RightRail, "Skills", None),
-    spec("tab_diff", Surface::RightRail, "Diffs", None),
+    spec("tab_diff", Surface::RightRail, "Changes", None),
     spec("tab_browser", Surface::RightRail, "Browser", None),
     spec("sort_last_turn", Surface::RightRail, "Last turn", None),
     spec("sort_file_name", Surface::RightRail, "File name", None),

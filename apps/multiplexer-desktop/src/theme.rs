@@ -179,6 +179,9 @@ impl Theme {
     pub fn text_body() -> Pixels {
         px(TypeScale::BODY)
     }
+    pub fn text_title() -> Pixels {
+        px(TypeScale::TITLE)
+    }
     pub fn row_height() -> Pixels {
         let scale = Self::ui_scale();
         match THEME_DENSITY.load(Ordering::Relaxed) {

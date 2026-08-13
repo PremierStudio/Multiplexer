@@ -6,6 +6,7 @@
 mod actions;
 mod agents;
 mod approval_ui;
+mod article;
 mod bars;
 mod bindings;
 mod catalog;
@@ -41,6 +42,7 @@ pub use agents::{
     OrchestrationList, ThreadStatus,
 };
 pub use approval_ui::PendingApproval;
+pub use article::{parse_article, parse_inlines, ArticleBlock, InlineSpan};
 pub use bars::usage_bar;
 pub use bindings::{host_call, worktree_create_call, ActionContext, HostCall};
 pub use catalog::{
@@ -53,7 +55,9 @@ pub use composer::{
     clamp_cursor, delete_back, delete_forward, insert_at, move_end, move_home, move_left,
     move_right, move_word_left, move_word_right,
 };
-pub use diff_view::{mark_last_turn, parse_porcelain, sort_diffs, DiffRow, DiffSort};
+pub use diff_view::{
+    changes_headline, mark_last_turn, parse_porcelain, sort_diffs, status_mark, DiffRow, DiffSort,
+};
 pub use fuzzy::{fuzzy_best, fuzzy_score};
 pub use icons::{BrandIcon, ChromeGlyph};
 pub use inspector_model::{inspector_rows, row_detail};

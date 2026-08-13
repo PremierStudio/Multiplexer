@@ -81,6 +81,28 @@ pub fn mark_last_turn(rows: &mut [DiffRow], last_turn: &[String]) {
     }
 }
 
+/// One-line Changes rail title. OpenChamber / t3Code language.
+pub fn changes_headline(rows: &[DiffRow]) -> String {
+    match rows.len() {
+        0 => "No working-tree changes".into(),
+        1 => "1 file changed".into(),
+        n => format!("{n} files changed"),
+    }
+}
+
+/// Compact status letter for a porcelain `XY` pair.
+pub fn status_mark(status: &str) -> &'static str {
+    if status.contains('A') || status.contains('?') {
+        "A"
+    } else if status.contains('D') {
+        "D"
+    } else if status.contains('R') {
+        "R"
+    } else {
+        "M"
+    }
+}
+
 /// Last turn first (then path), or path only.
 pub fn sort_diffs(mut rows: Vec<DiffRow>, sort: DiffSort) -> Vec<DiffRow> {
     match sort {
@@ -139,5 +161,12 @@ mod tests {
         assert_eq!(DiffSort::LastTurn.toggle(), DiffSort::FileName);
         assert_eq!(DiffSort::LastTurn.label(), "Last turn");
         assert_eq!(DiffSort::FileName.label(), "File name");
+        assert_eq!(changes_headline(&[]), "No working-tree changes");
+        assert_eq!(changes_headline(&by_name[..1]), "1 file changed");
+        assert_eq!(changes_headline(&by_name), "3 files changed");
+        assert_eq!(status_mark("M"), "M");
+        assert_eq!(status_mark("??"), "A");
+        assert_eq!(status_mark(" D"), "D");
+        assert_eq!(status_mark("R"), "R");
     }
 }
