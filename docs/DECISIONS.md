@@ -163,6 +163,36 @@
 ## D40. Roadmap dependency spine — Phase 4 depends on Phase 1 (LOCKED)
 - **Decision:** plan/19's dependency-spine diagram is corrected: Phase 4 (mobile+remote) depends on Phase 1 (wire contract), not Phase 3. Phase 3 and Phase 4 can run in parallel (both depend on Phase 1).
 
+## D41. Extension mechanism — plugins, not PRs (LOCKED)
+- **Decision:** Everything deployment-specific — credential vaults, session sandboxes, harness adapters, approval policies, future panes — is a **plugin** behind stable, capability-scoped extension seams (`multiplexer-plugin-api`). Users extend Multiplexer by writing plugins, NOT by forking or PR-ing core.
+- **Rationale:** Keeps the security-critical core small and reviewable while the ecosystem grows without our bottleneck. A vault integration (1Password), a sandbox backend, or a new harness (claude-code, codex, opencode, zcode) each become a plugin instead of core surface area. This is also a moat: the extension seam is a product.
+- **Trade-off accepted:** API stability discipline and versioning burden on the seams (D20 discipline applies). Third-party plugins are out-of-process against a versioned sidecar protocol in v1 (no in-process WASM yet).
+- **Action:** plan/21 defines the seams, manifest, lifecycle, and testing bar.
+
+## D42. Plugin capability model — declared, least-privilege, enforced (LOCKED)
+- **Decision:** Every plugin ships a manifest declaring `kind` (credential | sandbox | harness | approval | pane) and **capabilities** (e.g., `credential-read = ["1pass://automation-vault/*"]`, an egress network allow-list — deny by default). The plugin host enforces capabilities; plugins get **only** the API handles their capabilities grant — no ambient authority.
+- **Rationale:** A malicious or compromised plugin must be bounded to its declared slice. This is the blast-radius guarantee that makes third-party plugins acceptable at all.
+- **Trade-off accepted:** capability enforcement code is itself security-critical core (mutation-gated per D21) and the install-time consent UX must be honest about what each capability grants.
+
+## D43. Credential plane — CredentialProvider plugin; 1Password is first-party flagship (LOCKED)
+- **Decision:** A `CredentialProvider` plugin trait bridges external vaults into the **existing session-cache model (D23)**. The first-party `plugin-1password` authenticates as a **1Password service account scoped to a single automation vault** and resolves references into the server-side session cache at session start — values are then injected, task-scoped, into the session sandbox. **No live user-session `op` reads (D23 unchanged); no credentials ever exist client-side.**
+- **Rationale:** Extends D23 rather than amending it: the core SecretStore stays keychain + session cache; the plugin is the external-vault bridge with its own narrowly-scoped auth. Service-account scoping means a compromised agent (or agent host) can reach exactly the automation vault and nothing else — human vaults are structurally invisible.
+- **Trade-off accepted:** operators must maintain an automation vault + service account; the plugin documents this as the canonical deployment.
+
+## D44. Session isolation — SandboxProvider plugin; containers first (LOCKED)
+- **Decision:** Each agent session executes inside a sandbox provisioned by a `SandboxProvider` plugin. The first-party default is container-based isolation on the server host: per-session container, workspace bind-mount scoped to the session worktree, no host home exposure, per-session egress policy, teardown shreds injected secrets. The **independent-enforcement rule of D25 is implemented at this layer** — confinement is enforced by the sandbox, never trusted from a client.
+- **Rationale:** Sessions must be isolated from each other, from the server host, and from sibling agents' state (`~/.claude` et al.). The plugin seam lets deployments choose OS-user, container, or microVM backends without core changes.
+- **Trade-off accepted:** container runtime is a server-host requirement; the plugin must degrade loudly (refuse to run unsandboxed) rather than silently.
+
+## D45. Harness admission — HarnessAdapter plugin (LOCKED)
+- **Decision:** Grok stays the core in-process adapter (D10). **All external harnesses (Claude Code, Codex, OpenCode, ZCode, …) are admitted as `HarnessAdapter` plugins** riding the generic ACP machinery (D17). Adding a harness is a plugin install, never a core PR.
+- **Rationale:** The process boundary at ACP is a security feature here, not the introspection limitation plan/01 frames: external runtimes are closed and untrusted-by-default, so admission through an adapter + sandbox (D44) is the correct trust posture.
+- **Trade-off accepted:** external-harness sessions get wire-level introspection only (no in-process internals) — acceptable; full internals remain a Grok-only differentiator.
+
+## D46. Approval policy — pluggable on the D12 4-way enum (LOCKED)
+- **Decision:** The approval decision path is an **`ApprovalPolicy` plugin chain** over the D12 enum: local prompt, mobile push, and declarative policies ("reads auto-allow; writes/egress always gate") compose in order, first non-defer wins. Because this gate is a security boundary (extending D12/D25), policy plugins require explicit user consent at install and are held to core testing bars (D21/D33).
+- **Rationale:** The approval gate is where a hijacked session's *use* of its access is stopped; making the policy pluggable lets users tune strictness per deployment without forking, while keeping enforcement in core.
+
 ---
 
 ## Summary of doc-level fixes required (mapped to decisions)
@@ -190,3 +220,4 @@
 | plan/18 | Azure Trusted Signing + budget; no live-swap; monetization | D29, D39, D30 |
 | plan/19 | Crate names; MVP=Phases 1-4; effort estimate; dependency spine; track-upstream task | D13, D8, D40, D31 |
 | plan/20 | Orca baseline match-all; embedding hypothesis; Windows contingency; monetization; risk register updates | D36, D10, D35, D30 |
+| plan/21 | NEW — plugin architecture: seams, manifest/capabilities, first-party plugins, threat-model mapping, milestones | D41, D42, D43, D44, D45, D46 |
